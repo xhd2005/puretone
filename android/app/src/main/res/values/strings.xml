@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">EchoMusic</string>
+    <string name="title_activity_main">EchoMusic</string>
+    <string name="package_name">com.xhd2005.echomusic</string>
+    <string name="custom_url_scheme">com.xhd2005.echomusic</string>
+</resources>
