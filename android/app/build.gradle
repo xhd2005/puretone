@@ -1,6 +1,18 @@
 apply plugin: 'com.android.application'
 apply plugin: 'org.jetbrains.kotlin.android'
 
+def localKeystoreProps = new Properties()
+def localKeystorePropsFile = rootProject.file('keystore.properties')
+if (localKeystorePropsFile.exists()) {
+    localKeystorePropsFile.withInputStream { localKeystoreProps.load(it) }
+}
+
+def ciKeystoreFile = file('release.keystore')
+def hasCiSigning = ciKeystoreFile.exists() && System.getenv('ANDROID_KEYSTORE_PASSWORD')
+def localKsPath = localKeystoreProps.getProperty('storeFile', '')
+def hasLocalSigning = localKsPath && file(localKsPath).exists() && localKeystoreProps.getProperty('storePassword', '')
+def hasPermanentSigning = hasCiSigning || hasLocalSigning
+
 android {
     namespace "com.xhd2005.puretone"
     compileSdk rootProject.ext.compileSdkVersion
@@ -9,8 +21,8 @@ android {
         applicationId "com.xhd2005.puretone"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 4
-        versionName "2.2.0"
+        versionCode 5
+        versionName "2.2.1"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
             ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
@@ -28,21 +40,32 @@ android {
 
     signingConfigs {
         release {
-            def ksFile = file('release.keystore')
-            if (ksFile.exists() && System.getenv('ANDROID_KEYSTORE_PASSWORD')) {
-                storeFile ksFile
+            if (hasCiSigning) {
+                storeFile ciKeystoreFile
                 storePassword System.getenv('ANDROID_KEYSTORE_PASSWORD')
                 keyAlias System.getenv('ANDROID_KEY_ALIAS') ?: 'puretone'
                 keyPassword System.getenv('ANDROID_KEY_PASSWORD') ?: System.getenv('ANDROID_KEYSTORE_PASSWORD')
+            } else if (hasLocalSigning) {
+                storeFile file(localKsPath)
+                storePassword localKeystoreProps.getProperty('storePassword')
+                keyAlias localKeystoreProps.getProperty('keyAlias', 'puretone')
+                keyPassword localKeystoreProps.getProperty('keyPassword', localKeystoreProps.getProperty('storePassword'))
             }
         }
     }
 
     buildTypes {
+        debug {
+            // Use the same permanent PureTone signing certificate locally & on CI when present,
+            // so debug/release/CI updates ALWAYS overwrite-install cleanly with zero data loss.
+            if (hasPermanentSigning) {
+                signingConfig signingConfigs.release
+            }
+        }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
-            if (file('release.keystore').exists() && System.getenv('ANDROID_KEYSTORE_PASSWORD')) {
+            if (hasPermanentSigning) {
                 signingConfig signingConfigs.release
             }
         }

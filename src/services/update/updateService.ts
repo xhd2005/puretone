@@ -5,7 +5,7 @@ export const APP_REPO = 'xhd2005/puretone';
 export const APP_REPO_URL = `https://github.com/${APP_REPO}`;
 export const APP_RELEASES_URL = `${APP_REPO_URL}/releases`;
 export const APP_AUTHOR = 'xhd2005';
-export const FALLBACK_APP_VERSION = '2.2.0';
+export const FALLBACK_APP_VERSION = '2.2.1';
 
 const LAST_CHECK_KEY = 'update.lastCheckAt.v1';
 const SKIPPED_VERSION_KEY = 'update.skippedVersion.v1';
