@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, onUnmounted, ref, watch } from 'vue';
 import { Icon } from '@iconify/vue';
 import iconPlayerPlayFilled from '@iconify/icons-tabler/player-play-filled';
 import iconPlayerPauseFilled from '@iconify/icons-tabler/player-pause-filled';
@@ -17,9 +17,11 @@ import iconSparkles from '@iconify/icons-tabler/sparkles';
 import iconX from '@iconify/icons-tabler/x';
 import iconMusic from '@iconify/icons-tabler/music';
 import iconLanguage from '@iconify/icons-tabler/language';
+import iconMoon from '@iconify/icons-tabler/moon';
 import { usePlayerStore } from '@/stores/player';
 import { useSettingsStore } from '@/stores/settings';
 import { useUiStore } from '@/stores/ui';
+import { echoSystem } from '@/native/echoSystem';
 import FluidCoverBackground from './FluidCoverBackground.vue';
 import KrcLyricsView from './KrcLyricsView.vue';
 
@@ -27,18 +29,114 @@ const player = usePlayerStore();
 const settings = useSettingsStore();
 const ui = useUiStore();
 
+// Pointer-captured Scrubber state (works smoothly on BOTH Cover & Lyrics views!)
 const scrubbing = ref(false);
 const scrubRatio = ref(0);
+let activeScrubPointerId: number | null = null;
+
+// Lyrics 3s Auto-Immersive HUD state
+const lyricsHudVisible = ref(true);
+let lyricsHideTimer: ReturnType<typeof setTimeout> | null = null;
+
+// Sheet Drag-to-Dismiss & Cover Swipe/Double-Tap state
 const dragOffsetY = ref(0);
+const coverSwipeX = ref(0);
+const heartBurst = ref(false);
 let sheetTouchY = 0;
+let coverTouchStartX = 0;
+let coverTouchStartY = 0;
+let coverGestureAxis: 'none' | 'x' | 'y' = 'none';
+let lastCoverTapAt = 0;
+let heartBurstTimer: ReturnType<typeof setTimeout> | null = null;
+
+function clearLyricsHideTimer() {
+  if (lyricsHideTimer) {
+    clearTimeout(lyricsHideTimer);
+    lyricsHideTimer = null;
+  }
+}
+
+function scheduleLyricsAutoHide() {
+  clearLyricsHideTimer();
+  if (ui.nowPlayingMode !== 'lyrics' || !ui.nowPlayingOpen) return;
+  if (!player.isPlaying || scrubbing.value) return;
+  lyricsHideTimer = setTimeout(() => {
+    if (ui.nowPlayingMode === 'lyrics' && player.isPlaying && !scrubbing.value) {
+      lyricsHudVisible.value = false;
+    }
+  }, 3000);
+}
+
+function revealLyricsHud(autoHide = true) {
+  lyricsHudVisible.value = true;
+  if (autoHide) scheduleLyricsAutoHide();
+  else clearLyricsHideTimer();
+}
+
+function onLyricsUserScroll() {
+  if (ui.nowPlayingMode === 'lyrics' && player.isPlaying && !scrubbing.value) {
+    clearLyricsHideTimer();
+    lyricsHudVisible.value = false;
+  }
+}
+
+function onLyricsTapBlank() {
+  if (ui.nowPlayingMode !== 'lyrics') return;
+  if (lyricsHudVisible.value) {
+    clearLyricsHideTimer();
+    lyricsHudVisible.value = false;
+  } else {
+    revealLyricsHud(true);
+  }
+}
+
+const isLyricsImmersive = computed(() => ui.nowPlayingMode === 'lyrics' && !lyricsHudVisible.value);
 
 watch(
   () => ui.nowPlayingOpen,
   (open) => {
     settings.applyThemeClass(open);
-    if (!open) dragOffsetY.value = 0;
+    if (!open) {
+      dragOffsetY.value = 0;
+      coverSwipeX.value = 0;
+      clearLyricsHideTimer();
+      lyricsHudVisible.value = true;
+    } else if (ui.nowPlayingMode === 'lyrics') {
+      revealLyricsHud(true);
+    }
   },
 );
+
+watch(
+  () => ui.nowPlayingMode,
+  (mode) => {
+    if (mode === 'lyrics') {
+      revealLyricsHud(true);
+    } else {
+      clearLyricsHideTimer();
+      lyricsHudVisible.value = true;
+    }
+  },
+);
+
+watch(
+  () => player.isPlaying,
+  (playing) => {
+    if (ui.nowPlayingMode !== 'lyrics') return;
+    if (!playing) {
+      revealLyricsHud(false);
+    } else {
+      scheduleLyricsAutoHide();
+    }
+  },
+);
+
+onUnmounted(() => {
+  clearLyricsHideTimer();
+  if (heartBurstTimer) clearTimeout(heartBurstTimer);
+});
+
+// ---- Progress Computation ----
 
 const progressRatio = computed(() => {
   if (scrubbing.value) return scrubRatio.value;
@@ -59,30 +157,56 @@ function fmtTime(ms: number): string {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
+// ---- Pointer-Captured Scrubber (Zero conflict with lyrics scrolling!) ----
+
 function updateScrubFromClientX(el: HTMLElement, clientX: number) {
   const rect = el.getBoundingClientRect();
   scrubRatio.value = Math.max(0, Math.min(1, (clientX - rect.left) / Math.max(1, rect.width)));
 }
 
-function onScrubStart(e: TouchEvent | MouseEvent) {
+function onScrubPointerDown(e: PointerEvent) {
+  e.stopPropagation();
   const el = e.currentTarget as HTMLElement;
+  activeScrubPointerId = e.pointerId;
+  try {
+    el.setPointerCapture(e.pointerId);
+  } catch {
+    // non-fatal
+  }
   scrubbing.value = true;
-  const x = 'touches' in e ? e.touches[0].clientX : e.clientX;
-  updateScrubFromClientX(el, x);
+  clearLyricsHideTimer();
+  echoSystem.haptic('selection');
+  updateScrubFromClientX(el, e.clientX);
 }
 
-function onScrubMove(e: TouchEvent | MouseEvent) {
-  if (!scrubbing.value) return;
+function onScrubPointerMove(e: PointerEvent) {
+  if (!scrubbing.value || e.pointerId !== activeScrubPointerId) return;
+  e.stopPropagation();
   const el = e.currentTarget as HTMLElement;
-  const x = 'touches' in e ? e.touches[0].clientX : e.clientX;
-  updateScrubFromClientX(el, x);
+  updateScrubFromClientX(el, e.clientX);
 }
 
-function onScrubEnd() {
-  if (!scrubbing.value) return;
+function finishScrub(e: PointerEvent, commit: boolean) {
+  if (!scrubbing.value || e.pointerId !== activeScrubPointerId) return;
+  e.stopPropagation();
+  const el = e.currentTarget as HTMLElement;
+  try {
+    if (el.hasPointerCapture?.(e.pointerId)) {
+      el.releasePointerCapture(e.pointerId);
+    }
+  } catch {
+    // ignore
+  }
+  activeScrubPointerId = null;
   scrubbing.value = false;
-  void player.seek(Math.round(scrubRatio.value * player.durationMs));
+  if (commit && player.durationMs > 0) {
+    echoSystem.haptic('light');
+    void player.seek(Math.round(scrubRatio.value * player.durationMs));
+  }
+  scheduleLyricsAutoHide();
 }
+
+// ---- Top Handle Drag-to-Dismiss ----
 
 function onHandleTouchStart(e: TouchEvent) {
   sheetTouchY = e.touches[0]?.clientY ?? 0;
@@ -92,13 +216,80 @@ function onHandleTouchMove(e: TouchEvent) {
   dragOffsetY.value = Math.max(0, dy);
 }
 function onHandleTouchEnd() {
-  if (dragOffsetY.value > 100) {
+  if (dragOffsetY.value > 95) {
+    echoSystem.haptic('light');
     ui.nowPlayingOpen = false;
   }
   dragOffsetY.value = 0;
 }
 
+// ---- Intuitive Cover Gestures: Swipe Skip / Drag Down Dismiss / Double-Tap Heart ----
+
+function onCoverTouchStart(e: TouchEvent) {
+  const t = e.touches[0];
+  if (!t) return;
+  coverTouchStartX = t.clientX;
+  coverTouchStartY = t.clientY;
+  coverGestureAxis = 'none';
+}
+
+function onCoverTouchMove(e: TouchEvent) {
+  const t = e.touches[0];
+  if (!t) return;
+  const dx = t.clientX - coverTouchStartX;
+  const dy = t.clientY - coverTouchStartY;
+
+  if (coverGestureAxis === 'none') {
+    if (Math.abs(dx) > 12 || Math.abs(dy) > 12) {
+      coverGestureAxis = Math.abs(dx) >= Math.abs(dy) ? 'x' : 'y';
+    }
+  }
+  if (coverGestureAxis === 'x') {
+    // Elastic horizontal swipe preview
+    coverSwipeX.value = dx * 0.42;
+  } else if (coverGestureAxis === 'y' && dy > 0) {
+    dragOffsetY.value = dy * 0.85;
+  }
+}
+
+function onCoverTouchEnd(e: TouchEvent) {
+  const t = e.changedTouches[0];
+  const dx = (t?.clientX ?? coverTouchStartX) - coverTouchStartX;
+  const dy = (t?.clientY ?? coverTouchStartY) - coverTouchStartY;
+
+  if (coverGestureAxis === 'x') {
+    if (dx < -58) {
+      void player.next();
+    } else if (dx > 58) {
+      void player.previous();
+    }
+    coverSwipeX.value = 0;
+  } else if (coverGestureAxis === 'y') {
+    if (dragOffsetY.value > 95) {
+      echoSystem.haptic('light');
+      ui.nowPlayingOpen = false;
+    }
+    dragOffsetY.value = 0;
+  } else if (Math.abs(dx) < 12 && Math.abs(dy) < 12) {
+    // Double-tap artwork to favorite with heart burst!
+    const now = Date.now();
+    if (now - lastCoverTapAt < 290 && player.currentSong) {
+      lastCoverTapAt = 0;
+      void player.toggleFavorite(player.currentSong);
+      heartBurst.value = true;
+      if (heartBurstTimer) clearTimeout(heartBurstTimer);
+      heartBurstTimer = setTimeout(() => {
+        heartBurst.value = false;
+      }, 650);
+    } else {
+      lastCoverTapAt = now;
+    }
+  }
+  coverGestureAxis = 'none';
+}
+
 function toggleMode(target: 'lyrics' | 'queue') {
+  echoSystem.haptic('selection');
   ui.nowPlayingMode = ui.nowPlayingMode === target ? 'cover' : target;
 }
 
@@ -137,6 +328,21 @@ const playModeLabel = computed(() => {
           <div class="np-handle" />
         </div>
 
+        <!-- Subtle Sleep Timer Pill (when active in cover mode) -->
+        <div
+          v-if="player.sleepTimerBadge && ui.nowPlayingMode === 'cover'"
+          class="flex justify-center pb-1 shrink-0"
+        >
+          <button
+            type="button"
+            class="lg-fluid-btn px-3 py-1 rounded-full text-[11px] font-semibold text-white/90 inline-flex items-center gap-1 am-tap"
+            @click="ui.actionSheetSong = player.currentSong"
+          >
+            <Icon :icon="iconMoon" class="w-3.5 h-3.5" />
+            <span class="tabular-nums">{{ player.sleepTimerBadge }}</span>
+          </button>
+        </div>
+
         <!-- Compact Header in Lyrics / Queue mode -->
         <div v-if="ui.nowPlayingMode !== 'cover'" class="np-mini-header">
           <button
@@ -144,7 +350,7 @@ const playModeLabel = computed(() => {
             class="flex items-center gap-3 flex-1 min-w-0 text-left bg-transparent border-0 p-0"
             @click="ui.nowPlayingMode = 'cover'"
           >
-            <div class="w-12 h-12 rounded-[9px] overflow-hidden shrink-0 shadow-lg bg-white/10">
+            <div class="w-12 h-12 rounded-[10px] overflow-hidden shrink-0 shadow-lg bg-white/10">
               <img
                 v-if="player.currentSong.coverUrl"
                 :src="player.currentSong.coverUrl"
@@ -154,7 +360,16 @@ const playModeLabel = computed(() => {
             </div>
             <div class="min-w-0 flex-1">
               <div class="text-[16px] font-semibold text-white truncate">{{ player.currentSong.title }}</div>
-              <div class="text-[14px] text-white/65 truncate">{{ player.currentSong.artist }}</div>
+              <div class="text-[13px] text-white/65 truncate flex items-center gap-1.5">
+                <span class="truncate">{{ player.currentSong.artist }}</span>
+                <span
+                  v-if="player.sleepTimerBadge"
+                  class="px-1.5 py-0.5 rounded-full bg-white/15 text-[10px] font-semibold text-white/90 tabular-nums shrink-0 inline-flex items-center gap-0.5"
+                >
+                  <Icon :icon="iconMoon" class="w-2.5 h-2.5" />
+                  {{ player.sleepTimerBadge }}
+                </span>
+              </div>
             </div>
           </button>
 
@@ -162,16 +377,16 @@ const playModeLabel = computed(() => {
             <button
               v-if="ui.nowPlayingMode === 'lyrics' && player.lyrics.hasTranslation"
               type="button"
-              class="np-circle-btn am-tap"
-              :class="{ 'bg-white/25 text-white': settings.showTranslation }"
+              class="np-circle-btn lg-fluid-btn am-tap"
+              :class="{ '!bg-white/30 !text-white': settings.showTranslation }"
               aria-label="切换双语翻译"
-              @click="settings.showTranslation = !settings.showTranslation"
+              @click="settings.showTranslation = !settings.showTranslation; echoSystem.haptic('selection')"
             >
               <Icon :icon="iconLanguage" class="w-5 h-5" />
             </button>
             <button
               type="button"
-              class="np-circle-btn am-tap"
+              class="np-circle-btn lg-fluid-btn am-tap"
               aria-label="更多操作"
               @click="ui.actionSheetSong = player.currentSong"
             >
@@ -180,10 +395,20 @@ const playModeLabel = computed(() => {
           </div>
         </div>
 
-        <!-- MODE 1: AUTHENTIC APPLE MUSIC COVER MODE -->
-        <div v-if="ui.nowPlayingMode === 'cover'" class="np-cover-stage">
+        <!-- MODE 1: AUTHENTIC APPLE MUSIC + LIQUID GLASS COVER MODE -->
+        <div
+          v-if="ui.nowPlayingMode === 'cover'"
+          class="np-cover-stage"
+          @touchstart.passive="onCoverTouchStart"
+          @touchmove.passive="onCoverTouchMove"
+          @touchend.passive="onCoverTouchEnd"
+        >
           <div class="np-artwork-wrap">
-            <div class="np-artwork" :class="player.isPlaying ? 'is-playing' : 'is-paused'">
+            <div
+              class="np-artwork"
+              :class="player.isPlaying ? 'is-playing' : 'is-paused'"
+              :style="coverSwipeX ? { transform: `translateX(${coverSwipeX}px) scale(0.96)`, transition: 'none' } : undefined"
+            >
               <img
                 v-if="player.currentSong.coverUrl"
                 :src="player.currentSong.coverUrl"
@@ -193,6 +418,13 @@ const playModeLabel = computed(() => {
               <div v-else class="w-full h-full flex items-center justify-center bg-white/10 text-white/40">
                 <Icon :icon="iconMusic" class="w-20 h-20" />
               </div>
+
+              <!-- Double-Tap Heart Burst -->
+              <Transition name="heart-pop">
+                <div v-if="heartBurst" class="heart-burst-overlay">
+                  <Icon :icon="iconHeartFilled" class="w-20 h-20 text-[#ff375f] drop-shadow-2xl" />
+                </div>
+              </Transition>
             </div>
           </div>
 
@@ -208,31 +440,36 @@ const playModeLabel = computed(() => {
             <div class="flex items-center gap-2 shrink-0">
               <button
                 type="button"
-                class="np-circle-btn am-tap"
+                class="np-circle-btn lg-fluid-btn am-tap"
                 aria-label="收藏到我喜欢"
                 @click="player.toggleFavorite(player.currentSong)"
               >
                 <Icon
                   :icon="player.isCurrentFavorite ? iconHeartFilled : iconHeart"
                   class="w-[21px] h-[21px]"
-                  :class="player.isCurrentFavorite ? 'text-[#ff375f]' : 'text-white/90'"
+                  :class="player.isCurrentFavorite ? 'text-[#ff375f]' : 'text-white/95'"
                 />
               </button>
               <button
                 type="button"
-                class="np-circle-btn am-tap"
+                class="np-circle-btn lg-fluid-btn am-tap"
                 aria-label="更多选项"
                 @click="ui.actionSheetSong = player.currentSong"
               >
-                <Icon :icon="iconDots" class="w-[21px] h-[21px] text-white/90" />
+                <Icon :icon="iconDots" class="w-[21px] h-[21px] text-white/95" />
               </button>
             </div>
           </div>
         </div>
 
-        <!-- MODE 2: APPLE MUSIC WORD-BY-WORD KRC LYRICS -->
-        <div v-else-if="ui.nowPlayingMode === 'lyrics'" class="flex-1 min-h-0">
-          <KrcLyricsView :active="ui.nowPlayingOpen && ui.nowPlayingMode === 'lyrics'" />
+        <!-- MODE 2: APPLE MUSIC WORD-BY-WORD KRC LYRICS (Instant Sync + Auto-Immersive!) -->
+        <div v-else-if="ui.nowPlayingMode === 'lyrics'" class="flex-1 min-h-0 relative">
+          <KrcLyricsView
+            :active="ui.nowPlayingOpen && ui.nowPlayingMode === 'lyrics'"
+            @user-scroll="onLyricsUserScroll"
+            @tap-blank="onLyricsTapBlank"
+            @line-seek="scheduleLyricsAutoHide"
+          />
         </div>
 
         <!-- MODE 3: TRANSLUCENT UP NEXT QUEUE -->
@@ -244,7 +481,7 @@ const playModeLabel = computed(() => {
             </div>
             <button
               type="button"
-              class="px-3.5 py-2 rounded-full bg-white/15 text-white text-[13px] font-medium flex items-center gap-1.5 am-tap border-0"
+              class="lg-fluid-btn px-3.5 py-2 rounded-full text-white text-[13px] font-medium flex items-center gap-1.5 am-tap"
               @click="player.cyclePlayMode()"
             >
               <Icon :icon="playModeIcon" class="w-4 h-4" />
@@ -260,7 +497,7 @@ const playModeLabel = computed(() => {
               :class="idx === player.currentIndex ? 'bg-white/18' : 'active:bg-white/10'"
               @click="player.playQueue(player.queue, idx)"
             >
-              <div class="w-11 h-11 rounded-[8px] overflow-hidden shrink-0 bg-white/10">
+              <div class="w-11 h-11 rounded-[9px] overflow-hidden shrink-0 bg-white/10">
                 <img v-if="item.coverUrl" :src="item.coverUrl" class="w-full h-full object-cover" alt="" />
               </div>
               <div class="min-w-0 flex-1">
@@ -281,29 +518,35 @@ const playModeLabel = computed(() => {
           </div>
         </div>
 
-        <!-- Scrubber & Transport Controls (always crisp in cover/lyrics/queue) -->
-        <div class="np-controls" :class="{ 'is-compact': ui.nowPlayingMode !== 'cover' }">
-          <!-- Scrub Bar -->
+        <!-- Scrubber & Transport Controls (Smoothly auto-hides in Immersive Lyrics Mode!) -->
+        <div
+          class="np-controls"
+          :class="{
+            'is-compact': ui.nowPlayingMode !== 'cover',
+            'is-immersive-hidden': isLyricsImmersive,
+          }"
+        >
+          <!-- Pointer-Captured Scrub Bar -->
           <div class="px-1">
             <div
               class="scrub-hit"
-              @touchstart.passive="onScrubStart"
-              @touchmove.passive="onScrubMove"
-              @touchend.passive="onScrubEnd"
-              @mousedown="onScrubStart"
-              @mousemove="onScrubMove"
-              @mouseup="onScrubEnd"
-              @mouseleave="onScrubEnd"
+              @pointerdown="onScrubPointerDown"
+              @pointermove="onScrubPointerMove"
+              @pointerup="finishScrub($event, true)"
+              @pointercancel="finishScrub($event, false)"
             >
               <div class="scrub-track" :class="{ 'is-scrubbing': scrubbing }">
                 <div class="scrub-fill" :style="{ width: `${progressRatio * 100}%` }" />
               </div>
             </div>
-            <div class="flex items-center justify-between text-[11px] font-medium text-white/55 tabular-nums mt-1.5">
+            <div
+              class="flex items-center justify-between text-[11px] font-medium tabular-nums mt-0.5 transition-colors"
+              :class="scrubbing ? 'text-white' : 'text-white/58'"
+            >
               <span>{{ fmtTime(displayElapsedMs) }}</span>
               <span
                 v-if="player.sourceTag"
-                class="px-2 py-0.5 rounded-[5px] bg-white/12 text-white/80 text-[10px] font-semibold tracking-wide"
+                class="px-2 py-0.5 rounded-[6px] bg-white/14 text-white/88 text-[10px] font-semibold tracking-wide"
               >
                 {{ player.sourceTag }}
               </span>
@@ -313,7 +556,7 @@ const playModeLabel = computed(() => {
 
           <!-- Transport Buttons -->
           <div class="np-transport">
-            <button type="button" class="np-skip-btn am-tap" aria-label="上一首" @click="player.previous()">
+            <button type="button" class="np-skip-btn am-tap" aria-label="上一首" @click="player.previous(); scheduleLyricsAutoHide()">
               <Icon :icon="iconPlayerTrackPrevFilled" class="w-9 h-9" />
             </button>
             <button
@@ -327,12 +570,12 @@ const playModeLabel = computed(() => {
                 class="w-12 h-12"
               />
             </button>
-            <button type="button" class="np-skip-btn am-tap" aria-label="下一首" @click="player.next()">
+            <button type="button" class="np-skip-btn am-tap" aria-label="下一首" @click="player.next(); scheduleLyricsAutoHide()">
               <Icon :icon="iconPlayerTrackNextFilled" class="w-9 h-9" />
             </button>
           </div>
 
-          <!-- Bottom 3 Apple Music Utility Icons -->
+          <!-- Bottom 3 Liquid Glass Utility Icons -->
           <div class="np-footer-bar">
             <button
               type="button"
@@ -387,7 +630,7 @@ const playModeLabel = computed(() => {
   flex-direction: column;
   height: 100%;
   padding-top: calc(var(--safe-top) + 6px);
-  padding-bottom: calc(var(--safe-bottom) + 14px);
+  padding-bottom: calc(var(--safe-bottom) + 12px);
 }
 
 .np-handle-area {
@@ -400,17 +643,17 @@ const playModeLabel = computed(() => {
 }
 
 .np-handle {
-  width: 38px;
+  width: 40px;
   height: 5px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.36);
+  background: rgba(255, 255, 255, 0.38);
 }
 
 .np-mini-header {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 6px 24px 10px;
+  padding: 6px 24px 8px;
   flex-shrink: 0;
 }
 
@@ -420,7 +663,7 @@ const playModeLabel = computed(() => {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  padding: 12px 28px 18px;
+  padding: 10px 28px 16px;
 }
 
 .np-artwork-wrap {
@@ -429,13 +672,14 @@ const playModeLabel = computed(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 8px 0;
+  padding: 6px 0;
 }
 
 .np-artwork {
-  width: min(82vw, 340px);
+  position: relative;
+  width: min(82vw, 344px);
   aspect-ratio: 1;
-  border-radius: 14px;
+  border-radius: 18px;
   overflow: hidden;
   background: rgba(255, 255, 255, 0.08);
   transition: transform 480ms var(--spring-ease), box-shadow 480ms ease;
@@ -443,7 +687,7 @@ const playModeLabel = computed(() => {
 
 .np-artwork.is-playing {
   transform: scale(1);
-  box-shadow: 0 28px 65px rgba(0, 0, 0, 0.52), 0 8px 20px rgba(0, 0, 0, 0.32);
+  box-shadow: 0 30px 70px rgba(0, 0, 0, 0.54), 0 8px 22px rgba(0, 0, 0, 0.32);
 }
 
 .np-artwork.is-paused {
@@ -451,54 +695,102 @@ const playModeLabel = computed(() => {
   box-shadow: 0 12px 28px rgba(0, 0, 0, 0.36);
 }
 
+.heart-burst-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.16);
+  pointer-events: none;
+}
+
+.heart-pop-enter-active {
+  animation: heart-pop-kf 620ms var(--spring-ease);
+}
+.heart-pop-leave-active {
+  transition: opacity 180ms ease;
+}
+.heart-pop-leave-to {
+  opacity: 0;
+}
+@keyframes heart-pop-kf {
+  0% { opacity: 0; transform: scale(0.45); }
+  45% { opacity: 1; transform: scale(1.14); }
+  100% { opacity: 0.96; transform: scale(1); }
+}
+
 .np-meta-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-top: 16px;
+  margin-top: 14px;
 }
 
 .np-circle-btn {
-  width: 36px;
-  height: 36px;
+  width: 38px;
+  height: 38px;
   border-radius: 50%;
-  border: 0;
-  background: rgba(255, 255, 255, 0.14);
-  color: rgba(255, 255, 255, 0.9);
+  color: rgba(255, 255, 255, 0.92);
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
 .np-controls {
+  position: relative;
+  z-index: 25;
   padding: 0 28px 6px;
   flex-shrink: 0;
+  max-height: 260px;
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    max-height 400ms var(--spring-ease),
+    opacity 260ms ease,
+    transform 380ms var(--spring-ease),
+    padding 380ms var(--spring-ease);
 }
 
 .np-controls.is-compact {
-  padding-top: 8px;
+  padding-top: 4px;
+}
+
+.np-controls.is-immersive-hidden {
+  max-height: 0;
+  opacity: 0;
+  transform: translateY(28px);
+  padding-top: 0;
+  padding-bottom: 0;
+  overflow: hidden;
+  pointer-events: none;
 }
 
 .scrub-hit {
-  padding: 10px 0 4px;
+  position: relative;
+  z-index: 30;
+  padding: 16px 0 10px;
   cursor: pointer;
+  touch-action: none;
+  user-select: none;
 }
 
 .scrub-track {
   height: 5px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.24);
+  background: rgba(255, 255, 255, 0.25);
   overflow: hidden;
-  transition: height 180ms var(--spring-ease);
+  transition: height 180ms var(--spring-ease), box-shadow 180ms ease;
 }
 
 .scrub-track.is-scrubbing {
-  height: 9px;
+  height: 10px;
+  box-shadow: 0 0 18px rgba(255, 255, 255, 0.28);
 }
 
 .scrub-fill {
   height: 100%;
-  background: rgba(255, 255, 255, 0.92);
+  background: rgba(255, 255, 255, 0.94);
   border-radius: 999px;
 }
 
@@ -506,11 +798,11 @@ const playModeLabel = computed(() => {
   display: flex;
   align-items: center;
   justify-content: space-evenly;
-  margin: 18px 0 20px;
+  margin: 14px 0 16px;
 }
 
 .np-controls.is-compact .np-transport {
-  margin: 10px 0 12px;
+  margin: 8px 0 10px;
 }
 
 .np-skip-btn,
@@ -534,20 +826,21 @@ const playModeLabel = computed(() => {
 }
 
 .np-tool-btn {
-  width: 44px;
+  width: 46px;
   height: 38px;
-  border-radius: 10px;
+  border-radius: 12px;
   border: 0;
   background: transparent;
-  color: rgba(255, 255, 255, 0.65);
+  color: rgba(255, 255, 255, 0.68);
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background-color 200ms ease, color 200ms ease;
+  transition: background-color 220ms ease, color 220ms ease, box-shadow 220ms ease;
 }
 
 .np-tool-btn.is-on {
-  background: rgba(255, 255, 255, 0.88);
+  background: rgba(255, 255, 255, 0.92);
   color: #111111;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.24);
 }
 </style>

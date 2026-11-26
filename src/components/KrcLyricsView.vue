@@ -2,10 +2,17 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { usePlayerStore } from '@/stores/player';
 import { useSettingsStore } from '@/stores/settings';
+import { echoSystem } from '@/native/echoSystem';
 import type { LyricLine, LyricWord } from '@/types/music';
 
 const props = defineProps<{
   active: boolean;
+}>();
+
+const emit = defineEmits<{
+  userScroll: [];
+  tapBlank: [];
+  lineSeek: [];
 }>();
 
 const player = usePlayerStore();
@@ -13,10 +20,12 @@ const settings = useSettingsStore();
 
 const scrollerRef = ref<HTMLElement | null>(null);
 const lineRefs = ref<HTMLElement[]>([]);
-const liveTimeMs = ref(player.currentTimeMs);
+const liveTimeMs = ref(player.getInterpolatedTimeMs());
 const userScrolling = ref(false);
 let scrollResumeTimer: ReturnType<typeof setTimeout> | null = null;
 let rafId = 0;
+let touchStartY = 0;
+let didScrollGesture = false;
 
 function tick() {
   if (!props.active) {
@@ -40,22 +49,10 @@ function syncLoop() {
   }
 }
 
-watch(
-  () => [props.active, player.isPlaying, player.currentTimeMs],
-  () => syncLoop(),
-  { immediate: true },
-);
-
-onMounted(() => syncLoop());
-onUnmounted(() => {
-  if (rafId) cancelAnimationFrame(rafId);
-  if (scrollResumeTimer) clearTimeout(scrollResumeTimer);
-});
-
 const activeIndex = computed(() => {
   const lines = player.lyrics.lines;
   if (!lines.length) return -1;
-  const t = liveTimeMs.value + 90; // tiny perceptual lead
+  const t = liveTimeMs.value + 90;
   let lo = 0;
   let hi = lines.length - 1;
   let ans = -1;
@@ -75,14 +72,46 @@ function scrollToActive(smooth = true) {
   if (userScrolling.value) return;
   const idx = activeIndex.value;
   const container = scrollerRef.value;
+  if (!container) return;
+  if (idx < 0) {
+    container.scrollTo({ top: 0, behavior: smooth ? 'smooth' : 'auto' });
+    return;
+  }
   const el = lineRefs.value[idx];
-  if (!container || !el) return;
+  if (!el) return;
   const targetTop = el.offsetTop - container.clientHeight * 0.30;
   container.scrollTo({
     top: Math.max(0, targetTop),
     behavior: smooth ? 'smooth' : 'auto',
   });
 }
+
+/**
+ * Instant (<16ms) non-animated snap to the current line on mount, mode switch,
+ * or fresh lyrics arrival — completely eliminates the 3-second waiting lag!
+ */
+function snapToActiveNow() {
+  userScrolling.value = false;
+  liveTimeMs.value = player.getInterpolatedTimeMs();
+  void nextTick(() => {
+    scrollToActive(false);
+    requestAnimationFrame(() => scrollToActive(false));
+  });
+}
+
+watch(
+  () => [props.active, player.isPlaying, player.currentTimeMs],
+  () => syncLoop(),
+  { immediate: true },
+);
+
+watch(
+  () => player.lyrics.lines,
+  () => {
+    lineRefs.value = [];
+    if (props.active) snapToActiveNow();
+  },
+);
 
 watch(activeIndex, () => {
   void nextTick(() => scrollToActive(true));
@@ -92,14 +121,27 @@ watch(
   () => props.active,
   (isActive) => {
     if (isActive) {
-      userScrolling.value = false;
-      void nextTick(() => scrollToActive(false));
+      snapToActiveNow();
     }
   },
+  { immediate: true },
 );
 
-function onTouchScroll() {
+onMounted(() => {
+  syncLoop();
+  if (props.active) {
+    snapToActiveNow();
+  }
+});
+
+onUnmounted(() => {
+  if (rafId) cancelAnimationFrame(rafId);
+  if (scrollResumeTimer) clearTimeout(scrollResumeTimer);
+});
+
+function markUserScrolling() {
   userScrolling.value = true;
+  emit('userScroll');
   if (scrollResumeTimer) clearTimeout(scrollResumeTimer);
   scrollResumeTimer = setTimeout(() => {
     userScrolling.value = false;
@@ -107,9 +149,40 @@ function onTouchScroll() {
   }, 3000);
 }
 
+function onTouchStart(e: TouchEvent) {
+  touchStartY = e.touches[0]?.clientY ?? 0;
+  didScrollGesture = false;
+}
+
+function onTouchMove(e: TouchEvent) {
+  const dy = Math.abs((e.touches[0]?.clientY ?? 0) - touchStartY);
+  if (dy > 10) {
+    didScrollGesture = true;
+    markUserScrolling();
+  }
+}
+
+function onContainerClick(e: MouseEvent) {
+  if (didScrollGesture) {
+    didScrollGesture = false;
+    return;
+  }
+  const target = e.target as HTMLElement | null;
+  if (target?.closest('.krc-line')) return;
+  emit('tapBlank');
+}
+
 function handleLineClick(line: LyricLine) {
+  if (didScrollGesture) {
+    didScrollGesture = false;
+    return;
+  }
+  echoSystem.haptic('selection');
   userScrolling.value = false;
+  liveTimeMs.value = line.startMs;
   void player.seek(line.startMs);
+  emit('lineSeek');
+  void nextTick(() => scrollToActive(true));
 }
 
 function getWordProgress(word: LyricWord, lineIdx: number): number {
@@ -134,8 +207,10 @@ function getLineClass(idx: number) {
   <div
     ref="scrollerRef"
     class="krc-scroller"
-    @touchstart.passive="onTouchScroll"
-    @wheel.passive="onTouchScroll"
+    @touchstart.passive="onTouchStart"
+    @touchmove.passive="onTouchMove"
+    @wheel.passive="markUserScrolling"
+    @click="onContainerClick"
   >
     <div v-if="player.lyricsLoading" class="krc-empty">
       <div class="krc-dots">
@@ -156,7 +231,7 @@ function getLineClass(idx: number) {
         type="button"
         class="krc-line"
         :class="getLineClass(idx)"
-        @click="handleLineClick(line)"
+        @click.stop="handleLineClick(line)"
       >
         <!-- Word-by-word Apple Music style karaoke rendering -->
         <div v-if="line.words && line.words.length" class="krc-main">
@@ -201,20 +276,20 @@ function getLineClass(idx: number) {
   overflow-y: auto;
   overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
-  padding: 24vh 26px 42vh;
+  padding: 20vh 26px 40vh;
   scrollbar-width: none;
   mask-image: linear-gradient(
     to bottom,
     transparent 0%,
-    black 11%,
-    black 84%,
+    black 9%,
+    black 88%,
     transparent 100%
   );
   -webkit-mask-image: linear-gradient(
     to bottom,
     transparent 0%,
-    black 11%,
-    black 84%,
+    black 9%,
+    black 88%,
     transparent 100%
   );
 }
@@ -280,7 +355,7 @@ function getLineClass(idx: number) {
 }
 
 .krc-line.is-scrolling {
-  opacity: 0.62;
+  opacity: 0.65;
   filter: blur(0px);
   transform: scale(1);
 }

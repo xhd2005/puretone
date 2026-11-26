@@ -5,13 +5,17 @@ import { Icon } from '@iconify/vue';
 import iconHeartFilled from '@iconify/icons-tabler/heart-filled';
 import iconClock from '@iconify/icons-tabler/clock';
 import iconChevronRight from '@iconify/icons-tabler/chevron-right';
-import iconMusic from '@iconify/icons-tabler/music';
 import type { PlaylistSummary } from '@/types/music';
 import { kugouApi } from '@/services/kugou/kugouEngine';
+import {
+  backfillMissingPlaylistCovers,
+  getPlaylistCacheKey,
+} from '@/services/playback/playlistCoverResolver';
 import { useAccountsStore } from '@/stores/accounts';
 import { usePlayerStore } from '@/stores/player';
 import { useUiStore } from '@/stores/ui';
 import AvatarButton from '@/components/AvatarButton.vue';
+import PlaylistCover from '@/components/PlaylistCover.vue';
 
 const router = useRouter();
 const accounts = useAccountsStore();
@@ -37,6 +41,7 @@ async function fetchPlaylists() {
   loading.value = true;
   try {
     playlists.value = await kugouApi.getUserPlaylists();
+    void backfillMissingPlaylistCovers(playlists.value);
   } finally {
     loading.value = false;
   }
@@ -73,7 +78,7 @@ watch(() => accounts.activeAccount?.userid, () => void fetchPlaylists());
       </div>
     </header>
 
-    <div class="flex-1 am-scroll pb-44" @scroll.passive="onScroll">
+    <div class="flex-1 am-scroll pb-48" @scroll.passive="onScroll">
       <div class="px-5 pt-[calc(var(--safe-top)+44px)] pb-3">
         <h1 class="text-[34px] font-bold tracking-[-0.025em] leading-none text-[var(--text-primary)]">
           资料库
@@ -126,13 +131,13 @@ watch(() => accounts.activeAccount?.userid, () => void fetchPlaylists());
         </button>
       </div>
 
-      <!-- Playlists 2-Column Apple Music Grid -->
+      <!-- Playlists 2-Column Apple Music Grid with 2x2 Cover Collage -->
       <section v-else class="px-5 mt-6">
         <h2 class="text-[21px] font-bold tracking-tight text-[var(--text-primary)] mb-3.5">歌单</h2>
 
         <div v-if="loading && !playlists.length" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
           <div v-for="i in 4" :key="i">
-            <div class="aspect-square rounded-[12px] bg-[var(--bg-subtle)] animate-pulse" />
+            <div class="aspect-square rounded-[14px] bg-[var(--bg-subtle)] animate-pulse" />
             <div class="h-3.5 w-24 rounded bg-[var(--bg-subtle)] mt-2 animate-pulse" />
           </div>
         </div>
@@ -144,11 +149,12 @@ watch(() => accounts.activeAccount?.userid, () => void fetchPlaylists());
             class="cursor-pointer am-tap"
             @click="openPlaylist(pl)"
           >
-            <div class="aspect-square rounded-[12px] overflow-hidden bg-[var(--bg-subtle)] shadow-sm">
-              <img v-if="pl.coverUrl" :src="pl.coverUrl" loading="lazy" class="w-full h-full object-cover" alt="" />
-              <div v-else class="w-full h-full flex items-center justify-center text-[var(--text-tertiary)]">
-                <Icon :icon="iconMusic" class="w-10 h-10" />
-              </div>
+            <div class="aspect-square rounded-[14px] overflow-hidden shadow-sm">
+              <PlaylistCover
+                :playlist-key="getPlaylistCacheKey(pl)"
+                :cover-url="pl.coverUrl"
+                :alt="pl.name"
+              />
             </div>
             <div class="text-[15px] font-medium text-[var(--text-primary)] truncate mt-2 leading-snug">
               {{ pl.name }}

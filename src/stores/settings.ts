@@ -25,7 +25,7 @@ const DEFAULTS: PersistedSettings = {
   appearance: 'system',
   quality: 'flac',
   enableUnblock: true,
-  unblockPlatforms: ['netease', 'kuwo', 'tencent'],
+  unblockPlatforms: ['kuwo', 'kugou', 'joox', 'bilibili'],
   autoClaimOnLaunch: true,
   autoClaimAllAccounts: true,
   enableConceptTasks: true,

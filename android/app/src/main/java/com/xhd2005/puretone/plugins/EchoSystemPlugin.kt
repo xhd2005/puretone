@@ -1,4 +1,4 @@
-package com.xhd2005.echomusic.plugins
+package com.xhd2005.puretone.plugins
 
 import android.Manifest
 import android.app.AlarmManager
@@ -14,10 +14,14 @@ import android.content.pm.PackageManager
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import android.media.MediaScannerConnection
+import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import android.provider.Settings
 import android.util.Base64
+import android.view.HapticFeedbackConstants
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.core.view.ViewCompat
@@ -35,8 +39,8 @@ import com.getcapacitor.annotation.PermissionCallback
 import java.io.File
 import java.util.Calendar
 
-private class EchoKvDbHelper(context: Context) :
-    SQLiteOpenHelper(context, "echo_mobile_kv.db", null, 1) {
+private class PureToneKvDbHelper(context: Context) :
+    SQLiteOpenHelper(context, "puretone_kv.db", null, 1) {
 
     override fun onConfigure(db: SQLiteDatabase) {
         super.onConfigure(db)
@@ -66,7 +70,7 @@ private class EchoKvDbHelper(context: Context) :
 )
 class EchoSystemPlugin : Plugin() {
 
-    private lateinit var dbHelper: EchoKvDbHelper
+    private lateinit var dbHelper: PureToneKvDbHelper
     private var latestInsets: JSObject = JSObject().apply {
         put("top", 0)
         put("bottom", 0)
@@ -78,7 +82,7 @@ class EchoSystemPlugin : Plugin() {
     override fun load() {
         super.load()
         instance = this
-        dbHelper = EchoKvDbHelper(context.applicationContext)
+        dbHelper = PureToneKvDbHelper(context.applicationContext)
 
         activity?.runOnUiThread {
             val root = activity.window?.decorView ?: return@runOnUiThread
@@ -169,6 +173,28 @@ class EchoSystemPlugin : Plugin() {
     }
 
     @PluginMethod
+    fun haptic(call: PluginCall) {
+        val style = call.getString("style") ?: "light"
+        activity?.runOnUiThread {
+            val view = activity.window?.decorView ?: return@runOnUiThread
+            val constant = when (style) {
+                "selection" -> HapticFeedbackConstants.CLOCK_TICK
+                "medium" -> HapticFeedbackConstants.CONTEXT_CLICK
+                "heavy" -> HapticFeedbackConstants.LONG_PRESS
+                "success" -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    HapticFeedbackConstants.CONFIRM
+                } else {
+                    HapticFeedbackConstants.KEYBOARD_TAP
+                }
+                else -> HapticFeedbackConstants.KEYBOARD_TAP
+            }
+            @Suppress("DEPRECATION")
+            view.performHapticFeedback(constant, HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING)
+        }
+        call.resolve()
+    }
+
+    @PluginMethod
     fun moveToBackground(call: PluginCall) {
         activity?.runOnUiThread {
             activity.moveTaskToBack(true)
@@ -185,24 +211,47 @@ class EchoSystemPlugin : Plugin() {
         }
         val autoClaim = pendingAutoClaim
         pendingAutoClaim = false
+        val openNowPlaying = pendingOpenNowPlaying
+        pendingOpenNowPlaying = false
+
         val versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            pkgInfo?.longVersionCode?.toInt() ?: 1
+            pkgInfo?.longVersionCode?.toInt() ?: 2
         } else {
             @Suppress("DEPRECATION")
-            pkgInfo?.versionCode ?: 1
+            pkgInfo?.versionCode ?: 2
         }
         call.resolve(
             JSObject()
                 .put("autoClaim", autoClaim)
-                .put("versionName", pkgInfo?.versionName ?: "1.0.0")
+                .put("openNowPlaying", openNowPlaying)
+                .put("versionName", pkgInfo?.versionName ?: "2.0.0")
                 .put("versionCode", versionCode),
+        )
+    }
+
+    @PluginMethod
+    fun checkNotificationPermission(call: PluginCall) {
+        val systemEnabled = NotificationManagerCompat.from(context).areNotificationsEnabled()
+        val runtimeGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS,
+            ) == PackageManager.PERMISSION_GRANTED
+        } else {
+            true
+        }
+        call.resolve(
+            JSObject()
+                .put("granted", systemEnabled && runtimeGranted)
+                .put("systemEnabled", systemEnabled)
+                .put("runtimeGranted", runtimeGranted),
         )
     }
 
     @PluginMethod
     fun requestNotificationPermission(call: PluginCall) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-            call.resolve(JSObject().put("granted", true))
+            call.resolve(JSObject().put("granted", NotificationManagerCompat.from(context).areNotificationsEnabled()))
             return
         }
         val granted = ContextCompat.checkSelfPermission(
@@ -220,6 +269,58 @@ class EchoSystemPlugin : Plugin() {
     private fun notificationsPermissionCallback(call: PluginCall) {
         val granted = getPermissionState("notifications") == PermissionState.GRANTED
         call.resolve(JSObject().put("granted", granted))
+    }
+
+    @PluginMethod
+    fun openAppNotificationSettings(call: PluginCall) {
+        try {
+            val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                    putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                }
+            } else {
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = Uri.fromParts("package", context.packageName, null)
+                }
+            }
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(intent)
+            call.resolve(JSObject().put("opened", true))
+        } catch (_: Exception) {
+            call.resolve(JSObject().put("opened", false))
+        }
+    }
+
+    @PluginMethod
+    fun openAppDetailsSettings(call: PluginCall) {
+        try {
+            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.fromParts("package", context.packageName, null)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+            call.resolve(JSObject().put("opened", true))
+        } catch (_: Exception) {
+            call.resolve(JSObject().put("opened", false))
+        }
+    }
+
+    @PluginMethod
+    fun openExternalUrl(call: PluginCall) {
+        val url = call.getString("url")?.trim() ?: ""
+        if (!url.startsWith("http://") && !url.startsWith("https://")) {
+            call.resolve(JSObject().put("opened", false))
+            return
+        }
+        try {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+            call.resolve(JSObject().put("opened", true))
+        } catch (_: Exception) {
+            call.resolve(JSObject().put("opened", false))
+        }
     }
 
     @PluginMethod
@@ -266,13 +367,68 @@ class EchoSystemPlugin : Plugin() {
     fun copyToClipboard(call: PluginCall) {
         val text = call.getString("text") ?: ""
         val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        cm.setPrimaryClip(ClipData.newPlainText("EchoMusic", text))
+        cm.setPrimaryClip(ClipData.newPlainText("PureTone", text))
         call.resolve()
     }
 
     @PluginMethod
     fun isWeChatInstalled(call: PluginCall) {
         call.resolve(JSObject().put("installed", isPackageInstalled(WECHAT_PKG)))
+    }
+
+    @PluginMethod
+    fun launchKugouWithQr(call: PluginCall) {
+        val rawB64 = call.getString("base64Image")?.trim() ?: ""
+        val saved = if (rawB64.isNotEmpty()) {
+            val cleanB64 = rawB64.substringAfter("base64,", rawB64)
+            try {
+                val bytes = Base64.decode(cleanB64, Base64.DEFAULT)
+                saveImageToGallery(bytes, "puretone_kugou_qr_${System.currentTimeMillis()}.png", "image/png")
+            } catch (_: Exception) {
+                false
+            }
+        } else {
+            false
+        }
+
+        val targetPkg = when {
+            isPackageInstalled(KUGOU_LITE_PKG) -> KUGOU_LITE_PKG
+            isPackageInstalled(KUGOU_MAIN_PKG) -> KUGOU_MAIN_PKG
+            else -> null
+        }
+
+        if (targetPkg == null) {
+            call.resolve(
+                JSObject()
+                    .put("launched", false)
+                    .put("savedToGallery", saved)
+                    .put("appName", "")
+                    .put("message", if (saved) "二维码已存至相册首张，未检测到酷狗客户端" else "未检测到酷狗客户端"),
+            )
+            return
+        }
+
+        val appLabel = if (targetPkg == KUGOU_LITE_PKG) "酷狗概念版" else "酷狗音乐"
+        val launched = try {
+            val launchIntent = context.packageManager.getLaunchIntentForPackage(targetPkg)
+            if (launchIntent != null) {
+                launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(launchIntent)
+                true
+            } else {
+                false
+            }
+        } catch (_: Exception) {
+            false
+        }
+
+        call.resolve(
+            JSObject()
+                .put("launched", launched)
+                .put("savedToGallery", saved)
+                .put("appName", appLabel)
+                .put("message", if (launched) "已存相册首张并打开$appLabel，点扫一扫选取相册即可登录" else "无法唤起$appLabel"),
+        )
     }
 
     @PluginMethod
@@ -290,7 +446,7 @@ class EchoSystemPlugin : Plugin() {
             return
         }
 
-        val saved = saveImageToGallery(bytes, "echomusic_wx_login_${System.currentTimeMillis()}.jpg")
+        val saved = saveImageToGallery(bytes, "puretone_wx_login_${System.currentTimeMillis()}.jpg", "image/jpeg")
 
         if (!isPackageInstalled(WECHAT_PKG)) {
             call.resolve(
@@ -397,13 +553,13 @@ class EchoSystemPlugin : Plugin() {
         }
     }
 
-    private fun saveImageToGallery(bytes: ByteArray, fileName: String): Boolean {
+    private fun saveImageToGallery(bytes: ByteArray, fileName: String, mimeType: String): Boolean {
         return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 val values = ContentValues().apply {
                     put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
-                    put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-                    put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/EchoMusic")
+                    put(MediaStore.Images.Media.MIME_TYPE, mimeType)
+                    put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/PureTone")
                     put(MediaStore.Images.Media.IS_PENDING, 1)
                 }
                 val resolver = context.contentResolver
@@ -415,11 +571,11 @@ class EchoSystemPlugin : Plugin() {
                 true
             } else {
                 @Suppress("DEPRECATION")
-                val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "EchoMusic")
+                val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "PureTone")
                 if (!dir.exists()) dir.mkdirs()
                 val file = File(dir, fileName)
                 file.writeBytes(bytes)
-                MediaScannerConnection.scanFile(context, arrayOf(file.absolutePath), arrayOf("image/jpeg"), null)
+                MediaScannerConnection.scanFile(context, arrayOf(file.absolutePath), arrayOf(mimeType), null)
                 true
             }
         } catch (_: Exception) {
@@ -429,11 +585,17 @@ class EchoSystemPlugin : Plugin() {
 
     companion object {
         private const val WECHAT_PKG = "com.tencent.mm"
+        private const val KUGOU_LITE_PKG = "com.kugou.android.lite"
+        private const val KUGOU_MAIN_PKG = "com.kugou.android"
+
         @Volatile
         private var instance: EchoSystemPlugin? = null
 
         @Volatile
         var pendingAutoClaim: Boolean = false
+
+        @Volatile
+        var pendingOpenNowPlaying: Boolean = false
 
         fun dispatchHardwareBack(): Boolean {
             val plugin = instance ?: return false
@@ -448,6 +610,15 @@ class EchoSystemPlugin : Plugin() {
                 plugin.notifyListeners("autoClaimIntent", JSObject())
             } else {
                 pendingAutoClaim = true
+            }
+        }
+
+        fun dispatchOpenNowPlayingIntent() {
+            val plugin = instance
+            if (plugin != null && plugin.hasListeners("openNowPlayingIntent")) {
+                plugin.notifyListeners("openNowPlayingIntent", JSObject())
+            } else {
+                pendingOpenNowPlaying = true
             }
         }
 

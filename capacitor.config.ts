@@ -1,8 +1,8 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'com.xhd2005.echomusic',
-  appName: 'EchoMusic',
+  appId: 'com.xhd2005.puretone',
+  appName: 'PureTone',
   webDir: 'dist',
   server: {
     androidScheme: 'https',

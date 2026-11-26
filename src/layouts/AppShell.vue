@@ -5,90 +5,146 @@ import { Icon } from '@iconify/vue';
 import iconHome from '@iconify/icons-tabler/home';
 import iconPlaylist from '@iconify/icons-tabler/books';
 import iconSearch from '@iconify/icons-tabler/search';
+import { useUiStore } from '@/stores/ui';
+import { echoSystem } from '@/native/echoSystem';
 import MiniPlayerPill from '@/components/MiniPlayerPill.vue';
 import AvatarButton from '@/components/AvatarButton.vue';
+import PureToneMark from '@/components/PureToneMark.vue';
 
 const route = useRoute();
 const router = useRouter();
+const ui = useUiStore();
 
 const activeTab = computed(() => String(route.meta?.tab || 'home'));
 
 const tabs = [
-  { id: 'home', path: '/home', label: '主页', icon: iconHome, activeIcon: iconHome },
-  { id: 'library', path: '/library', label: '资料库', icon: iconPlaylist, activeIcon: iconPlaylist },
-  { id: 'search', path: '/search', label: '搜索', icon: iconSearch, activeIcon: iconSearch },
+  { id: 'home', path: '/home', label: '主页', icon: iconHome },
+  { id: 'library', path: '/library', label: '资料库', icon: iconPlaylist },
+  { id: 'search', path: '/search', label: '搜索', icon: iconSearch },
 ];
 
+const activeTabIndex = computed(() => {
+  const idx = tabs.findIndex((t) => t.id === activeTab.value);
+  return idx >= 0 ? idx : 0;
+});
+
 function goTab(path: string) {
+  echoSystem.haptic('selection');
   if (route.path !== path) void router.push(path);
 }
 </script>
 
 <template>
-  <div class="shell-root">
-    <!-- Tablet / Landscape iPadOS-style Sidebar (>= 768px) -->
-    <aside class="tablet-sidebar am-glass am-hairline-b hidden md:flex flex-col">
-      <div class="pt-[calc(var(--safe-top)+18px)] px-4 pb-4 flex items-center justify-between">
-        <span class="text-[20px] font-bold tracking-tight text-[var(--text-primary)]">EchoMusic</span>
-        <AvatarButton />
-      </div>
+  <div class="shell-stage">
+    <div class="shell-root" :class="{ 'is-receded': ui.hasModalOverlay }">
+      <!-- Tablet / Landscape iPadOS-style Liquid Glass Sidebar (>= 768px) -->
+      <aside class="tablet-sidebar am-glass hidden md:flex flex-col">
+        <div class="pt-[calc(var(--safe-top)+18px)] px-4 pb-4 flex items-center justify-between">
+          <div class="flex items-center gap-2.5">
+            <PureToneMark :size="30" />
+            <span class="text-[19px] font-bold tracking-tight text-[var(--text-primary)]">纯音</span>
+          </div>
+          <AvatarButton />
+        </div>
 
-      <nav class="px-3 space-y-1 flex-1">
-        <button
-          v-for="tab in tabs"
-          :key="tab.id"
-          type="button"
-          class="w-full h-11 px-3 rounded-xl flex items-center gap-3 border-0 text-[15px] font-semibold transition-colors am-tap"
-          :class="
-            activeTab === tab.id
-              ? 'bg-[var(--bg-subtle)] am-accent-text'
-              : 'bg-transparent text-[var(--text-primary)]'
-          "
-          @click="goTab(tab.path)"
-        >
-          <Icon :icon="activeTab === tab.id ? tab.activeIcon : tab.icon" class="w-5 h-5" />
-          <span>{{ tab.label }}</span>
-        </button>
-      </nav>
-    </aside>
+        <nav class="px-3 space-y-1 flex-1">
+          <button
+            v-for="tab in tabs"
+            :key="tab.id"
+            type="button"
+            class="w-full h-11 px-3 rounded-2xl flex items-center gap-3 border-0 text-[15px] font-semibold transition-all am-tap"
+            :class="
+              activeTab === tab.id
+                ? 'bg-[var(--bg-subtle)] am-accent-text'
+                : 'bg-transparent text-[var(--text-primary)]'
+            "
+            @click="goTab(tab.path)"
+          >
+            <Icon :icon="tab.icon" class="w-5 h-5" />
+            <span>{{ tab.label }}</span>
+          </button>
+        </nav>
+      </aside>
 
-    <!-- Main Viewport -->
-    <main class="flex-1 min-w-0 h-full relative overflow-hidden">
-      <router-view v-slot="{ Component }">
-        <KeepAlive include="HomeView,LibraryView,SearchView">
-          <component :is="Component" />
-        </KeepAlive>
-      </router-view>
+      <!-- Main Viewport -->
+      <main class="flex-1 min-w-0 h-full relative overflow-hidden">
+        <router-view v-slot="{ Component }">
+          <KeepAlive include="HomeView,LibraryView,SearchView">
+            <component :is="Component" />
+          </KeepAlive>
+        </router-view>
 
-      <!-- Floating Apple Music MiniPlayer Pill -->
-      <div class="mini-holder">
-        <MiniPlayerPill />
-      </div>
+        <!-- Bottom subtle fade mask so scrolled content melts smoothly behind Liquid Glass capsules -->
+        <div class="bottom-veil md:hidden pointer-events-none" />
 
-      <!-- Mobile 3-Tab Frosted Glass Bottom Bar (< 768px) -->
-      <nav class="mobile-tabbar am-glass md:hidden" aria-label="主导航">
-        <button
-          v-for="tab in tabs"
-          :key="tab.id"
-          type="button"
-          class="tab-btn am-tap"
-          :class="activeTab === tab.id ? 'am-accent-text' : 'text-[var(--text-secondary)]'"
-          @click="goTab(tab.path)"
-        >
-          <Icon :icon="activeTab === tab.id ? tab.activeIcon : tab.icon" class="w-[24px] h-[24px]" />
-          <span class="text-[10px] font-semibold mt-0.5 tracking-tight">{{ tab.label }}</span>
-        </button>
-      </nav>
-    </main>
+        <!-- Floating iOS 26 Liquid Glass MiniPlayer Pill -->
+        <div class="mini-holder">
+          <MiniPlayerPill />
+        </div>
+
+        <!-- Floating iOS 26 Liquid Glass Capsule Tab Bar (< 768px) -->
+        <div class="tabbar-holder md:hidden">
+          <nav class="lg-tabbar lg-capsule" aria-label="主导航">
+            <!-- Animated Sliding Liquid Glass Lens Indicator -->
+            <div
+              class="lg-tab-indicator"
+              :style="{ transform: `translate3d(${activeTabIndex * 100}%, 0, 0)` }"
+            >
+              <div class="lg-tab-indicator-inner" />
+            </div>
+
+            <button
+              v-for="tab in tabs"
+              :key="tab.id"
+              type="button"
+              class="tab-btn"
+              :class="activeTab === tab.id ? 'am-accent-text is-active' : 'text-[var(--text-secondary)]'"
+              @click="goTab(tab.path)"
+            >
+              <Icon :icon="tab.icon" class="w-[22px] h-[22px] transition-transform duration-200" />
+              <span class="text-[10px] font-semibold mt-0.5 tracking-tight">{{ tab.label }}</span>
+            </button>
+          </nav>
+        </div>
+      </main>
+    </div>
   </div>
 </template>
 
 <style scoped>
+.shell-stage {
+  width: 100%;
+  height: 100%;
+  background: var(--bg-grouped);
+  overflow: hidden;
+}
+
+.dark .shell-stage {
+  background: #000000;
+}
+
 .shell-root {
   width: 100%;
   height: 100%;
   display: flex;
   background-color: var(--bg-canvas);
+  transform-origin: center top;
+  transition:
+    transform 420ms var(--spring-ease),
+    border-radius 380ms var(--spring-ease),
+    filter 320ms ease;
+  will-change: transform;
+}
+
+.shell-root.is-receded {
+  transform: scale(0.946) translateY(8px);
+  border-radius: 24px;
+  overflow: hidden;
+  filter: brightness(0.96);
+}
+
+.dark .shell-root.is-receded {
+  filter: brightness(0.84);
 }
 
 .tablet-sidebar {
@@ -98,11 +154,26 @@ function goTab(path: string) {
   border-right: 0.5px solid var(--hairline);
 }
 
+.bottom-veil {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: calc(var(--tabbar-height) + var(--safe-bottom) + 92px);
+  z-index: 24;
+  background: linear-gradient(
+    to top,
+    var(--bg-canvas) 0%,
+    color-mix(in srgb, var(--bg-canvas) 70%, transparent) 45%,
+    transparent 100%
+  );
+}
+
 .mini-holder {
   position: absolute;
-  left: 12px;
-  right: 12px;
-  bottom: calc(var(--tabbar-height) + var(--safe-bottom) + 10px);
+  left: 14px;
+  right: 14px;
+  bottom: calc(var(--tabbar-height) + var(--safe-bottom) + 20px);
   z-index: 35;
 }
 
@@ -110,35 +181,71 @@ function goTab(path: string) {
   .mini-holder {
     left: 20px;
     right: 20px;
-    bottom: calc(var(--safe-bottom) + 14px);
+    bottom: calc(var(--safe-bottom) + 16px);
     max-width: 680px;
     margin: 0 auto;
   }
 }
 
-.mobile-tabbar {
+.tabbar-holder {
   position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 30;
-  height: calc(var(--tabbar-height) + var(--safe-bottom));
-  padding-bottom: var(--safe-bottom);
+  left: 18px;
+  right: 18px;
+  bottom: calc(var(--safe-bottom) + 10px);
+  z-index: 32;
+  display: flex;
+  justify-content: center;
+}
+
+.lg-tabbar {
+  position: relative;
+  width: 100%;
+  max-width: 380px;
+  height: var(--tabbar-height);
+  border-radius: 999px;
+  padding: 4px;
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  border-top: 0.5px solid var(--hairline);
-  border-left: 0;
-  border-right: 0;
-  border-bottom: 0;
+}
+
+.lg-tab-indicator {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: 4px;
+  width: calc((100% - 8px) / 3);
+  padding: 1px;
+  pointer-events: none;
+  transition: transform 380ms var(--spring-ease);
+}
+
+.lg-tab-indicator-inner {
+  width: 100%;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--lg-active-pill);
+  box-shadow: var(--lg-active-pill-shadow);
 }
 
 .tab-btn {
+  position: relative;
+  z-index: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   background: transparent;
   border: 0;
-  padding: 4px 0;
+  border-radius: 999px;
+  padding: 2px 0;
+  transition: color 220ms ease, transform 180ms var(--spring-ease);
+}
+
+.tab-btn:active {
+  transform: scale(0.93);
+}
+
+.tab-btn.is-active svg {
+  transform: scale(1.06);
 }
 </style>

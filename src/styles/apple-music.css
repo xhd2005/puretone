@@ -14,39 +14,56 @@
   --fluid-3: #141b38;
   --fluid-4: #3e1220;
 
-  /* Apple Music Light Palette */
+  /* iOS 26 Liquid Glass Light Palette */
   --bg-canvas: #ffffff;
-  --bg-grouped: #f2f2f7;
-  --bg-card: #ffffff;
-  --bg-subtle: rgba(120, 120, 128, 0.11);
-  --text-primary: #000000;
-  --text-secondary: #6e6e73;
-  --text-tertiary: #aeaeb2;
-  --hairline: rgba(60, 60, 67, 0.12);
-  --glass-bg: rgba(250, 250, 252, 0.78);
-  --glass-border: rgba(0, 0, 0, 0.07);
-  --pill-shadow: 0 10px 30px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.06);
+  --bg-grouped: #f3f4f8;
+  --bg-card: rgba(255, 255, 255, 0.88);
+  --bg-subtle: rgba(118, 118, 128, 0.11);
+  --text-primary: #0b0b0f;
+  --text-secondary: #63636a;
+  --text-tertiary: #a6a6ae;
+  --hairline: rgba(60, 60, 67, 0.11);
+  --glass-bg: rgba(252, 252, 255, 0.76);
+  --glass-border: rgba(255, 255, 255, 0.78);
+  --pill-shadow: 0 14px 36px rgba(15, 23, 42, 0.11), 0 3px 10px rgba(15, 23, 42, 0.06), 0 0 0 0.5px rgba(15, 23, 42, 0.07);
+
+  /* Liquid Glass Materials */
+  --lg-capsule-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.86) 0%, rgba(246, 248, 254, 0.72) 100%);
+  --lg-surface-bg: linear-gradient(155deg, rgba(255, 255, 255, 0.82) 0%, rgba(244, 246, 252, 0.66) 100%);
+  --lg-sheet-bg: rgba(246, 247, 252, 0.93);
+  --lg-specular: inset 0 1.25px 0 rgba(255, 255, 255, 0.96), inset 0 -0.75px 0 rgba(15, 23, 42, 0.06), inset 0.75px 0 0 rgba(255, 255, 255, 0.55);
+  --lg-active-pill: linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(240, 242, 249, 0.82) 100%);
+  --lg-active-pill-shadow: 0 4px 14px rgba(15, 23, 42, 0.09), inset 0 1px 0 rgba(255, 255, 255, 1);
+  --lg-scrim: rgba(18, 22, 32, 0.14);
 
   --spring-ease: cubic-bezier(0.22, 1, 0.36, 1);
-  --tabbar-height: 58px;
-  --miniplayer-height: 60px;
+  --tabbar-height: 60px;
+  --miniplayer-height: 62px;
 }
 
 .dark {
   --accent: var(--accent-dark);
 
-  /* Apple Music True OLED Pure Black Palette */
+  /* iOS 26 Liquid Glass OLED Pure Black Palette */
   --bg-canvas: #000000;
-  --bg-grouped: #1c1c1e;
-  --bg-card: #1c1c1e;
+  --bg-grouped: #161619;
+  --bg-card: rgba(30, 30, 34, 0.86);
   --bg-subtle: rgba(120, 120, 128, 0.24);
   --text-primary: #ffffff;
-  --text-secondary: #8e8e93;
-  --text-tertiary: #636366;
-  --hairline: rgba(255, 255, 255, 0.11);
-  --glass-bg: rgba(24, 24, 26, 0.80);
-  --glass-border: rgba(255, 255, 255, 0.10);
-  --pill-shadow: 0 12px 34px rgba(0, 0, 0, 0.55), 0 2px 10px rgba(0, 0, 0, 0.35);
+  --text-secondary: #98989f;
+  --text-tertiary: #636369;
+  --hairline: rgba(255, 255, 255, 0.10);
+  --glass-bg: rgba(28, 28, 32, 0.74);
+  --glass-border: rgba(255, 255, 255, 0.14);
+  --pill-shadow: 0 18px 44px rgba(0, 0, 0, 0.62), 0 4px 14px rgba(0, 0, 0, 0.38), 0 0 0 0.5px rgba(255, 255, 255, 0.11);
+
+  --lg-capsule-bg: linear-gradient(180deg, rgba(46, 46, 54, 0.78) 0%, rgba(24, 24, 29, 0.72) 100%);
+  --lg-surface-bg: linear-gradient(155deg, rgba(44, 44, 52, 0.74) 0%, rgba(24, 24, 29, 0.64) 100%);
+  --lg-sheet-bg: rgba(24, 24, 28, 0.90);
+  --lg-specular: inset 0 1px 0 rgba(255, 255, 255, 0.24), inset 0 -0.75px 0 rgba(0, 0, 0, 0.45), inset 0.75px 0 0 rgba(255, 255, 255, 0.10);
+  --lg-active-pill: linear-gradient(180deg, rgba(255, 255, 255, 0.20) 0%, rgba(255, 255, 255, 0.10) 100%);
+  --lg-active-pill-shadow: 0 4px 14px rgba(0, 0, 0, 0.36), inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  --lg-scrim: rgba(0, 0, 0, 0.48);
 }
 
 * {
@@ -62,30 +79,64 @@ body,
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background-color: var(--bg-canvas);
+  background-color: #000000;
   color: var(--text-primary);
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "PingFang SC", "Noto Sans SC", "Helvetica Neue", sans-serif;
   -webkit-font-smoothing: antialiased;
   user-select: none;
   touch-action: manipulation;
-  transition: background-color 260ms ease, color 260ms ease;
 }
 
 .am-accent-text {
   color: var(--accent);
-  transition: color 500ms ease;
+  transition: color 450ms ease;
 }
 
 .am-accent-bg {
   background-color: var(--accent);
-  transition: background-color 500ms ease;
+  transition: background-color 450ms ease;
 }
 
+/* Frosted Header / Generic Glass */
 .am-glass {
   background-color: var(--glass-bg);
-  backdrop-filter: blur(28px) saturate(190%);
-  -webkit-backdrop-filter: blur(28px) saturate(190%);
+  backdrop-filter: blur(30px) saturate(200%);
+  -webkit-backdrop-filter: blur(30px) saturate(200%);
   border: 0.5px solid var(--glass-border);
+}
+
+/* iOS 26 Liquid Glass Capsule (Floating Tab Bar, MiniPlayer, Toast) */
+.lg-capsule {
+  background: var(--lg-capsule-bg);
+  backdrop-filter: blur(34px) saturate(220%);
+  -webkit-backdrop-filter: blur(34px) saturate(220%);
+  box-shadow: var(--lg-specular), var(--pill-shadow);
+  border: 0.5px solid var(--glass-border);
+}
+
+/* iOS 26 Liquid Glass Sheet Panel */
+.lg-sheet-panel {
+  background: var(--lg-sheet-bg);
+  backdrop-filter: blur(42px) saturate(215%);
+  -webkit-backdrop-filter: blur(42px) saturate(215%);
+  box-shadow: var(--lg-specular), 0 -12px 44px rgba(0, 0, 0, 0.16);
+  border-top: 0.75px solid var(--glass-border);
+}
+
+/* Airy Frosted Scrim (eliminates muddy gray slab in Light Mode!) */
+.lg-scrim {
+  background-color: var(--lg-scrim);
+  backdrop-filter: blur(7px) saturate(135%);
+  -webkit-backdrop-filter: blur(7px) saturate(135%);
+}
+
+/* Liquid Glass Pill Button on Dark/Fluid Backgrounds */
+.lg-fluid-btn {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.22) 0%, rgba(255, 255, 255, 0.11) 100%);
+  backdrop-filter: blur(22px) saturate(180%);
+  -webkit-backdrop-filter: blur(22px) saturate(180%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.34), 0 6px 18px rgba(0, 0, 0, 0.18);
+  border: 0.5px solid rgba(255, 255, 255, 0.20);
 }
 
 .am-hairline-b {
@@ -116,26 +167,44 @@ body,
   transition: transform 160ms var(--spring-ease), opacity 160ms ease;
 }
 .am-tap:active {
-  transform: scale(0.965);
-  opacity: 0.78;
+  transform: scale(0.962);
+  opacity: 0.80;
 }
 
 .tabular-nums {
   font-variant-numeric: tabular-nums;
 }
 
-/* Sheet slide-up transition */
+/* Fullscreen NowPlaying Sheet slide-up */
 .am-sheet-enter-active,
 .am-sheet-leave-active {
-  transition: transform 380ms var(--spring-ease), opacity 260ms ease;
+  transition: transform 400ms var(--spring-ease), opacity 280ms ease;
 }
 .am-sheet-enter-from,
 .am-sheet-leave-to {
   transform: translateY(100%);
-  opacity: 0.6;
+  opacity: 0.85;
 }
 
-/* Modal fade + scale */
+/* Decoupled Modal Transition: Backdrop ONLY fades, inner .lg-sheet-panel slides independently! */
+.lg-modal-enter-active,
+.lg-modal-leave-active {
+  transition: opacity 240ms ease;
+}
+.lg-modal-enter-active .lg-sheet-panel,
+.lg-modal-leave-active .lg-sheet-panel {
+  transition: transform 420ms var(--spring-ease);
+}
+.lg-modal-enter-from,
+.lg-modal-leave-to {
+  opacity: 0;
+}
+.lg-modal-enter-from .lg-sheet-panel,
+.lg-modal-leave-to .lg-sheet-panel {
+  transform: translateY(100%);
+}
+
+/* Generic fade */
 .am-fade-enter-active,
 .am-fade-leave-active {
   transition: opacity 220ms ease;

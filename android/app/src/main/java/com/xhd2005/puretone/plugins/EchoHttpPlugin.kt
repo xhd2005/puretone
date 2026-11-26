@@ -1,4 +1,4 @@
-package com.xhd2005.echomusic.plugins
+package com.xhd2005.puretone.plugins
 
 import android.util.Base64
 import com.getcapacitor.JSArray

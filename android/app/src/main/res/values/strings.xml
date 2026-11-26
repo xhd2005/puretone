@@ -1,7 +1,8 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">EchoMusic</string>
-    <string name="title_activity_main">EchoMusic</string>
-    <string name="package_name">com.xhd2005.echomusic</string>
-    <string name="custom_url_scheme">com.xhd2005.echomusic</string>
+    <string name="app_name">PureTone</string>
+    <string name="title_activity_main">PureTone</string>
+    <string name="package_name">com.xhd2005.puretone</string>
+    <string name="custom_url_scheme">com.xhd2005.puretone</string>
+    <string name="widget_description">PureTone 桌面音乐播控卡片</string>
 </resources>

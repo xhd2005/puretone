@@ -1,13 +1,13 @@
 import { defineStore } from 'pinia';
 import { computed, ref, watch } from 'vue';
-import type { CoverPalette, ParsedLyrics, PlayMode, Song, UnblockCandidate } from '@/types/music';
+import type { CoverPalette, ParsedLyrics, PlayMode, SleepTimerMode, Song, UnblockCandidate } from '@/types/music';
 import { echoPlayer } from '@/native/echoPlayer';
 import { echoSystem } from '@/native/echoSystem';
 import { kugouApi } from '@/services/kugou/kugouEngine';
-import { resolvePlayableStream } from '@/services/playback/urlResolver';
+import { clearCachedResolvedStream, resolvePlayableStream } from '@/services/playback/urlResolver';
 import { fetchLyricsForSong } from '@/services/playback/krcParser';
 import { DEFAULT_APPLE_PALETTE, extractPaletteFromCoverUrl } from '@/services/playback/coverPalette';
-import { pinSourceForSong, resolveCandidateUrl } from '@/services/playback/unblockEngine';
+import { getTrackKey, pinSourceForSong, resolveCandidateUrl } from '@/services/playback/unblockEngine';
 import { useSettingsStore } from './settings';
 import { useUiStore } from './ui';
 
@@ -42,7 +42,14 @@ export const usePlayerStore = defineStore('player', () => {
 
   const recentPlays = ref<Song[]>([]);
   const favoriteHashes = ref<Set<string>>(new Set());
+  const favoriteFileIds = ref<Map<string, number>>(new Map());
   const favoriteListId = ref<string>('');
+  const favoriteGlobalId = ref<string>('');
+
+  // Sleep timer state
+  const sleepTimerMode = ref<SleepTimerMode>('off');
+  const sleepRemainingSec = ref<number>(0);
+  let sleepInterval: ReturnType<typeof setInterval> | null = null;
 
   // High-frequency interpolation anchor for 60fps KRC karaoke
   const lastSampleTimeMs = ref(0);
@@ -50,6 +57,9 @@ export const usePlayerStore = defineStore('player', () => {
 
   let trackSeq = 0;
   let listenersBound = false;
+  let notifPromptedThisSession = false;
+  let prefetchTimer: ReturnType<typeof setTimeout> | null = null;
+  let shuffleNextIndexCache = -1;
 
   const settingsStore = useSettingsStore();
 
@@ -61,6 +71,15 @@ export const usePlayerStore = defineStore('player', () => {
   const isCurrentFavorite = computed(() => {
     const h = currentSong.value?.hash?.toLowerCase();
     return Boolean(h && favoriteHashes.value.has(h));
+  });
+
+  const sleepTimerBadge = computed(() => {
+    if (sleepTimerMode.value === 'off') return '';
+    if (sleepTimerMode.value === 'track') return '本曲后停';
+    const sec = Math.max(0, sleepRemainingSec.value);
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return `${m}:${String(s).padStart(2, '0')}`;
   });
 
   function applyPaletteToCss(p: CoverPalette) {
@@ -77,17 +96,133 @@ export const usePlayerStore = defineStore('player', () => {
   watch(palette, applyPaletteToCss, { immediate: true });
 
   async function persistQueue() {
+    // Persist up to 200 items centered around currentIndex for fast startup
+    const total = queue.value.length;
+    if (total <= 200) {
+      await echoSystem.kvSetJson(QUEUE_KEY, {
+        queue: queue.value,
+        currentIndex: currentIndex.value,
+        playMode: playMode.value,
+      });
+      return;
+    }
+    const start = Math.max(0, currentIndex.value - 50);
+    const sliced = queue.value.slice(start, start + 200);
     await echoSystem.kvSetJson(QUEUE_KEY, {
-      queue: queue.value.slice(0, 120),
-      currentIndex: currentIndex.value,
+      queue: sliced,
+      currentIndex: Math.max(0, currentIndex.value - start),
       playMode: playMode.value,
     });
   }
 
   function pushRecent(song: Song) {
     const filtered = recentPlays.value.filter((s) => s.id !== song.id && s.hash !== song.hash);
-    recentPlays.value = [song, ...filtered].slice(0, 60);
+    recentPlays.value = [song, ...filtered].slice(0, 80);
     void echoSystem.kvSetJson(RECENT_KEY, recentPlays.value);
+  }
+
+  function clearSleepTimer() {
+    if (sleepInterval) {
+      clearInterval(sleepInterval);
+      sleepInterval = null;
+    }
+    sleepTimerMode.value = 'off';
+    sleepRemainingSec.value = 0;
+  }
+
+  function setSleepTimer(mode: SleepTimerMode) {
+    clearSleepTimer();
+    sleepTimerMode.value = mode;
+    echoSystem.haptic('selection');
+    const ui = useUiStore();
+    if (mode === 'off') {
+      ui.showToast('已关闭睡眠定时');
+      return;
+    }
+    if (mode === 'track') {
+      ui.showToast('已设定：播完当前曲目后柔和停止');
+      return;
+    }
+    const mins = Number(mode);
+    sleepRemainingSec.value = mins * 60;
+    ui.showToast(`睡眠定时已开启：${mins} 分钟后柔和淡出暂停`);
+    sleepInterval = setInterval(() => {
+      if (sleepRemainingSec.value <= 1) {
+        clearSleepTimer();
+        if (isPlaying.value) {
+          void echoPlayer.fadeOutAndPause(3000);
+          isPlaying.value = false;
+        }
+        useUiStore().showToast('睡眠定时已到，晚安');
+        return;
+      }
+      sleepRemainingSec.value -= 1;
+    }, 1000);
+  }
+
+  async function ensureNotificationReadyForMedia() {
+    if (notifPromptedThisSession) return;
+    notifPromptedThisSession = true;
+    try {
+      const check = await echoSystem.checkNotificationPermission();
+      if (!check.granted) {
+        await echoSystem.requestNotificationPermission();
+      }
+    } catch {
+      // non-fatal
+    }
+  }
+
+  function pickUpcomingIndex(): number {
+    if (queue.value.length <= 1) return -1;
+    if (playMode.value === 'repeat-one') return currentIndex.value;
+    if (playMode.value === 'shuffle') {
+      if (
+        shuffleNextIndexCache >= 0 &&
+        shuffleNextIndexCache < queue.value.length &&
+        shuffleNextIndexCache !== currentIndex.value
+      ) {
+        return shuffleNextIndexCache;
+      }
+      let nextIdx = currentIndex.value;
+      while (nextIdx === currentIndex.value) {
+        nextIdx = Math.floor(Math.random() * queue.value.length);
+      }
+      shuffleNextIndexCache = nextIdx;
+      return nextIdx;
+    }
+    return (currentIndex.value + 1) % queue.value.length;
+  }
+
+  function scheduleNextTrackPrefetch(expectedSeq: number) {
+    if (prefetchTimer) clearTimeout(prefetchTimer);
+    prefetchTimer = setTimeout(async () => {
+      if (expectedSeq !== trackSeq) return;
+      const nextIdx = pickUpcomingIndex();
+      if (nextIdx < 0 || nextIdx === currentIndex.value) return;
+      const nextSong = queue.value[nextIdx];
+      if (!nextSong) return;
+      try {
+        const resolved = await resolvePlayableStream(nextSong, settingsStore.quality, {
+          enableUnblock: settingsStore.enableUnblock,
+        });
+        if (expectedSeq !== trackSeq) return;
+        await echoPlayer.prepareNext({
+          url: resolved.url,
+          headers: resolved.headers,
+          metadata: {
+            title: nextSong.title,
+            artist: nextSong.artist,
+            album: nextSong.album,
+            coverUrl: nextSong.coverUrl,
+            durationMs: (nextSong.duration || 0) * 1000,
+          },
+          cacheKey: getTrackKey(nextSong),
+        });
+      } catch {
+        // silent background prefetch
+      }
+    }, 3000);
   }
 
   async function bindNativeListeners() {
@@ -116,7 +251,10 @@ export const usePlayerStore = defineStore('player', () => {
       isPlaying.value = false;
       isBuffering.value = false;
       const ui = useUiStore();
-      ui.showToast(`播放异常：${ev.message}`);
+      if (currentSong.value) {
+        clearCachedResolvedStream(currentSong.value);
+      }
+      ui.showToast(`播放异常：${ev.message}，可尝试换源`);
     });
 
     await echoPlayer.onMediaCommand((ev) => {
@@ -170,9 +308,15 @@ export const usePlayerStore = defineStore('player', () => {
     }
   }
 
-  async function loadAndPlayCurrent(autoPlay = true, customUrl?: { url: string; sourceTag: string }) {
+  async function loadAndPlayCurrent(
+    autoPlay = true,
+    customStream?: { url: string; sourceTag: string; headers?: Record<string, string> },
+  ) {
     const song = currentSong.value;
     if (!song) return;
+    if (prefetchTimer) clearTimeout(prefetchTimer);
+    shuffleNextIndexCache = -1;
+
     const seq = ++trackSeq;
     isResolving.value = true;
     isBuffering.value = true;
@@ -180,8 +324,9 @@ export const usePlayerStore = defineStore('player', () => {
     lastSampleTimeMs.value = 0;
     lastSampleAt.value = Date.now();
     durationMs.value = (song.duration || 0) * 1000;
-    sourceTag.value = customUrl?.sourceTag || '';
+    sourceTag.value = customStream?.sourceTag || '';
 
+    void ensureNotificationReadyForMedia();
     void refreshCoverPalette(song.coverUrl);
     void loadLyrics(song);
     pushRecent(song);
@@ -189,22 +334,25 @@ export const usePlayerStore = defineStore('player', () => {
 
     const ui = useUiStore();
     try {
-      let playUrl = customUrl?.url || '';
-      let tag = customUrl?.sourceTag || '';
+      let playUrl = customStream?.url || '';
+      let tag = customStream?.sourceTag || '';
+      let headers = customStream?.headers;
+
       if (!playUrl) {
         const resolved = await resolvePlayableStream(song, settingsStore.quality, {
           enableUnblock: settingsStore.enableUnblock,
-          externalPlatforms: settingsStore.unblockPlatforms,
         });
         if (seq !== trackSeq) return;
         playUrl = resolved.url;
         tag = resolved.sourceTag;
+        headers = resolved.headers;
       }
 
       sourceTag.value = tag;
       await echoPlayer.setRepeatOne(playMode.value === 'repeat-one');
       await echoPlayer.load({
         url: playUrl,
+        headers,
         metadata: {
           title: song.title,
           artist: song.artist,
@@ -214,21 +362,25 @@ export const usePlayerStore = defineStore('player', () => {
         },
         autoPlay,
         trackSeq: seq,
+        cacheKey: getTrackKey(song),
       });
       if (seq === trackSeq) {
         isPlaying.value = autoPlay;
+        scheduleNextTrackPrefetch(seq);
       }
     } catch (err: any) {
       if (seq !== trackSeq) return;
       isPlaying.value = false;
       isBuffering.value = false;
-      ui.showToast(err?.message || '播放失败，可尝试手动换源');
+      ui.showToast(err?.message || '暂无可用音源，已为你打开换源面板');
+      ui.unblockModalSong = song;
     } finally {
       if (seq === trackSeq) isResolving.value = false;
     }
   }
 
   async function playSong(song: Song, newQueue?: Song[]) {
+    echoSystem.haptic('light');
     if (newQueue && newQueue.length > 0) {
       queue.value = [...newQueue];
       const idx = queue.value.findIndex((s) => s.id === song.id && s.hash === song.hash);
@@ -249,6 +401,7 @@ export const usePlayerStore = defineStore('player', () => {
 
   async function playQueue(songs: Song[], startIndex = 0, mode?: PlayMode) {
     if (!songs.length) return;
+    echoSystem.haptic('light');
     queue.value = [...songs];
     currentIndex.value = Math.max(0, Math.min(startIndex, songs.length - 1));
     if (mode) playMode.value = mode;
@@ -257,6 +410,7 @@ export const usePlayerStore = defineStore('player', () => {
   }
 
   async function playPersonalFm() {
+    echoSystem.haptic('medium');
     const ui = useUiStore();
     try {
       const tracks = await kugouApi.getPersonalFm();
@@ -272,6 +426,7 @@ export const usePlayerStore = defineStore('player', () => {
 
   async function togglePlay(forceState?: boolean) {
     if (!currentSong.value) return;
+    echoSystem.haptic('light');
     const target = forceState !== undefined ? forceState : !isPlaying.value;
     if (target) {
       if (trackSeq === 0) {
@@ -287,6 +442,12 @@ export const usePlayerStore = defineStore('player', () => {
   }
 
   async function handleTrackEnded() {
+    if (sleepTimerMode.value === 'track') {
+      clearSleepTimer();
+      isPlaying.value = false;
+      useUiStore().showToast('当前曲目已播完，晚安');
+      return;
+    }
     if (playMode.value === 'repeat-one') {
       await seek(0);
       await echoPlayer.play();
@@ -297,12 +458,11 @@ export const usePlayerStore = defineStore('player', () => {
 
   async function next() {
     if (!queue.value.length) return;
+    echoSystem.haptic('light');
     if (playMode.value === 'shuffle' && queue.value.length > 1) {
-      let nextIdx = currentIndex.value;
-      while (nextIdx === currentIndex.value) {
-        nextIdx = Math.floor(Math.random() * queue.value.length);
-      }
-      currentIndex.value = nextIdx;
+      const nextIdx = pickUpcomingIndex();
+      currentIndex.value = nextIdx >= 0 ? nextIdx : 0;
+      shuffleNextIndexCache = -1;
       await loadAndPlayCurrent(true);
       return;
     }
@@ -326,6 +486,7 @@ export const usePlayerStore = defineStore('player', () => {
 
   async function previous() {
     if (!queue.value.length) return;
+    echoSystem.haptic('light');
     if (currentTimeMs.value > 5000) {
       await seek(0);
       return;
@@ -343,14 +504,17 @@ export const usePlayerStore = defineStore('player', () => {
   }
 
   function cyclePlayMode() {
+    echoSystem.haptic('selection');
     const order: PlayMode[] = ['sequence', 'shuffle', 'repeat-one'];
     const idx = order.indexOf(playMode.value === 'fm' ? 'sequence' : playMode.value);
     playMode.value = order[(idx + 1) % order.length];
+    shuffleNextIndexCache = -1;
     void echoPlayer.setRepeatOne(playMode.value === 'repeat-one');
     void persistQueue();
   }
 
   function addToQueueNext(song: Song) {
+    echoSystem.haptic('light');
     const ui = useUiStore();
     if (!queue.value.length) {
       void playSong(song);
@@ -365,11 +529,12 @@ export const usePlayerStore = defineStore('player', () => {
       queue.value.splice(currentIndex.value + 1, 0, song);
     }
     void persistQueue();
-    ui.showToast(`已添加到下一首播放`);
+    ui.showToast('已添加到下一首播放');
   }
 
   function removeFromQueue(index: number) {
     if (index < 0 || index >= queue.value.length) return;
+    echoSystem.haptic('selection');
     const removingCurrent = index === currentIndex.value;
     queue.value.splice(index, 1);
     if (queue.value.length === 0) {
@@ -387,36 +552,69 @@ export const usePlayerStore = defineStore('player', () => {
 
   async function applyUnblockCandidate(song: Song, candidate: UnblockCandidate, pin: boolean) {
     const ui = useUiStore();
-    const resolved = await resolveCandidateUrl(candidate, settingsStore.quality);
+    const resolved = await resolveCandidateUrl(candidate, settingsStore.quality, song.duration);
     if (!resolved?.url) {
       ui.showToast('该候选音源解析失败，请换一个试试');
       return false;
     }
+    clearCachedResolvedStream(song);
     if (pin) {
-      await pinSourceForSong(song, candidate, resolved.url);
+      await pinSourceForSong(song, candidate, resolved.url, resolved.headers);
     }
     const tag =
       candidate.channel === 'kugou-alt'
         ? '酷狗异版'
-        : `解灰 · ${(candidate.sourcePlatform || 'EXT').toUpperCase()}`;
+        : candidate.sourcePlatform === 'kuwo'
+          ? '解灰 · 酷我 320k'
+          : candidate.sourcePlatform === 'bilibili'
+            ? '解灰 · B站音频'
+            : `解灰 · ${(candidate.sourcePlatform || 'EXT').toUpperCase()}`;
 
     const isCurrent = currentSong.value && currentSong.value.hash === song.hash && currentSong.value.id === song.id;
     if (isCurrent) {
-      await loadAndPlayCurrent(true, { url: resolved.url, sourceTag: tag });
+      await loadAndPlayCurrent(true, { url: resolved.url, sourceTag: tag, headers: resolved.headers });
     } else {
       await playSong(song);
     }
+    echoSystem.haptic('success');
     ui.showToast(pin ? `已切换并锁定：${tag}` : `正在试听：${tag}`);
     return true;
   }
 
-  async function syncFavoritesFromPlaylist(listId: string, tracks: Song[]) {
+  async function syncFavoritesFromPlaylist(listId: string, tracks: Song[], globalId?: string) {
     favoriteListId.value = listId;
+    if (globalId) favoriteGlobalId.value = globalId;
     const set = new Set<string>();
+    const fidMap = new Map<string, number>();
     for (const s of tracks) {
-      if (s.hash) set.add(s.hash.toLowerCase());
+      if (s.hash) {
+        const key = s.hash.toLowerCase();
+        set.add(key);
+        if (s.fileId) fidMap.set(key, s.fileId);
+      }
     }
     favoriteHashes.value = set;
+    favoriteFileIds.value = fidMap;
+  }
+
+  async function refreshFavoriteFileId(targetHashLower: string) {
+    if (!favoriteListId.value) return;
+    try {
+      const page = await kugouApi.getPlaylistTracksPaged({
+        listId: favoriteListId.value,
+        globalCollectionId: favoriteGlobalId.value,
+        page: 1,
+        pagesize: 30,
+      });
+      for (const s of page.songs) {
+        if (s.hash && s.hash.toLowerCase() === targetHashLower && s.fileId) {
+          favoriteFileIds.value.set(targetHashLower, s.fileId);
+          break;
+        }
+      }
+    } catch {
+      // non-fatal
+    }
   }
 
   async function toggleFavorite(song: Song) {
@@ -427,17 +625,35 @@ export const usePlayerStore = defineStore('player', () => {
       ui.showToast('请先登录并加载“我喜欢”歌单');
       return;
     }
+
     if (favoriteHashes.value.has(key)) {
-      favoriteHashes.value.delete(key);
-      favoriteHashes.value = new Set(favoriteHashes.value);
-      ui.showToast('已从本地标记移除');
+      echoSystem.haptic('selection');
+      let fileId = song.fileId || favoriteFileIds.value.get(key);
+      if (!fileId) {
+        await refreshFavoriteFileId(key);
+        fileId = favoriteFileIds.value.get(key);
+      }
+      try {
+        if (fileId) {
+          await kugouApi.removeTracksFromPlaylist(favoriteListId.value, [fileId]);
+        }
+        favoriteHashes.value.delete(key);
+        favoriteFileIds.value.delete(key);
+        favoriteHashes.value = new Set(favoriteHashes.value);
+        ui.showToast(fileId ? '已从“我喜欢”移除' : '已取消红心标记');
+      } catch {
+        ui.showToast('取消收藏失败，请检查网络');
+      }
       return;
     }
+
+    echoSystem.haptic('success');
     try {
       await kugouApi.addTracksToPlaylist(favoriteListId.value, [song]);
       favoriteHashes.value.add(key);
       favoriteHashes.value = new Set(favoriteHashes.value);
       ui.showToast('已收藏到“我喜欢”');
+      void refreshFavoriteFileId(key);
     } catch {
       ui.showToast('收藏失败，请检查登录状态');
     }
@@ -467,6 +683,9 @@ export const usePlayerStore = defineStore('player', () => {
     recentPlays,
     favoriteHashes,
     isCurrentFavorite,
+    sleepTimerMode,
+    sleepRemainingSec,
+    sleepTimerBadge,
     hydrate,
     playSong,
     playQueue,
@@ -481,6 +700,8 @@ export const usePlayerStore = defineStore('player', () => {
     applyUnblockCandidate,
     syncFavoritesFromPlaylist,
     toggleFavorite,
+    setSleepTimer,
+    clearSleepTimer,
     getInterpolatedTimeMs,
   };
 });

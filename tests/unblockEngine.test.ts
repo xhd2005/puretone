@@ -1,18 +1,47 @@
 import { describe, expect, it } from 'vitest';
-import { extractUrlsFromPayload, scoreCandidate } from '@/services/playback/unblockEngine';
+import {
+  decodeHtmlEntities,
+  extractUrlsFromPayload,
+  parseDurationLabel,
+  parseKuwoSearchPayload,
+  scoreCandidate,
+} from '@/services/playback/unblockEngine';
 import { buildPaletteFromSamples, DEFAULT_APPLE_PALETTE } from '@/services/playback/coverPalette';
 
-describe('Unblock matching & cover palette engines', () => {
-  it('scores original studio tracks high and penalizes unwanted DJ/karaoke variants', () => {
+describe('Unblock matching, Kuwo parser & cover palette engines', () => {
+  it('scores original studio tracks high and penalizes unwanted DJ/karaoke/cover variants', () => {
     const target = { title: '晴天', artist: '周杰伦', duration: 269 };
 
     const exact = scoreCandidate(target, { title: '晴天', artist: '周杰伦', duration: 269 });
     const karaoke = scoreCandidate(target, { title: '晴天 (伴奏)', artist: '周杰伦', duration: 269 });
     const dj = scoreCandidate(target, { title: '晴天 DJ版', artist: '周杰伦', duration: 269 });
+    const cover = scoreCandidate(target, { title: '晴天 (翻唱)', artist: 'RyaVocal', duration: 269 });
 
     expect(exact).toBeGreaterThanOrEqual(0.95);
     expect(karaoke).toBe(0);
     expect(dj).toBe(0);
+    expect(cover).toBe(0);
+  });
+
+  it('parses single-quoted Kuwo r.s search payload with HTML entities cleanly', () => {
+    const raw = `{'HIT':'1','abslist':[{'MUSICRID':'MUSIC_228908','SONGNAME':'晴天&nbsp;(原版)','ARTIST':'周杰伦&amp;朋友','ALBUM':'叶惠美','DURATION':'269'}]}`;
+    const list = parseKuwoSearchPayload(raw);
+    expect(list).toHaveLength(1);
+    expect(list[0]).toEqual({
+      rid: '228908',
+      title: '晴天 (原版)',
+      artist: '周杰伦&朋友',
+      album: '叶惠美',
+      duration: 269,
+    });
+  });
+
+  it('parses mm:ss and ms duration labels accurately', () => {
+    expect(parseDurationLabel('4:30')).toBe(270);
+    expect(parseDurationLabel('01:02:05')).toBe(3725);
+    expect(parseDurationLabel(269000)).toBe(269);
+    expect(parseDurationLabel(269)).toBe(269);
+    expect(decodeHtmlEntities('<em>晴天</em> &amp; 周杰伦')).toBe('晴天 & 周杰伦');
   });
 
   it('extracts nested audio URLs from heterogeneous API payloads', () => {

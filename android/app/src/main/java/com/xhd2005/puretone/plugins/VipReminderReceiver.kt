@@ -1,4 +1,4 @@
-package com.xhd2005.echomusic.plugins
+package com.xhd2005.puretone.plugins
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -8,8 +8,8 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import androidx.core.app.NotificationCompat
-import com.xhd2005.echomusic.MainActivity
-import com.xhd2005.echomusic.R
+import com.xhd2005.puretone.MainActivity
+import com.xhd2005.puretone.R
 
 class VipReminderReceiver : BroadcastReceiver() {
 
@@ -29,9 +29,9 @@ class VipReminderReceiver : BroadcastReceiver() {
         )
 
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setSmallIcon(R.drawable.ic_stat_puretone)
             .setContentTitle("今日畅听 VIP 待领取")
-            .setContentText("点击打开 EchoMusic 自动完成每日四步签到")
+            .setContentText("点击打开纯音 PureTone 自动完成每日四步签到")
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setAutoCancel(true)
             .setContentIntent(pendingIntent)
@@ -41,7 +41,7 @@ class VipReminderReceiver : BroadcastReceiver() {
     }
 
     companion object {
-        const val CHANNEL_ID = "echo_daily_vip_reminder"
+        const val CHANNEL_ID = "puretone_daily_vip_reminder"
         const val NOTIFICATION_ID = 202611
         const val REQ_CODE_OPEN = 202612
         const val REQ_CODE_ALARM = 202613
@@ -53,7 +53,7 @@ class VipReminderReceiver : BroadcastReceiver() {
                     "每日 VIP 签到提醒",
                     NotificationManager.IMPORTANCE_DEFAULT,
                 ).apply {
-                    description = "在设定时间提醒你点击打开应用自动领取畅听会员"
+                    description = "在设定时间提醒你点击打开纯音自动领取畅听会员"
                 }
                 manager.createNotificationChannel(channel)
             }

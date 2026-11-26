@@ -1,13 +1,13 @@
-package com.xhd2005.echomusic
+package com.xhd2005.puretone
 
-import com.xhd2005.echomusic.plugins.EchoHttpPlugin
-import com.xhd2005.echomusic.plugins.EchoSystemPlugin
+import com.xhd2005.puretone.plugins.EchoHttpPlugin
+import com.xhd2005.puretone.plugins.EchoSystemPlugin
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.Calendar
 
-class EchoPluginUnitTest {
+class PureTonePluginUnitTest {
 
     @Test
     fun extractHeaderValues_isCaseInsensitiveAndPreservesMultiCookies() {
@@ -28,14 +28,12 @@ class EchoPluginUnitTest {
         }
         val now = cal.timeInMillis
 
-        // 09:00 is already in the past -> must schedule for tomorrow 09:00
         val nextPast = EchoSystemPlugin.computeNextTriggerMillis(9, 0, now)
         assertTrue(nextPast > now)
         val pastCal = Calendar.getInstance().apply { timeInMillis = nextPast }
         assertEquals(27, pastCal.get(Calendar.DAY_OF_MONTH))
         assertEquals(9, pastCal.get(Calendar.HOUR_OF_DAY))
 
-        // 21:30 is later today -> must schedule for today 21:30
         val nextToday = EchoSystemPlugin.computeNextTriggerMillis(21, 30, now)
         assertTrue(nextToday > now)
         val todayCal = Calendar.getInstance().apply { timeInMillis = nextToday }

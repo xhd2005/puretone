@@ -8,10 +8,17 @@ import iconChevronRight from '@iconify/icons-tabler/chevron-right';
 import iconMusic from '@iconify/icons-tabler/music';
 import type { PlaylistSummary, Song } from '@/types/music';
 import { kugouApi } from '@/services/kugou/kugouEngine';
+import {
+  backfillMissingPlaylistCovers,
+  getPlaylistCacheKey,
+} from '@/services/playback/playlistCoverResolver';
+import { readPlaylistSnapshot } from '@/services/playback/playlistSnapshotCache';
 import { useAccountsStore } from '@/stores/accounts';
 import { usePlayerStore } from '@/stores/player';
 import { useUiStore } from '@/stores/ui';
 import AvatarButton from '@/components/AvatarButton.vue';
+import PlaylistCover from '@/components/PlaylistCover.vue';
+import PureToneMark from '@/components/PureToneMark.vue';
 
 const router = useRouter();
 const accounts = useAccountsStore();
@@ -25,6 +32,19 @@ const scrolled = ref(false);
 
 function onScroll(e: Event) {
   scrolled.value = ((e.target as HTMLElement)?.scrollTop ?? 0) > 34;
+}
+
+function openPlaylist(pl: PlaylistSummary) {
+  void router.push({
+    path: `/playlist/${encodeURIComponent(pl.globalCollectionId || pl.id)}`,
+    query: {
+      name: pl.name,
+      cover: pl.coverUrl,
+      count: String(pl.trackCount),
+      listId: pl.listId || '',
+      favorite: pl.isFavorite ? '1' : '0',
+    },
+  });
 }
 
 async function loadHomeData() {
@@ -42,13 +62,27 @@ async function loadHomeData() {
     dailySongs.value = daily;
     playlists.value = pls;
 
-    // Quietly sync "我喜欢" hashes for instant heart state
+    // Backfill missing playlist covers cleanly in background (2x2 Apple Music collage!)
+    void backfillMissingPlaylistCovers(pls);
+
+    // Sync "我喜欢" hashes + fileIds from snapshot first, then refresh page 1
     const fav = pls.find((p) => p.isFavorite);
-    if (fav?.globalCollectionId && fav.listId) {
-      kugouApi
-        .getPlaylistTracks(fav.globalCollectionId, 1, 200)
-        .then((tracks) => player.syncFavoritesFromPlaylist(fav.listId!, tracks))
-        .catch(() => {});
+    if (fav && fav.listId) {
+      const favKey = getPlaylistCacheKey(fav);
+      const snap = await readPlaylistSnapshot(favKey);
+      if (snap?.songs.length) {
+        void player.syncFavoritesFromPlaylist(fav.listId, snap.songs, fav.globalCollectionId);
+      } else {
+        kugouApi
+          .getPlaylistTracksPaged({
+            globalCollectionId: fav.globalCollectionId,
+            listId: fav.listId,
+            page: 1,
+            pagesize: 300,
+          })
+          .then((res) => player.syncFavoritesFromPlaylist(fav.listId!, res.songs, fav.globalCollectionId))
+          .catch(() => {});
+      }
     }
   } finally {
     loading.value = false;
@@ -77,7 +111,7 @@ watch(() => accounts.activeAccount?.userid, () => void loadHomeData());
       </div>
     </header>
 
-    <div class="flex-1 am-scroll pb-44" @scroll.passive="onScroll">
+    <div class="flex-1 am-scroll pb-48" @scroll.passive="onScroll">
       <!-- iOS Large Title -->
       <div class="px-5 pt-[calc(var(--safe-top)+44px)] pb-3 flex items-end justify-between">
         <h1 class="text-[34px] font-bold tracking-[-0.025em] leading-none text-[var(--text-primary)]">
@@ -85,14 +119,20 @@ watch(() => accounts.activeAccount?.userid, () => void loadHomeData());
         </h1>
       </div>
 
-      <!-- Logged-out minimal Apple Music welcome card -->
+      <!-- Logged-out minimal PureTone welcome card -->
       <div v-if="!accounts.isLoggedIn" class="px-5 mt-2">
-        <div class="rounded-[20px] p-5 bg-[var(--bg-grouped)]">
-          <div class="text-[20px] font-bold tracking-tight text-[var(--text-primary)]">
-            纯净听歌，每日畅听
+        <div class="rounded-[22px] p-5 bg-[var(--bg-grouped)]">
+          <div class="flex items-center gap-3 mb-2.5">
+            <PureToneMark :size="40" />
+            <div>
+              <div class="text-[19px] font-bold tracking-tight text-[var(--text-primary)]">
+                PureTone · 纯音
+              </div>
+              <div class="text-[12px] text-[var(--text-secondary)]">纯净听歌，每日畅听</div>
+            </div>
           </div>
-          <p class="text-[14px] text-[var(--text-secondary)] mt-1.5 leading-relaxed">
-            登录酷狗概念版账号即可同步歌单、每日推荐、私人电台，并在启动时自动领取畅听 VIP。
+          <p class="text-[14px] text-[var(--text-secondary)] leading-relaxed">
+            登录酷狗概念版账号即可同步全部歌单、每日推荐、私人电台，并在启动时自动领取畅听 VIP。
           </p>
           <button
             type="button"
@@ -104,7 +144,7 @@ watch(() => accounts.activeAccount?.userid, () => void loadHomeData());
         </div>
       </div>
 
-      <!-- 1. Apple Music Editorial Personal FM Banner -->
+      <!-- 1. Editorial Personal FM Banner -->
       <section class="px-5 mt-3">
         <div
           class="fm-card am-tap"
@@ -155,7 +195,7 @@ watch(() => accounts.activeAccount?.userid, () => void loadHomeData());
 
         <div v-if="loading && !dailySongs.length" class="px-5 flex gap-3.5 overflow-hidden">
           <div v-for="i in 3" :key="i" class="w-[152px] shrink-0">
-            <div class="w-[152px] h-[152px] rounded-[12px] bg-[var(--bg-subtle)] animate-pulse" />
+            <div class="w-[152px] h-[152px] rounded-[14px] bg-[var(--bg-subtle)] animate-pulse" />
             <div class="h-3.5 w-28 rounded bg-[var(--bg-subtle)] mt-2 animate-pulse" />
           </div>
         </div>
@@ -167,7 +207,7 @@ watch(() => accounts.activeAccount?.userid, () => void loadHomeData());
             class="w-[152px] shrink-0 cursor-pointer am-tap"
             @click="player.playQueue(dailySongs, idx)"
           >
-            <div class="w-[152px] h-[152px] rounded-[12px] overflow-hidden bg-[var(--bg-subtle)] shadow-sm">
+            <div class="w-[152px] h-[152px] rounded-[14px] overflow-hidden bg-[var(--bg-subtle)] shadow-sm">
               <img
                 v-if="song.coverUrl"
                 :src="song.coverUrl"
@@ -202,7 +242,7 @@ watch(() => accounts.activeAccount?.userid, () => void loadHomeData());
             class="w-[132px] shrink-0 cursor-pointer am-tap"
             @click="player.playSong(song)"
           >
-            <div class="w-[132px] h-[132px] rounded-[10px] overflow-hidden bg-[var(--bg-subtle)] shadow-sm">
+            <div class="w-[132px] h-[132px] rounded-[12px] overflow-hidden bg-[var(--bg-subtle)] shadow-sm">
               <img v-if="song.coverUrl" :src="song.coverUrl" loading="lazy" class="w-full h-full object-cover" alt="" />
               <div v-else class="w-full h-full flex items-center justify-center text-[var(--text-tertiary)]">
                 <Icon :icon="iconMusic" class="w-8 h-8" />
@@ -214,7 +254,7 @@ watch(() => accounts.activeAccount?.userid, () => void loadHomeData());
         </div>
       </section>
 
-      <!-- 4. Your Playlists -->
+      <!-- 4. Your Playlists (with 2x2 Apple Music Collage Cover Backfill!) -->
       <section v-if="playlists.length" class="mt-7">
         <div class="px-5 flex items-center justify-between mb-3">
           <button
@@ -229,16 +269,17 @@ watch(() => accounts.activeAccount?.userid, () => void loadHomeData());
 
         <div class="am-hscroll flex gap-3.5 px-5">
           <div
-            v-for="pl in playlists.slice(0, 10)"
+            v-for="pl in playlists.slice(0, 12)"
             :key="pl.id"
             class="w-[144px] shrink-0 cursor-pointer am-tap"
-            @click="router.push({ path: `/playlist/${encodeURIComponent(pl.globalCollectionId || pl.id)}`, query: { name: pl.name, cover: pl.coverUrl, count: String(pl.trackCount), listId: pl.listId || '' } })"
+            @click="openPlaylist(pl)"
           >
-            <div class="w-[144px] h-[144px] rounded-[12px] overflow-hidden bg-[var(--bg-subtle)] shadow-sm">
-              <img v-if="pl.coverUrl" :src="pl.coverUrl" loading="lazy" class="w-full h-full object-cover" alt="" />
-              <div v-else class="w-full h-full flex items-center justify-center text-[var(--text-tertiary)]">
-                <Icon :icon="iconMusic" class="w-9 h-9" />
-              </div>
+            <div class="w-[144px] h-[144px] rounded-[14px] overflow-hidden shadow-sm">
+              <PlaylistCover
+                :playlist-key="getPlaylistCacheKey(pl)"
+                :cover-url="pl.coverUrl"
+                :alt="pl.name"
+              />
             </div>
             <div class="text-[14px] font-medium text-[var(--text-primary)] truncate mt-2">{{ pl.name }}</div>
             <div class="text-[12px] text-[var(--text-secondary)]">{{ pl.trackCount }} 首</div>
@@ -262,11 +303,11 @@ watch(() => accounts.activeAccount?.userid, () => void loadHomeData());
 
 .fm-card {
   position: relative;
-  border-radius: 18px;
+  border-radius: 22px;
   padding: 20px 20px;
   overflow: hidden;
-  background: linear-gradient(135deg, var(--accent) 0%, #6d28d9 58%, #1d1b38 100%);
-  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.16);
+  background: linear-gradient(135deg, var(--accent) 0%, #7c2d8a 56%, #1d1b38 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.32), 0 14px 32px rgba(0, 0, 0, 0.16);
   cursor: pointer;
 }
 </style>

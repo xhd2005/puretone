@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia';
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import type { SafeAreaInsets } from '@/native/echoSystem';
 import type { Song } from '@/types/music';
 import { echoSystem } from '@/native/echoSystem';
@@ -16,6 +16,17 @@ export const useUiStore = defineStore('ui', () => {
   let toastTimer: ReturnType<typeof setTimeout> | null = null;
 
   const insets = ref<SafeAreaInsets>({ top: 0, bottom: 0, left: 0, right: 0, imeBottom: 0 });
+
+  // Used by AppShell for iOS-style backdrop scale-back recession animation
+  const hasModalOverlay = computed(() =>
+    Boolean(
+      nowPlayingOpen.value ||
+        accountSheetOpen.value ||
+        loginModalOpen.value ||
+        actionSheetSong.value ||
+        unblockModalSong.value,
+    ),
+  );
 
   function applyInsetsToCss(val: SafeAreaInsets) {
     if (typeof document === 'undefined') return;
@@ -44,6 +55,7 @@ export const useUiStore = defineStore('ui', () => {
   }
 
   function openNowPlaying(mode: 'cover' | 'lyrics' | 'queue' = 'cover') {
+    echoSystem.haptic('light');
     nowPlayingMode.value = mode;
     nowPlayingOpen.value = true;
   }
@@ -79,6 +91,7 @@ export const useUiStore = defineStore('ui', () => {
     loginModalOpen,
     actionSheetSong,
     unblockModalSong,
+    hasModalOverlay,
     toastMessage,
     insets,
     initSystemInsets,

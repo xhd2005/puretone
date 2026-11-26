@@ -45,6 +45,11 @@ export interface MediaCommandEvent {
   positionMs?: number;
 }
 
+export interface AudioCacheStats {
+  usedBytes: number;
+  maxBytes: number;
+}
+
 export interface EchoPlayerPluginInterface {
   load(options: {
     url: string;
@@ -52,21 +57,26 @@ export interface EchoPlayerPluginInterface {
     metadata: PlayerTrackMetadata;
     autoPlay?: boolean;
     trackSeq: number;
+    cacheKey?: string;
   }): Promise<void>;
   prepareNext(options: {
     url: string;
     headers?: Record<string, string>;
     metadata: PlayerTrackMetadata;
+    cacheKey?: string;
   }): Promise<void>;
   clearNext(): Promise<void>;
   play(): Promise<void>;
   pause(): Promise<void>;
+  fadeOutAndPause(options: { durationMs?: number }): Promise<void>;
   stop(): Promise<void>;
   seek(options: { positionMs: number }): Promise<void>;
   setVolume(options: { volume: number }): Promise<void>;
   setSpeed(options: { speed: number }): Promise<void>;
   setRepeatOne(options: { enabled: boolean }): Promise<void>;
   updateMetadata(options: PlayerTrackMetadata): Promise<void>;
+  getAudioCacheStats(): Promise<AudioCacheStats>;
+  clearAudioCache(): Promise<{ cleared: boolean }>;
   getState(): Promise<PlayerStateSnapshot>;
   addListener(eventName: 'timeUpdate', listener: (ev: PlayerTimeEvent) => void): Promise<PluginListenerHandle>;
   addListener(eventName: 'stateChange', listener: (ev: PlayerStateEvent) => void): Promise<PluginListenerHandle>;
@@ -186,6 +196,20 @@ class WebAudioFallback {
     this.audio?.pause();
   }
 
+  async fadeOutAndPause(durationMs = 3000) {
+    if (!this.audio) return;
+    const startVol = this.audio.volume;
+    const steps = 12;
+    const interval = Math.max(20, Math.round(durationMs / steps));
+    for (let i = 1; i <= steps; i += 1) {
+      await new Promise((r) => setTimeout(r, interval));
+      if (!this.audio) return;
+      this.audio.volume = Math.max(0, startVol * (1 - i / steps));
+    }
+    this.audio.pause();
+    this.audio.volume = startVol;
+  }
+
   async stop() {
     if (!this.audio) return;
     this.audio.pause();
@@ -265,6 +289,10 @@ export const echoPlayer = {
     if (Capacitor.isNativePlatform()) return EchoPlayerNative.pause();
     return getWebFallback().pause();
   },
+  async fadeOutAndPause(durationMs = 3000) {
+    if (Capacitor.isNativePlatform()) return EchoPlayerNative.fadeOutAndPause({ durationMs });
+    return getWebFallback().fadeOutAndPause(durationMs);
+  },
   async stop() {
     if (Capacitor.isNativePlatform()) return EchoPlayerNative.stop();
     return getWebFallback().stop();
@@ -288,6 +316,19 @@ export const echoPlayer = {
   async updateMetadata(metadata: PlayerTrackMetadata) {
     if (Capacitor.isNativePlatform()) return EchoPlayerNative.updateMetadata(metadata);
     return getWebFallback().updateMetadata(metadata);
+  },
+  async getAudioCacheStats(): Promise<AudioCacheStats> {
+    if (Capacitor.isNativePlatform()) {
+      return EchoPlayerNative.getAudioCacheStats().catch(() => ({ usedBytes: 0, maxBytes: 300 * 1024 * 1024 }));
+    }
+    return { usedBytes: 0, maxBytes: 300 * 1024 * 1024 };
+  },
+  async clearAudioCache(): Promise<boolean> {
+    if (Capacitor.isNativePlatform()) {
+      const res = await EchoPlayerNative.clearAudioCache().catch(() => ({ cleared: false }));
+      return Boolean(res?.cleared);
+    }
+    return true;
   },
   async getState(): Promise<PlayerStateSnapshot> {
     if (Capacitor.isNativePlatform()) return EchoPlayerNative.getState();

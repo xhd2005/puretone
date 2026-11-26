@@ -80,14 +80,14 @@ jobs:
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: EchoMusic-Mobile-Debug-APK
+          name: PureTone-Debug-APK
           path: android/app/build/outputs/apk/debug/*.apk
           retention-days: 30
 
       - name: Upload Release APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: EchoMusic-Mobile-Release-APK
+          name: PureTone-Release-APK
           path: android/app/build/outputs/apk/release/*.apk
           if-no-files-found: ignore
           retention-days: 30

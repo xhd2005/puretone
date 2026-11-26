@@ -1,6 +1,7 @@
-package com.xhd2005.echomusic.plugins
+package com.xhd2005.puretone.plugins
 
 import android.content.ComponentName
+import android.content.Intent
 import android.os.Handler
 import android.os.Looper
 import androidx.annotation.OptIn
@@ -14,9 +15,9 @@ import com.getcapacitor.PluginCall
 import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
 import com.google.common.util.concurrent.ListenableFuture
-import com.xhd2005.echomusic.player.EchoPlaybackService
-import com.xhd2005.echomusic.player.PlayerBridgeListener
-import com.xhd2005.echomusic.player.TrackMetadataPayload
+import com.xhd2005.puretone.player.EchoPlaybackService
+import com.xhd2005.puretone.player.PlayerBridgeListener
+import com.xhd2005.puretone.player.TrackMetadataPayload
 
 @OptIn(UnstableApi::class)
 @CapacitorPlugin(name = "EchoPlayer")
@@ -38,6 +39,15 @@ class EchoPlayerPlugin : Plugin(), PlayerBridgeListener {
         controllerFuture?.let { MediaController.releaseFuture(it) }
         controllerFuture = null
         super.handleOnDestroy()
+    }
+
+    private fun startForegroundPlaybackServiceSafe() {
+        try {
+            val intent = Intent(context, EchoPlaybackService::class.java)
+            ContextCompat.startForegroundService(context, intent)
+        } catch (_: Exception) {
+            // Fallback to MediaController bind when OS restricts background FGS start
+        }
     }
 
     private fun ensureServiceBound(onReady: (EchoPlaybackService) -> Unit) {
@@ -106,9 +116,11 @@ class EchoPlayerPlugin : Plugin(), PlayerBridgeListener {
         val metadata = parseMetadata(call.getObject("metadata"))
         val autoPlay = call.getBoolean("autoPlay", true) ?: true
         val trackSeq = call.getInt("trackSeq") ?: 0
+        val cacheKey = call.getString("cacheKey")?.takeIf { it.isNotBlank() }
 
+        startForegroundPlaybackServiceSafe()
         ensureServiceBound { svc ->
-            svc.loadTrack(url, headers, metadata, autoPlay, trackSeq)
+            svc.loadTrack(url, headers, metadata, autoPlay, trackSeq, cacheKey)
             call.resolve()
         }
     }
@@ -121,8 +133,9 @@ class EchoPlayerPlugin : Plugin(), PlayerBridgeListener {
             return
         }
         val metadata = parseMetadata(call.getObject("metadata"))
+        val cacheKey = call.getString("cacheKey")?.takeIf { it.isNotBlank() }
         ensureServiceBound { svc ->
-            svc.prepareNextTrack(url, metadata)
+            svc.prepareNextTrack(url, metadata, cacheKey)
             call.resolve()
         }
     }
@@ -135,6 +148,7 @@ class EchoPlayerPlugin : Plugin(), PlayerBridgeListener {
 
     @PluginMethod
     fun play(call: PluginCall) {
+        startForegroundPlaybackServiceSafe()
         ensureServiceBound { svc ->
             svc.play()
             call.resolve()
@@ -144,6 +158,13 @@ class EchoPlayerPlugin : Plugin(), PlayerBridgeListener {
     @PluginMethod
     fun pause(call: PluginCall) {
         EchoPlaybackService.activeService?.pause()
+        call.resolve()
+    }
+
+    @PluginMethod
+    fun fadeOutAndPause(call: PluginCall) {
+        val durationMs = call.getInt("durationMs")?.toLong() ?: 3000L
+        EchoPlaybackService.activeService?.fadeOutAndPause(durationMs)
         call.resolve()
     }
 
@@ -189,6 +210,22 @@ class EchoPlayerPlugin : Plugin(), PlayerBridgeListener {
     }
 
     @PluginMethod
+    fun getAudioCacheStats(call: PluginCall) {
+        val bytes = EchoPlaybackService.getAudioCacheSizeBytes(context.applicationContext)
+        call.resolve(
+            JSObject()
+                .put("usedBytes", bytes)
+                .put("maxBytes", EchoPlaybackService.MAX_AUDIO_CACHE_BYTES),
+        )
+    }
+
+    @PluginMethod
+    fun clearAudioCache(call: PluginCall) {
+        val ok = EchoPlaybackService.clearAudioCache(context.applicationContext)
+        call.resolve(JSObject().put("cleared", ok))
+    }
+
+    @PluginMethod
     fun getState(call: PluginCall) {
         val svc = EchoPlaybackService.activeService
         if (svc == null) {
@@ -212,8 +249,6 @@ class EchoPlayerPlugin : Plugin(), PlayerBridgeListener {
             call.resolve(out)
         }
     }
-
-    // ---- PlayerBridgeListener callbacks ----
 
     override fun onTimeUpdate(currentTimeMs: Long, durationMs: Long, isPlaying: Boolean, trackSeq: Int) {
         notifyListeners(

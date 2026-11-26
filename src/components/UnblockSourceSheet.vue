@@ -10,6 +10,7 @@ import type { PinnedSource, UnblockCandidate } from '@/types/music';
 import { useUiStore } from '@/stores/ui';
 import { usePlayerStore } from '@/stores/player';
 import { useSettingsStore } from '@/stores/settings';
+import { echoSystem } from '@/native/echoSystem';
 import {
   getPinnedSource,
   scanAllUnblockCandidates,
@@ -32,7 +33,7 @@ async function runScan() {
   candidates.value = [];
   pinned.value = await getPinnedSource(song);
   try {
-    candidates.value = await scanAllUnblockCandidates(song, settings.quality, settings.unblockPlatforms);
+    candidates.value = await scanAllUnblockCandidates(song, settings.quality);
   } finally {
     scanning.value = false;
   }
@@ -48,6 +49,7 @@ watch(
 async function pick(cand: UnblockCandidate, pin: boolean) {
   const song = ui.unblockModalSong;
   if (!song || applyingId.value) return;
+  echoSystem.haptic('light');
   applyingId.value = cand.id;
   try {
     const ok = await player.applyUnblockCandidate(song, cand, pin);
@@ -60,24 +62,33 @@ async function pick(cand: UnblockCandidate, pin: boolean) {
 async function clearPin() {
   const song = ui.unblockModalSong;
   if (!song) return;
+  echoSystem.haptic('selection');
   await unpinSourceForSong(song);
   pinned.value = null;
   ui.showToast('已解除锁定音源');
 }
+
+function platformBadge(cand: UnblockCandidate): string {
+  if (cand.channel === 'kugou-alt') return '酷狗异版';
+  if (cand.sourcePlatform === 'kuwo') return '酷我 320k';
+  if (cand.sourcePlatform === 'joox') return 'JOOX';
+  if (cand.sourcePlatform === 'bilibili') return 'B站音频';
+  return (cand.sourcePlatform || 'EXT').toUpperCase();
+}
 </script>
 
 <template>
-  <Transition name="am-fade">
+  <Transition name="lg-modal">
     <div
       v-if="ui.unblockModalSong"
-      class="fixed inset-0 z-[85] flex flex-col justify-end bg-black/50"
+      class="fixed inset-0 z-[85] flex flex-col justify-end lg-scrim"
       @click="ui.unblockModalSong = null"
     >
       <div
-        class="bg-[var(--bg-grouped)] rounded-t-[24px] max-h-[82vh] flex flex-col pb-[calc(var(--safe-bottom)+14px)] shadow-2xl"
+        class="lg-sheet-panel rounded-t-[28px] max-h-[82vh] flex flex-col pb-[calc(var(--safe-bottom)+14px)]"
         @click.stop
       >
-        <div class="w-9 h-1 rounded-full bg-[var(--text-tertiary)]/50 mx-auto mt-3 mb-2" />
+        <div class="w-10 h-1 rounded-full bg-[var(--text-tertiary)]/55 mx-auto mt-3 mb-2" />
 
         <div class="flex items-center justify-between px-5 pb-3 am-hairline-b">
           <div class="min-w-0 pr-3">
@@ -129,7 +140,7 @@ async function clearPin() {
           </div>
 
           <div v-if="scanning" class="py-12 text-center text-[14px] text-[var(--text-secondary)]">
-            正在检索酷狗异版与多平台音源…
+            正在并行检索酷我 320k、酷狗异版、JOOX 与 B站音频…
           </div>
 
           <div v-else-if="!candidates.length" class="py-12 text-center text-[14px] text-[var(--text-secondary)]">
@@ -143,8 +154,8 @@ async function clearPin() {
           >
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-1.5">
-                <span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-[var(--bg-subtle)] am-accent-text shrink-0">
-                  {{ cand.channel === 'kugou-alt' ? '酷狗异版' : (cand.sourcePlatform || 'EXT').toUpperCase() }}
+                <span class="px-1.5 py-0.5 rounded-md text-[10px] font-bold bg-[var(--bg-subtle)] am-accent-text shrink-0">
+                  {{ platformBadge(cand) }}
                 </span>
                 <span class="text-[15px] font-semibold truncate text-[var(--text-primary)]">{{ cand.title }}</span>
               </div>

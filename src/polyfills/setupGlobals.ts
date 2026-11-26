@@ -10,7 +10,7 @@ if (typeof g.process === 'undefined') {
   g.process = {
     env: {
       platform: 'lite',
-      KUGOU_API_DEV: 'EchoMusic',
+      KUGOU_API_DEV: 'PureTone',
     },
     argv: [],
     platform: 'android',

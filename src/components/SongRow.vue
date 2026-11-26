@@ -6,6 +6,7 @@ import iconMusic from '@iconify/icons-tabler/music';
 import type { Song } from '@/types/music';
 import { usePlayerStore } from '@/stores/player';
 import { useUiStore } from '@/stores/ui';
+import { echoSystem } from '@/native/echoSystem';
 
 const props = defineProps<{
   song: Song;
@@ -31,8 +32,9 @@ function onTouchStart() {
   triggeredLongPress = false;
   longPressTimer = setTimeout(() => {
     triggeredLongPress = true;
+    echoSystem.haptic('heavy');
     ui.actionSheetSong = props.song;
-  }, 480);
+  }, 460);
 }
 
 function clearLongPress() {
@@ -89,7 +91,7 @@ function onRowClick() {
           class="text-[16px] font-medium truncate leading-snug"
           :class="[
             isCurrent ? 'am-accent-text font-semibold' : 'text-[var(--text-primary)]',
-            song.isGray ? 'opacity-60' : '',
+            song.isGray ? 'opacity-70' : '',
           ]"
         >
           {{ song.title }}
@@ -107,7 +109,7 @@ function onRowClick() {
         type="button"
         class="w-10 h-10 -mr-1 rounded-full flex items-center justify-center bg-transparent border-0 text-[var(--text-secondary)] am-tap shrink-0"
         aria-label="歌曲操作"
-        @click.stop="ui.actionSheetSong = song"
+        @click.stop="echoSystem.haptic('light'); ui.actionSheetSong = song"
       >
         <Icon :icon="iconDots" class="w-5 h-5" />
       </button>
@@ -122,6 +124,8 @@ function onRowClick() {
   gap: 12px;
   padding: 0 20px;
   cursor: pointer;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 66px;
 }
 .song-row:active {
   background-color: var(--bg-subtle);
@@ -131,7 +135,7 @@ function onRowClick() {
   position: relative;
   width: 48px;
   height: 48px;
-  border-radius: 8px;
+  border-radius: 9px;
   overflow: hidden;
   flex-shrink: 0;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);

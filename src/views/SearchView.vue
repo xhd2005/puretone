@@ -4,13 +4,14 @@ import { useRouter } from 'vue-router';
 import { Icon } from '@iconify/vue';
 import iconSearch from '@iconify/icons-tabler/search';
 import iconX from '@iconify/icons-tabler/x';
-import iconMusic from '@iconify/icons-tabler/music';
 import type { PlaylistSummary, Song } from '@/types/music';
 import { kugouApi } from '@/services/kugou/kugouEngine';
+import { getPlaylistCacheKey } from '@/services/playback/playlistCoverResolver';
 import { echoSystem } from '@/native/echoSystem';
 import { usePlayerStore } from '@/stores/player';
 import AvatarButton from '@/components/AvatarButton.vue';
 import SongRow from '@/components/SongRow.vue';
+import PlaylistCover from '@/components/PlaylistCover.vue';
 
 const router = useRouter();
 const player = usePlayerStore();
@@ -50,6 +51,7 @@ watch(query, (val) => {
 async function runSearch(keyword?: string) {
   const kw = (keyword ?? query.value).trim();
   if (!kw) return;
+  echoSystem.haptic('light');
   query.value = kw;
   submittedQuery.value = kw;
   suggestions.value = [];
@@ -114,7 +116,7 @@ function clearHistory() {
       </form>
     </div>
 
-    <div class="flex-1 am-scroll pb-44">
+    <div class="flex-1 am-scroll pb-48">
       <!-- Live Suggestions -->
       <div v-if="suggestions.length && !submittedQuery" class="px-5 divide-y divide-[var(--hairline)]">
         <button
@@ -135,17 +137,17 @@ function clearHistory() {
           <div class="grid grid-cols-2 p-1 rounded-xl bg-[var(--bg-subtle)] max-w-xs">
             <button
               type="button"
-              class="h-8 rounded-[8px] text-[13px] font-semibold border-0"
+              class="h-8 rounded-[9px] text-[13px] font-semibold border-0 transition-all"
               :class="activeTab === 'song' ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-sm' : 'bg-transparent text-[var(--text-secondary)]'"
-              @click="activeTab = 'song'"
+              @click="echoSystem.haptic('selection'); activeTab = 'song'"
             >
               单曲 ({{ songs.length }})
             </button>
             <button
               type="button"
-              class="h-8 rounded-[8px] text-[13px] font-semibold border-0"
+              class="h-8 rounded-[9px] text-[13px] font-semibold border-0 transition-all"
               :class="activeTab === 'playlist' ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-sm' : 'bg-transparent text-[var(--text-secondary)]'"
-              @click="activeTab = 'playlist'"
+              @click="echoSystem.haptic('selection'); activeTab = 'playlist'"
             >
               歌单 ({{ playlists.length }})
             </button>
@@ -171,11 +173,12 @@ function clearHistory() {
             class="cursor-pointer am-tap"
             @click="router.push({ path: `/playlist/${encodeURIComponent(pl.globalCollectionId || pl.id)}`, query: { name: pl.name, cover: pl.coverUrl, count: String(pl.trackCount) } })"
           >
-            <div class="aspect-square rounded-[12px] overflow-hidden bg-[var(--bg-subtle)]">
-              <img v-if="pl.coverUrl" :src="pl.coverUrl" loading="lazy" class="w-full h-full object-cover" alt="" />
-              <div v-else class="w-full h-full flex items-center justify-center text-[var(--text-tertiary)]">
-                <Icon :icon="iconMusic" class="w-9 h-9" />
-              </div>
+            <div class="aspect-square rounded-[14px] overflow-hidden shadow-sm">
+              <PlaylistCover
+                :playlist-key="getPlaylistCacheKey(pl)"
+                :cover-url="pl.coverUrl"
+                :alt="pl.name"
+              />
             </div>
             <div class="text-[14px] font-medium truncate mt-2 text-[var(--text-primary)]">{{ pl.name }}</div>
             <div class="text-[12px] text-[var(--text-secondary)]">{{ pl.trackCount }} 首</div>
@@ -230,10 +233,10 @@ function clearHistory() {
 
 <style scoped>
 .search-box {
-  height: 38px;
-  border-radius: 11px;
+  height: 40px;
+  border-radius: 14px;
   background-color: var(--bg-subtle);
-  padding: 0 11px;
+  padding: 0 12px;
   display: flex;
   align-items: center;
   gap: 8px;

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue';
 import { Icon } from '@iconify/vue';
 import iconPlayerPlayFilled from '@iconify/icons-tabler/player-play-filled';
 import iconPlayerPauseFilled from '@iconify/icons-tabler/player-pause-filled';
@@ -9,6 +10,11 @@ import { useUiStore } from '@/stores/ui';
 
 const player = usePlayerStore();
 const ui = useUiStore();
+
+const progressPct = computed(() => {
+  if (!player.durationMs) return 0;
+  return Math.max(0, Math.min(100, (player.currentTimeMs / player.durationMs) * 100));
+});
 
 let touchStartX = 0;
 let touchStartY = 0;
@@ -31,7 +37,7 @@ function onTouchEnd(e: TouchEvent) {
 <template>
   <div
     v-if="player.currentSong"
-    class="mini-pill am-glass"
+    class="mini-pill lg-capsule"
     role="button"
     tabindex="0"
     @click="ui.openNowPlaying('cover')"
@@ -77,28 +83,34 @@ function onTouchEnd(e: TouchEvent) {
         <Icon :icon="iconPlayerTrackNextFilled" class="w-[21px] h-[21px]" />
       </button>
     </div>
+
+    <!-- Subtle Liquid Glass edge progress line -->
+    <div class="mini-progress-rail">
+      <div class="mini-progress-fill" :style="{ width: `${progressPct}%` }" />
+    </div>
   </div>
 </template>
 
 <style scoped>
 .mini-pill {
+  position: relative;
   height: var(--miniplayer-height);
-  border-radius: 15px;
-  padding: 6px 8px 6px 8px;
+  border-radius: 22px;
+  padding: 6px 9px 6px 8px;
   display: flex;
   align-items: center;
   gap: 11px;
-  box-shadow: var(--pill-shadow);
   cursor: pointer;
+  overflow: hidden;
 }
 
 .mini-cover {
-  width: 44px;
-  height: 44px;
-  border-radius: 9px;
+  width: 46px;
+  height: 46px;
+  border-radius: 13px;
   overflow: hidden;
   flex-shrink: 0;
-  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.18);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.16);
 }
 
 .mini-btn {
@@ -111,5 +123,24 @@ function onTouchEnd(e: TouchEvent) {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.mini-progress-rail {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 0;
+  height: 2px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: transparent;
+}
+
+.mini-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  opacity: 0.72;
+  border-radius: 999px;
+  transition: width 260ms linear;
 }
 </style>

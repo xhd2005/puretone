@@ -2,12 +2,15 @@ export type AudioQuality = '128' | '320' | 'flac';
 
 export type PlayMode = 'sequence' | 'shuffle' | 'repeat-one' | 'fm';
 
+export type SleepTimerMode = 'off' | '15' | '30' | '60' | 'track';
+
 export interface Song {
   id: string;
   hash: string;
   hash320?: string;
   hashFlac?: string;
   mixSongId?: number;
+  fileId?: number;
   albumId?: string;
   title: string;
   artist: string;
@@ -22,6 +25,7 @@ export interface Song {
   /** Explicit URL override when unblocked */
   resolvedUrl?: string;
   resolvedQuality?: AudioQuality;
+  resolvedHeaders?: Record<string, string>;
 }
 
 export interface PlaylistSummary {
@@ -104,7 +108,7 @@ export interface UnblockCandidate {
   id: string;
   channel: 'kugou-alt' | 'external';
   channelLabel: string;
-  provider?: 'gdstudio' | 'netease-direct' | 'custom';
+  provider?: 'kuwo-direct' | 'gdstudio-joox' | 'bilibili-dash' | 'gdstudio' | 'custom';
   sourcePlatform?: string;
   externalId?: string;
   lyricId?: string;
@@ -117,12 +121,13 @@ export interface UnblockCandidate {
   quality: AudioQuality;
   score: number;
   url?: string;
+  headers?: Record<string, string>;
 }
 
 export interface PinnedSource {
   trackKey: string;
   channel: 'kugou-alt' | 'external';
-  provider?: 'gdstudio' | 'netease-direct' | 'custom';
+  provider?: 'kuwo-direct' | 'gdstudio-joox' | 'bilibili-dash' | 'gdstudio' | 'custom';
   sourcePlatform?: string;
   externalId?: string;
   hash?: string;
@@ -131,6 +136,7 @@ export interface PinnedSource {
   artist: string;
   quality: AudioQuality;
   url?: string;
+  headers?: Record<string, string>;
   urlCachedAt: number;
 }
 

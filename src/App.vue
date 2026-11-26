@@ -3,6 +3,7 @@ import { onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { echoSystem } from '@/native/echoSystem';
 import { initKugouEngine } from '@/services/kugou/kugouEngine';
+import { hydratePlaylistCoverCache } from '@/services/playback/playlistCoverResolver';
 import { useSettingsStore } from '@/stores/settings';
 import { useAccountsStore } from '@/stores/accounts';
 import { useVipStore } from '@/stores/vip';
@@ -30,6 +31,7 @@ onMounted(async () => {
     accounts.hydrate(),
     vip.hydrate(),
     player.hydrate(),
+    hydratePlaylistCoverCache(),
   ]);
 
   // Initialize local KuGou device identity in background
@@ -52,7 +54,17 @@ onMounted(async () => {
     void vip.maybeAutoClaimOnLaunch(true);
   });
 
+  // Handle tap on 4x2 desktop widget cover or lock-screen notification
+  await echoSystem.onOpenNowPlayingIntent(() => {
+    if (player.currentSong) {
+      ui.openNowPlaying('cover');
+    }
+  });
+
   const launchFlags = await echoSystem.getLaunchFlags();
+  if (launchFlags.openNowPlaying && player.currentSong) {
+    ui.openNowPlaying('cover');
+  }
   if (launchFlags.autoClaim) {
     ui.accountSheetOpen = true;
     void vip.maybeAutoClaimOnLaunch(true);
@@ -74,11 +86,11 @@ onMounted(async () => {
   <UnblockSourceSheet />
   <VerificationModal />
 
-  <!-- Subtle iOS Top Pill Toast -->
+  <!-- iOS 26 Liquid Glass Top Pill Toast -->
   <Transition name="am-fade">
     <div
       v-if="ui.toastMessage"
-      class="fixed top-[calc(var(--safe-top)+14px)] left-1/2 -translate-x-1/2 z-[100] px-4 py-2 rounded-full am-glass shadow-xl text-[13px] font-semibold text-[var(--text-primary)] whitespace-nowrap max-w-[88vw] truncate pointer-events-none"
+      class="fixed top-[calc(var(--safe-top)+14px)] left-1/2 -translate-x-1/2 z-[100] px-4 py-2 rounded-full lg-capsule text-[13px] font-semibold text-[var(--text-primary)] whitespace-nowrap max-w-[88vw] truncate pointer-events-none"
     >
       {{ ui.toastMessage }}
     </div>

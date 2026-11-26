@@ -10,9 +10,9 @@ const accounts = useAccountsStore();
   <Transition name="am-fade">
     <div
       v-if="accounts.pendingChallenge"
-      class="fixed inset-0 z-[95] flex items-center justify-center px-6 bg-black/55"
+      class="fixed inset-0 z-[95] flex items-center justify-center px-6 lg-scrim"
     >
-      <div class="w-full max-w-sm rounded-[22px] bg-[var(--bg-card)] p-5 shadow-2xl">
+      <div class="w-full max-w-sm rounded-[24px] lg-sheet-panel p-5 shadow-2xl">
         <div class="w-12 h-12 rounded-full bg-[var(--bg-subtle)] flex items-center justify-center am-accent-text mx-auto mb-3">
           <Icon :icon="iconShieldCheck" class="w-6 h-6" />
         </div>

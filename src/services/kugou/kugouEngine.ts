@@ -133,7 +133,7 @@ export async function initKugouEngine(): Promise<DeviceIdentity> {
     const mid = saved?.mid || (typeof util.calculateMid === 'function' ? String(util.calculateMid(guid)) : randomHex(32));
     const webglHash = saved?.webglHash || randomHex(32);
     const mac = saved?.mac || generateMac();
-    const dev = saved?.dev || 'EchoMusic';
+    const dev = saved?.dev || 'PureTone';
     let dfid = saved?.dfid || '';
 
     deviceIdentity = { guid, mid, dfid: dfid || '-', webglHash, mac, dev };
@@ -220,7 +220,7 @@ export async function callKugouRoute(
     dfid: '-',
     webglHash: randomHex(32),
     mac: generateMac(),
-    dev: 'EchoMusic',
+    dev: 'PureTone',
   };
 
   const cookie: Record<string, string> = {
@@ -337,9 +337,10 @@ export function normalizeSong(raw: Record<string, any>): Song {
     '';
 
   const mixSongId = Number(raw.mixsongid ?? raw.mixSongId ?? raw.album_audio_id ?? raw.MixSongID ?? 0) || undefined;
+  const fileId = Number(raw.fileid ?? raw.fileId ?? 0) || undefined;
   const privilege = Number(raw.privilege ?? raw.Privilege ?? raw.pay_type ?? 0);
   const isVip = privilege === 10 || privilege === 8 || Number(raw.pay_type_320 ?? 0) === 3;
-  const isGray = privilege === 5;
+  const isGray = privilege === 5 || Number(raw.fail_process ?? 0) === 12;
 
   return {
     id: String(mixSongId || hash || `${artist}-${title}`),
@@ -347,6 +348,7 @@ export function normalizeSong(raw: Record<string, any>): Song {
     hash320: hash320 || undefined,
     hashFlac: hashFlac || undefined,
     mixSongId,
+    fileId,
     albumId: raw.album_id ? String(raw.album_id) : raw.AlbumID ? String(raw.AlbumID) : undefined,
     title: title || '未知歌曲',
     artist: artist || '未知歌手',
@@ -391,9 +393,11 @@ export const kugouApi = {
     if (qrImg && !qrImg.startsWith('data:')) {
       qrImg = `data:image/png;base64,${qrImg}`;
     }
+    const rawBase64 = qrImg.replace(/^data:image\/[^;]+;base64,/, '');
     return {
       key: String(qrcode),
       qrImg,
+      rawBase64,
       url: `https://h5.kugou.com/apps/loginQRCode/html/index.html?qrcode=${qrcode}`,
     };
   },
@@ -530,21 +534,104 @@ export const kugouApi = {
       }));
   },
 
-  async getPlaylistTracks(globalCollectionId: string, page = 1, pagesize = 100): Promise<Song[]> {
-    try {
-      const res = await callKugouRoute('/playlist/track/all/new', {
-        id: globalCollectionId,
-        page,
-        pagesize,
-      });
-      const list = res?.body?.data?.songs ?? res?.body?.data?.info ?? [];
-      if (Array.isArray(list) && list.length > 0) return list.map(normalizeSong);
-    } catch {
-      // fallback to legacy endpoint
+  async getPlaylistTracksPaged(options: {
+    globalCollectionId?: string;
+    listId?: string;
+    page?: number;
+    pagesize?: number;
+  }): Promise<{ songs: Song[]; total: number; hasMore: boolean; pageSizeReturned: number }> {
+    const page = Math.max(1, Number(options.page || 1));
+    const pagesize = Math.max(10, Math.min(300, Number(options.pagesize || 300)));
+
+    // 1. Personal cloud playlist v3 API (supports `listid`, returns `fileid`, cover & up to 300/page!)
+    if (options.listId) {
+      try {
+        const res = await callKugouRoute('/playlist/track/all/new', {
+          listid: options.listId,
+          page,
+          pagesize,
+        });
+        const data = res?.body?.data ?? {};
+        const list = data.songs ?? data.info ?? [];
+        const total = Number(data.count ?? data.total ?? 0);
+        if (Array.isArray(list) && (list.length > 0 || page > 1)) {
+          const songs = list.map(normalizeSong);
+          const hasMore = total > 0 ? page * pagesize < total && songs.length > 0 : songs.length >= Math.min(pagesize, 50);
+          return { songs, total, hasMore, pageSizeReturned: songs.length };
+        }
+      } catch {
+        // fallback to public collection endpoint
+      }
     }
-    const res = await callKugouRoute('/playlist/track/all', { id: globalCollectionId, page, pagesize });
-    const list = res?.body?.data?.songs ?? res?.body?.data?.info ?? [];
-    return Array.isArray(list) ? list.map(normalizeSong) : [];
+
+    // 2. Public / collected playlist endpoint using `global_collection_id`
+    const targetId = options.globalCollectionId || options.listId || '';
+    if (!targetId) {
+      return { songs: [], total: 0, hasMore: false, pageSizeReturned: 0 };
+    }
+    const res = await callKugouRoute('/playlist/track/all', { id: targetId, page, pagesize });
+    const data = res?.body?.data ?? {};
+    const list = data.songs ?? data.info ?? [];
+    const total = Number(data.count ?? data.total ?? 0);
+    const songs = Array.isArray(list) ? list.map(normalizeSong) : [];
+    const hasMore = total > 0 ? page * pagesize < total && songs.length > 0 : songs.length >= Math.min(pagesize, 50);
+    return { songs, total, hasMore, pageSizeReturned: songs.length };
+  },
+
+  async getPlaylistTracks(globalCollectionId: string, page = 1, pagesize = 100, listId?: string): Promise<Song[]> {
+    const res = await this.getPlaylistTracksPaged({ globalCollectionId, listId, page, pagesize });
+    return res.songs;
+  },
+
+  async fetchAllPlaylistTracks(
+    options: {
+      globalCollectionId?: string;
+      listId?: string;
+      expectedCount?: number;
+      maxPages?: number;
+      signal?: { aborted: boolean };
+      onProgress?: (accumulated: Song[], total: number, done: boolean) => void;
+    },
+  ): Promise<{ songs: Song[]; total: number }> {
+    const pageSize = 200;
+    const maxPages = options.maxPages ?? 25; // up to 5,000 tracks safely
+    const accumulated: Song[] = [];
+    const seenKeys = new Set<string>();
+    let total = Math.max(0, options.expectedCount ?? 0);
+
+    for (let page = 1; page <= maxPages; page += 1) {
+      if (options.signal?.aborted) break;
+      const res = await this.getPlaylistTracksPaged({
+        globalCollectionId: options.globalCollectionId,
+        listId: options.listId,
+        page,
+        pagesize: pageSize,
+      });
+      if (options.signal?.aborted) break;
+
+      if (res.total > total) total = res.total;
+      let addedInPage = 0;
+      for (const s of res.songs) {
+        const key = s.fileId ? `f:${s.fileId}` : s.hash ? `h:${s.hash.toLowerCase()}` : `i:${s.id}:${s.title}`;
+        if (seenKeys.has(key)) continue;
+        seenKeys.add(key);
+        accumulated.push(s);
+        addedInPage += 1;
+      }
+
+      const reachedTotal = total > 0 && accumulated.length >= total;
+      const isDone =
+        res.songs.length === 0 ||
+        addedInPage === 0 ||
+        reachedTotal ||
+        (!res.hasMore && (total === 0 || accumulated.length >= total)) ||
+        page === maxPages;
+
+      options.onProgress?.([...accumulated], Math.max(total, accumulated.length), isDone);
+      if (isDone) break;
+    }
+
+    return { songs: accumulated, total: Math.max(total, accumulated.length) };
   },
 
   async addTracksToPlaylist(listid: string, songs: Song[]) {
@@ -552,6 +639,12 @@ export const kugouApi = {
       .map((s) => `${encodeURIComponent(s.title)}|${s.hash}|${s.albumId || 0}|${s.mixSongId || 0}`)
       .join(',');
     return callKugouRoute('/playlist/tracks/add', { listid, data });
+  },
+
+  async removeTracksFromPlaylist(listid: string, fileids: number[]) {
+    const clean = fileids.filter((id) => Number.isFinite(id) && id > 0);
+    if (!clean.length) return null;
+    return callKugouRoute('/playlist/tracks/del', { listid, fileids: clean.join(',') });
   },
 
   async getSongPrivilegeLite(hash: string) {

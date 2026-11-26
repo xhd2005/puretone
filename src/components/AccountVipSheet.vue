@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { Icon } from '@iconify/vue';
 import iconCheck from '@iconify/icons-tabler/check';
 import iconPlus from '@iconify/icons-tabler/plus';
@@ -8,8 +8,9 @@ import iconTrash from '@iconify/icons-tabler/trash';
 import iconBell from '@iconify/icons-tabler/bell';
 import iconSparkles from '@iconify/icons-tabler/sparkles';
 import iconFlame from '@iconify/icons-tabler/flame';
-import iconAlertCircle from '@iconify/icons-tabler/alert-circle';
 import iconCrown from '@iconify/icons-tabler/crown';
+import iconDeviceMobile from '@iconify/icons-tabler/device-mobile';
+import iconDatabase from '@iconify/icons-tabler/database';
 import type { AudioQuality } from '@/types/music';
 import type { VipStepKey } from '@/services/vip/vipClaimEngine';
 import { useAccountsStore } from '@/stores/accounts';
@@ -17,6 +18,9 @@ import { useVipStore } from '@/stores/vip';
 import { useSettingsStore, type AppearanceMode } from '@/stores/settings';
 import { usePlayerStore } from '@/stores/player';
 import { useUiStore } from '@/stores/ui';
+import { echoSystem } from '@/native/echoSystem';
+import { echoPlayer } from '@/native/echoPlayer';
+import PureToneMark from './PureToneMark.vue';
 
 const accounts = useAccountsStore();
 const vip = useVipStore();
@@ -25,6 +29,28 @@ const player = usePlayerStore();
 const ui = useUiStore();
 
 const showAllLogs = ref(false);
+const notifGranted = ref(true);
+const cacheUsedMb = ref('0.0');
+const clearingCache = ref(false);
+
+async function refreshDeviceStats() {
+  const [perm, cache] = await Promise.all([
+    echoSystem.checkNotificationPermission(),
+    echoPlayer.getAudioCacheStats(),
+  ]);
+  notifGranted.value = perm.granted;
+  cacheUsedMb.value = (cache.usedBytes / (1024 * 1024)).toFixed(1);
+}
+
+watch(
+  () => ui.accountSheetOpen,
+  (open) => {
+    if (open) {
+      echoSystem.haptic('light');
+      void refreshDeviceStats();
+    }
+  },
+);
 
 const stepMeta: Array<{ key: VipStepKey; label: string }> = [
   { key: 'baseVip', label: '基础畅听 VIP' },
@@ -47,6 +73,7 @@ const reminderTimeStr = computed({
 });
 
 async function toggleReminder() {
+  echoSystem.haptic('selection');
   const next = !settings.dailyReminderEnabled;
   const ok = await settings.setDailyReminder(next);
   if (next && ok) {
@@ -58,7 +85,39 @@ async function toggleReminder() {
   }
 }
 
+async function handleVivoLockScreenAction() {
+  echoSystem.haptic('light');
+  if (!notifGranted.value) {
+    const ok = await echoSystem.requestNotificationPermission();
+    notifGranted.value = ok;
+    if (ok) {
+      ui.showToast('已开启锁屏与原子岛通知权限');
+      return;
+    }
+  }
+  await echoSystem.openAppNotificationSettings();
+}
+
+async function handleOpenAppBatterySettings() {
+  echoSystem.haptic('light');
+  await echoSystem.openAppDetailsSettings();
+}
+
+async function handleClearAudioCache() {
+  if (clearingCache.value) return;
+  echoSystem.haptic('medium');
+  clearingCache.value = true;
+  try {
+    await echoPlayer.clearAudioCache();
+    await refreshDeviceStats();
+    ui.showToast('已清理本地音频缓存');
+  } finally {
+    clearingCache.value = false;
+  }
+}
+
 function handleClaimNow() {
+  echoSystem.haptic('medium');
   void vip.claimAccount(accounts.activeAccount, {
     silent: false,
     mixsongid: player.currentSong?.mixSongId,
@@ -76,18 +135,21 @@ function stepBadgeText(status: string): string {
 </script>
 
 <template>
-  <Transition name="am-sheet">
+  <!-- Decoupled Airy Scrim (opacity only) + Independent Liquid Glass Sheet Slide-Up -->
+  <Transition name="lg-modal">
     <div
       v-if="ui.accountSheetOpen"
-      class="fixed inset-0 z-[75] flex flex-col justify-end bg-black/45"
+      class="fixed inset-0 z-[75] flex flex-col justify-end lg-scrim"
       @click="ui.accountSheetOpen = false"
     >
       <div
-        class="bg-[var(--bg-grouped)] rounded-t-[26px] h-[90vh] flex flex-col overflow-hidden shadow-2xl"
+        class="lg-sheet-panel rounded-t-[28px] h-[90vh] flex flex-col overflow-hidden"
         @click.stop
       >
+        <div class="w-10 h-1 rounded-full bg-[var(--text-tertiary)]/50 mx-auto mt-2.5 shrink-0" />
+
         <!-- iOS Sheet Nav Header -->
-        <div class="flex items-center justify-between px-5 pt-4 pb-3 am-hairline-b shrink-0">
+        <div class="flex items-center justify-between px-5 pt-2.5 pb-3 am-hairline-b shrink-0">
           <span class="text-[20px] font-bold tracking-tight text-[var(--text-primary)]">账号与每日 VIP</span>
           <button
             type="button"
@@ -101,7 +163,7 @@ function stepBadgeText(status: string): string {
         <!-- Scrollable Sheet Content -->
         <div class="flex-1 am-scroll px-4 pt-4 pb-[calc(var(--safe-bottom)+28px)] space-y-5">
           <!-- 1. Multi-Account Switcher Card -->
-          <section class="rounded-[18px] bg-[var(--bg-card)] overflow-hidden">
+          <section class="rounded-[20px] bg-[var(--bg-card)] overflow-hidden shadow-xs">
             <div v-if="!accounts.isLoggedIn" class="p-5 text-center">
               <div class="w-14 h-14 rounded-full bg-[var(--bg-subtle)] mx-auto flex items-center justify-center am-accent-text mb-3">
                 <Icon :icon="iconCrown" class="w-7 h-7" />
@@ -112,7 +174,7 @@ function stepBadgeText(status: string): string {
               </p>
               <button
                 type="button"
-                class="mt-4 w-full h-11 rounded-[12px] am-accent-bg text-white text-[15px] font-semibold border-0 am-tap"
+                class="mt-4 w-full h-11 rounded-[13px] am-accent-bg text-white text-[15px] font-semibold border-0 am-tap"
                 @click="ui.loginModalOpen = true"
               >
                 立即登录
@@ -124,7 +186,7 @@ function stepBadgeText(status: string): string {
                 v-for="acc in accounts.accounts"
                 :key="acc.userid"
                 class="flex items-center gap-3 px-4 py-3 cursor-pointer"
-                @click="accounts.switchAccount(acc.userid)"
+                @click="echoSystem.haptic('selection'); accounts.switchAccount(acc.userid)"
               >
                 <div class="relative w-11 h-11 rounded-full overflow-hidden bg-[var(--bg-subtle)] shrink-0">
                   <img v-if="acc.avatar" :src="acc.avatar" class="w-full h-full object-cover" alt="" />
@@ -175,13 +237,13 @@ function stepBadgeText(status: string): string {
             </div>
           </section>
 
-          <!-- 2. Daily VIP Claim Card (only when logged in) -->
+          <!-- 2. Daily VIP Claim Card -->
           <section v-if="accounts.isLoggedIn" class="space-y-3">
             <div class="text-[13px] font-semibold uppercase tracking-wide text-[var(--text-secondary)] px-2">
               每日畅听 VIP 签到
             </div>
 
-            <div class="rounded-[18px] bg-[var(--bg-card)] p-4">
+            <div class="rounded-[20px] bg-[var(--bg-card)] p-4 shadow-xs">
               <div class="flex items-start justify-between gap-3">
                 <div>
                   <div class="text-[12px] font-medium text-[var(--text-secondary)]">当前畅听 VIP 剩余</div>
@@ -201,11 +263,10 @@ function stepBadgeText(status: string): string {
                 </div>
               </div>
 
-              <!-- Action Buttons -->
               <div class="grid gap-2.5 mt-4" :class="accounts.accounts.length > 1 ? 'grid-cols-2' : 'grid-cols-1'">
                 <button
                   type="button"
-                  class="h-11 rounded-[12px] am-accent-bg text-white text-[15px] font-semibold border-0 flex items-center justify-center gap-1.5 am-tap"
+                  class="h-11 rounded-[13px] am-accent-bg text-white text-[15px] font-semibold border-0 flex items-center justify-center gap-1.5 am-tap"
                   :disabled="vip.isClaiming || vip.isBatchClaiming"
                   @click="handleClaimNow"
                 >
@@ -216,7 +277,7 @@ function stepBadgeText(status: string): string {
                 <button
                   v-if="accounts.accounts.length > 1"
                   type="button"
-                  class="h-11 rounded-[12px] bg-[var(--bg-subtle)] text-[var(--text-primary)] text-[15px] font-semibold border-0 flex items-center justify-center gap-1.5 am-tap"
+                  class="h-11 rounded-[13px] bg-[var(--bg-subtle)] text-[var(--text-primary)] text-[15px] font-semibold border-0 flex items-center justify-center gap-1.5 am-tap"
                   :disabled="vip.isClaiming || vip.isBatchClaiming"
                   @click="vip.claimAllAccounts(false)"
                 >
@@ -278,8 +339,8 @@ function stepBadgeText(status: string): string {
               </div>
             </div>
 
-            <!-- Compact Monthly Calendar Grid -->
-            <div class="rounded-[18px] bg-[var(--bg-card)] p-4">
+            <!-- Monthly Calendar Grid -->
+            <div class="rounded-[20px] bg-[var(--bg-card)] p-4 shadow-xs">
               <div class="flex items-center justify-between mb-3">
                 <span class="text-[15px] font-semibold text-[var(--text-primary)]">{{ vip.currentCalendar.monthLabel }} 打卡日历</span>
                 <span class="text-[12px] font-medium text-[var(--text-secondary)] tabular-nums">
@@ -314,7 +375,6 @@ function stepBadgeText(status: string): string {
                 </div>
               </div>
 
-              <!-- Recent brief ledger toggle -->
               <div v-if="vip.currentLogs.length" class="mt-3 pt-2.5 am-hairline-t">
                 <button
                   type="button"
@@ -343,17 +403,17 @@ function stepBadgeText(status: string): string {
             </div>
           </section>
 
-          <!-- 3. Minimalist iOS Grouped Settings -->
+          <!-- 3. Minimalist Grouped Settings -->
           <section class="space-y-3">
             <div class="text-[13px] font-semibold uppercase tracking-wide text-[var(--text-secondary)] px-2">
               播放与偏好设置
             </div>
 
-            <div class="rounded-[18px] bg-[var(--bg-card)] overflow-hidden divide-y divide-[var(--hairline)]">
+            <div class="rounded-[20px] bg-[var(--bg-card)] overflow-hidden divide-y divide-[var(--hairline)] shadow-xs">
               <!-- Audio Quality -->
               <div class="px-4 py-3 flex items-center justify-between gap-2">
                 <span class="text-[15px] text-[var(--text-primary)]">优先音质</span>
-                <div class="flex p-0.5 rounded-lg bg-[var(--bg-subtle)]">
+                <div class="flex p-0.5 rounded-xl bg-[var(--bg-subtle)]">
                   <button
                     v-for="q in [
                       { id: '128', label: '标准' },
@@ -362,13 +422,13 @@ function stepBadgeText(status: string): string {
                     ]"
                     :key="q.id"
                     type="button"
-                    class="px-2.5 h-7 rounded-[6px] text-[12px] font-semibold border-0"
+                    class="px-2.5 h-7 rounded-[8px] text-[12px] font-semibold border-0 transition-all"
                     :class="
                       settings.quality === q.id
                         ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-sm'
                         : 'bg-transparent text-[var(--text-secondary)]'
                     "
-                    @click="settings.quality = q.id as AudioQuality"
+                    @click="echoSystem.haptic('selection'); settings.quality = q.id as AudioQuality"
                   >
                     {{ q.label }}
                   </button>
@@ -378,7 +438,7 @@ function stepBadgeText(status: string): string {
               <!-- Theme Appearance -->
               <div class="px-4 py-3 flex items-center justify-between gap-2">
                 <span class="text-[15px] text-[var(--text-primary)]">外观模式</span>
-                <div class="flex p-0.5 rounded-lg bg-[var(--bg-subtle)]">
+                <div class="flex p-0.5 rounded-xl bg-[var(--bg-subtle)]">
                   <button
                     v-for="ap in [
                       { id: 'system', label: '跟随系统' },
@@ -387,27 +447,88 @@ function stepBadgeText(status: string): string {
                     ]"
                     :key="ap.id"
                     type="button"
-                    class="px-2.5 h-7 rounded-[6px] text-[12px] font-semibold border-0"
+                    class="px-2.5 h-7 rounded-[8px] text-[12px] font-semibold border-0 transition-all"
                     :class="
                       settings.appearance === ap.id
                         ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-sm'
                         : 'bg-transparent text-[var(--text-secondary)]'
                     "
-                    @click="settings.appearance = ap.id as AppearanceMode"
+                    @click="echoSystem.haptic('selection'); settings.appearance = ap.id as AppearanceMode"
                   >
                     {{ ap.label }}
                   </button>
                 </div>
               </div>
 
-              <!-- Auto Unblock -->
+              <!-- Auto Unblock (4-Channel Zero Config) -->
               <label class="px-4 py-3 flex items-center justify-between cursor-pointer">
                 <div class="flex items-center gap-2">
-                  <Icon :icon="iconSparkles" class="w-4 h-4 am-accent-text" />
-                  <span class="text-[15px] text-[var(--text-primary)]">灰歌自动解灰</span>
+                  <Icon :icon="iconSparkles" class="w-4 h-4 am-accent-text shrink-0" />
+                  <div>
+                    <div class="text-[15px] text-[var(--text-primary)]">灰歌自动解灰</div>
+                    <div class="text-[11px] text-[var(--text-secondary)]">内置四通道并行匹配原唱 320k 音源</div>
+                  </div>
                 </div>
                 <input v-model="settings.enableUnblock" type="checkbox" class="ios-switch" />
               </label>
+
+              <!-- Vivo Lock Screen & Atomic Island Status -->
+              <div class="px-4 py-3 flex items-center justify-between gap-2">
+                <div class="flex items-center gap-2 min-w-0">
+                  <Icon :icon="iconDeviceMobile" class="w-4 h-4 am-accent-text shrink-0" />
+                  <div class="min-w-0">
+                    <div class="flex items-center gap-1.5 text-[15px] text-[var(--text-primary)]">
+                      <span>锁屏与原子岛</span>
+                      <span
+                        class="w-2 h-2 rounded-full"
+                        :class="notifGranted ? 'bg-[#34c759]' : 'bg-[#ff9500]'"
+                      />
+                    </div>
+                    <div class="text-[11px] text-[var(--text-secondary)] truncate">
+                      {{ notifGranted ? '通知通道已就绪 · 可按需配置后台保活' : '需开启通知权限以激活锁屏播控与原子岛' }}
+                    </div>
+                  </div>
+                </div>
+                <div class="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    class="px-2.5 h-7 rounded-full text-[12px] font-semibold border-0 am-tap"
+                    :class="notifGranted ? 'bg-[var(--bg-subtle)] text-[var(--text-primary)]' : 'am-accent-bg text-white'"
+                    @click="handleVivoLockScreenAction"
+                  >
+                    {{ notifGranted ? '通知设置' : '一键开启' }}
+                  </button>
+                  <button
+                    v-if="notifGranted"
+                    type="button"
+                    class="px-2.5 h-7 rounded-full bg-[var(--bg-subtle)] text-[var(--text-secondary)] text-[12px] font-medium border-0 am-tap"
+                    @click="handleOpenAppBatterySettings"
+                  >
+                    后台保活
+                  </button>
+                </div>
+              </div>
+
+              <!-- 300MB Smart Audio Cache -->
+              <div class="px-4 py-3 flex items-center justify-between gap-2">
+                <div class="flex items-center gap-2">
+                  <Icon :icon="iconDatabase" class="w-4 h-4 am-accent-text shrink-0" />
+                  <div>
+                    <div class="text-[15px] text-[var(--text-primary)]">本地音频智能缓存</div>
+                    <div class="text-[11px] text-[var(--text-secondary)] tabular-nums">
+                      已缓存 {{ cacheUsedMb }} MB / 300 MB · 重复听零等待
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  class="px-3 h-7 rounded-full bg-[var(--bg-subtle)] text-[12px] font-semibold text-[var(--text-primary)] border-0 am-tap shrink-0"
+                  :disabled="clearingCache"
+                  @click="handleClearAudioCache"
+                >
+                  {{ clearingCache ? '清理中…' : '清理' }}
+                </button>
+              </div>
 
               <!-- Auto Claim on Launch -->
               <label class="px-4 py-3 flex items-center justify-between cursor-pointer">
@@ -447,9 +568,9 @@ function stepBadgeText(status: string): string {
               </div>
             </div>
 
-            <div class="text-center text-[12px] text-[var(--text-tertiary)] pt-2 flex items-center justify-center gap-1">
-              <Icon :icon="iconAlertCircle" class="w-3.5 h-3.5" />
-              <span>EchoMusic Mobile v1.0.0 · 极简无广告 · 本地直连</span>
+            <div class="text-center text-[12px] text-[var(--text-tertiary)] pt-2 flex items-center justify-center gap-2">
+              <PureToneMark :size="18" />
+              <span>PureTone（纯音）v2.0.0 · 极简无广告 · 本地直连</span>
             </div>
           </section>
         </div>

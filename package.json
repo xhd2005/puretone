@@ -1,8 +1,8 @@
 {
-  "name": "echo-music-mobile",
-  "version": "1.0.0",
+  "name": "puretone",
+  "version": "2.0.0",
   "private": true,
-  "description": "EchoMusic Mobile - Minimalist ad-free Apple Music-inspired Android music player with built-in KuGou Music API and Daily VIP Auto-Claim.",
+  "description": "PureTone (纯音) - Minimalist ad-free iOS 26 Liquid Glass Android music player with built-in KuGou API, 4-channel unblock engine, and Daily VIP Auto-Claim.",
   "license": "GPL-3.0-only",
   "type": "module",
   "scripts": {

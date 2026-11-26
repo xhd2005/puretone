@@ -7,6 +7,8 @@ import iconHeartFilled from '@iconify/icons-tabler/heart-filled';
 import iconSparkles from '@iconify/icons-tabler/sparkles';
 import iconCopy from '@iconify/icons-tabler/copy';
 import iconPlayerPlay from '@iconify/icons-tabler/player-play';
+import iconMoon from '@iconify/icons-tabler/moon';
+import type { SleepTimerMode } from '@/types/music';
 import { usePlayerStore } from '@/stores/player';
 import { useUiStore } from '@/stores/ui';
 import { echoSystem } from '@/native/echoSystem';
@@ -16,6 +18,14 @@ const ui = useUiStore();
 
 const song = computed(() => ui.actionSheetSong);
 const isFav = computed(() => Boolean(song.value?.hash && player.favoriteHashes.has(song.value.hash.toLowerCase())));
+
+const sleepOptions: Array<{ id: SleepTimerMode; label: string }> = [
+  { id: 'off', label: '关闭' },
+  { id: '15', label: '15分' },
+  { id: '30', label: '30分' },
+  { id: '60', label: '60分' },
+  { id: 'track', label: '播完本曲' },
+];
 
 function close() {
   ui.actionSheetSong = null;
@@ -50,6 +60,7 @@ function openUnblock() {
 
 async function copyTitle() {
   if (!song.value) return;
+  echoSystem.haptic('light');
   await echoSystem.copyToClipboard(`${song.value.title} - ${song.value.artist}`);
   close();
   ui.showToast('已复制歌曲名称');
@@ -57,17 +68,17 @@ async function copyTitle() {
 </script>
 
 <template>
-  <Transition name="am-fade">
-    <div v-if="song" class="fixed inset-0 z-[80] flex flex-col justify-end bg-black/45" @click="close">
+  <Transition name="lg-modal">
+    <div v-if="song" class="fixed inset-0 z-[80] flex flex-col justify-end lg-scrim" @click="close">
       <div
-        class="am-glass rounded-t-[24px] px-4 pt-3 pb-[calc(var(--safe-bottom)+18px)] shadow-2xl"
+        class="lg-sheet-panel rounded-t-[28px] px-4 pt-3 pb-[calc(var(--safe-bottom)+18px)]"
         @click.stop
       >
-        <div class="w-9 h-1 rounded-full bg-[var(--text-tertiary)]/50 mx-auto mb-3.5" />
+        <div class="w-10 h-1 rounded-full bg-[var(--text-tertiary)]/55 mx-auto mb-3.5" />
 
         <!-- Song Header -->
         <div class="flex items-center gap-3 px-2 pb-3.5 am-hairline-b">
-          <div class="w-12 h-12 rounded-[9px] overflow-hidden bg-[var(--bg-subtle)] shrink-0">
+          <div class="w-12 h-12 rounded-[11px] overflow-hidden bg-[var(--bg-subtle)] shrink-0 shadow-sm">
             <img v-if="song.coverUrl" :src="song.coverUrl" class="w-full h-full object-cover" alt="" />
           </div>
           <div class="min-w-0 flex-1">
@@ -76,8 +87,37 @@ async function copyTitle() {
           </div>
         </div>
 
+        <!-- Sleep Timer Pill Strip -->
+        <div class="mt-3 rounded-[18px] bg-[var(--bg-card)] px-4 py-3">
+          <div class="flex items-center justify-between mb-2">
+            <div class="flex items-center gap-1.5 text-[14px] font-semibold text-[var(--text-primary)]">
+              <Icon :icon="iconMoon" class="w-4 h-4 am-accent-text" />
+              <span>睡眠定时</span>
+            </div>
+            <span v-if="player.sleepTimerBadge" class="text-[12px] font-semibold am-accent-text tabular-nums">
+              {{ player.sleepTimerBadge }}
+            </span>
+          </div>
+          <div class="grid grid-cols-5 gap-1.5">
+            <button
+              v-for="opt in sleepOptions"
+              :key="opt.id"
+              type="button"
+              class="h-8 rounded-xl text-[12px] font-semibold border-0 am-tap transition-colors"
+              :class="
+                player.sleepTimerMode === opt.id
+                  ? 'am-accent-bg text-white shadow-sm'
+                  : 'bg-[var(--bg-subtle)] text-[var(--text-primary)]'
+              "
+              @click="player.setSleepTimer(opt.id)"
+            >
+              {{ opt.label }}
+            </button>
+          </div>
+        </div>
+
         <!-- Grouped Actions -->
-        <div class="mt-3 rounded-[16px] bg-[var(--bg-card)] overflow-hidden divide-y divide-[var(--hairline)]">
+        <div class="mt-3 rounded-[18px] bg-[var(--bg-card)] overflow-hidden divide-y divide-[var(--hairline)]">
           <button type="button" class="sheet-item am-tap" @click="playNow">
             <span>立即播放</span>
             <Icon :icon="iconPlayerPlay" class="w-5 h-5 text-[var(--text-secondary)]" />
@@ -87,7 +127,7 @@ async function copyTitle() {
             <Icon :icon="iconPlayerTrackNext" class="w-5 h-5 text-[var(--text-secondary)]" />
           </button>
           <button type="button" class="sheet-item am-tap" @click="toggleFav">
-            <span>{{ isFav ? '已收藏到“我喜欢”' : '收藏到“我喜欢”' }}</span>
+            <span>{{ isFav ? '取消收藏“我喜欢”' : '收藏到“我喜欢”' }}</span>
             <Icon
               :icon="isFav ? iconHeartFilled : iconHeart"
               class="w-5 h-5"
@@ -106,7 +146,7 @@ async function copyTitle() {
 
         <button
           type="button"
-          class="w-full mt-3 h-12 rounded-[14px] bg-[var(--bg-card)] border-0 text-[16px] font-semibold text-[var(--text-primary)] am-tap"
+          class="w-full mt-3 h-12 rounded-[16px] bg-[var(--bg-card)] border-0 text-[16px] font-semibold text-[var(--text-primary)] am-tap"
           @click="close"
         >
           取消
@@ -119,14 +159,14 @@ async function copyTitle() {
 <style scoped>
 .sheet-item {
   width: 100%;
-  height: 52px;
+  height: 50px;
   padding: 0 18px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   background: transparent;
   border: 0;
-  font-size: 16px;
+  font-size: 15px;
   color: var(--text-primary);
   text-align: left;
 }
