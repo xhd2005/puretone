@@ -6,14 +6,20 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.ComponentName
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import android.media.MediaScannerConnection
 import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
+import android.util.Base64
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -26,6 +32,7 @@ import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
 import com.getcapacitor.annotation.Permission
 import com.getcapacitor.annotation.PermissionCallback
+import java.io.File
 import java.util.Calendar
 
 private class EchoKvDbHelper(context: Context) :
@@ -263,7 +270,165 @@ class EchoSystemPlugin : Plugin() {
         call.resolve()
     }
 
+    @PluginMethod
+    fun isWeChatInstalled(call: PluginCall) {
+        call.resolve(JSObject().put("installed", isPackageInstalled(WECHAT_PKG)))
+    }
+
+    @PluginMethod
+    fun launchWeChatScanWithQr(call: PluginCall) {
+        val rawB64 = call.getString("base64Image")?.trim() ?: ""
+        if (rawB64.isEmpty()) {
+            call.reject("Missing base64Image")
+            return
+        }
+        val cleanB64 = rawB64.substringAfter("base64,", rawB64)
+        val bytes = try {
+            Base64.decode(cleanB64, Base64.DEFAULT)
+        } catch (e: Exception) {
+            call.reject("Invalid base64 image", e)
+            return
+        }
+
+        val saved = saveImageToGallery(bytes, "echomusic_wx_login_${System.currentTimeMillis()}.jpg")
+
+        if (!isPackageInstalled(WECHAT_PKG)) {
+            call.resolve(
+                JSObject()
+                    .put("launched", false)
+                    .put("savedToGallery", saved)
+                    .put("message", "未检测到微信客户端"),
+            )
+            return
+        }
+
+        val launched = try {
+            val scanIntent = Intent().apply {
+                component = ComponentName(WECHAT_PKG, "com.tencent.mm.ui.LauncherUI")
+                action = Intent.ACTION_VIEW
+                putExtra("LauncherUI.From.Scaner.Shortcut", true)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            }
+            context.startActivity(scanIntent)
+            true
+        } catch (_: Exception) {
+            try {
+                val launchIntent = context.packageManager.getLaunchIntentForPackage(WECHAT_PKG)
+                if (launchIntent != null) {
+                    launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    context.startActivity(launchIntent)
+                    true
+                } else {
+                    false
+                }
+            } catch (_: Exception) {
+                false
+            }
+        }
+
+        call.resolve(
+            JSObject()
+                .put("launched", launched)
+                .put("savedToGallery", saved)
+                .put("message", if (launched) "已保存至相册首张并打开微信" else "无法唤起微信"),
+        )
+    }
+
+    @PluginMethod
+    fun shareQrToWeChat(call: PluginCall) {
+        val rawB64 = call.getString("base64Image")?.trim() ?: ""
+        if (rawB64.isEmpty()) {
+            call.reject("Missing base64Image")
+            return
+        }
+        val cleanB64 = rawB64.substringAfter("base64,", rawB64)
+        val bytes = try {
+            Base64.decode(cleanB64, Base64.DEFAULT)
+        } catch (e: Exception) {
+            call.reject("Invalid base64 image", e)
+            return
+        }
+
+        try {
+            val cacheFile = File(context.cacheDir, "wx_login_qr.jpg")
+            cacheFile.writeBytes(bytes)
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", cacheFile)
+
+            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "image/jpeg"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+
+            if (isPackageInstalled(WECHAT_PKG)) {
+                try {
+                    val wxDirect = Intent(shareIntent).apply {
+                        component = ComponentName(WECHAT_PKG, "com.tencent.mm.ui.tools.ShareImgUI")
+                    }
+                    context.startActivity(wxDirect)
+                    call.resolve(JSObject().put("launched", true).put("message", "已唤起微信分享，请发给文件传输助手并长按识别"))
+                    return
+                } catch (_: Exception) {
+                    // Fallback to generic chooser
+                }
+            }
+
+            val chooser = Intent.createChooser(shareIntent, "发送到微信完成授权").apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(chooser)
+            call.resolve(JSObject().put("launched", true).put("message", "请选择微信发送并长按识别登录"))
+        } catch (e: Exception) {
+            call.resolve(JSObject().put("launched", false).put("message", "唤起微信分享失败：${e.message}"))
+        }
+    }
+
+    private fun isPackageInstalled(pkg: String): Boolean {
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                context.packageManager.getPackageInfo(pkg, PackageManager.PackageInfoFlags.of(0))
+            } else {
+                @Suppress("DEPRECATION")
+                context.packageManager.getPackageInfo(pkg, 0)
+            }
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun saveImageToGallery(bytes: ByteArray, fileName: String): Boolean {
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val values = ContentValues().apply {
+                    put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
+                    put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                    put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/EchoMusic")
+                    put(MediaStore.Images.Media.IS_PENDING, 1)
+                }
+                val resolver = context.contentResolver
+                val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return false
+                resolver.openOutputStream(uri)?.use { it.write(bytes) }
+                values.clear()
+                values.put(MediaStore.Images.Media.IS_PENDING, 0)
+                resolver.update(uri, values, null, null)
+                true
+            } else {
+                @Suppress("DEPRECATION")
+                val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "EchoMusic")
+                if (!dir.exists()) dir.mkdirs()
+                val file = File(dir, fileName)
+                file.writeBytes(bytes)
+                MediaScannerConnection.scanFile(context, arrayOf(file.absolutePath), arrayOf("image/jpeg"), null)
+                true
+            }
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     companion object {
+        private const val WECHAT_PKG = "com.tencent.mm"
         @Volatile
         private var instance: EchoSystemPlugin? = null
 

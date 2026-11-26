@@ -1,5 +1,4 @@
 import '@/polyfills/setupGlobals';
-import { installCapacitorAxiosAdapter } from './capacitorAxiosAdapter';
 import { echoSystem } from '@/native/echoSystem';
 import type { AccountProfile, PlaylistSummary, Song } from '@/types/music';
 
@@ -40,6 +39,9 @@ const moduleLoaders: Record<string, () => Promise<{ default?: KugouModuleFn } | 
   '/login/qr/key': () => import('@kugou/module/login_qr_key.js'),
   '/login/qr/create': () => import('@kugou/module/login_qr_create.js'),
   '/login/qr/check': () => import('@kugou/module/login_qr_check.js'),
+  '/login/wx/create': () => import('@kugou/module/login_wx_create.js'),
+  '/login/wx/check': () => import('@kugou/module/login_wx_check.js'),
+  '/login/openplat': () => import('@kugou/module/login_openplat.js'),
   '/user/detail': () => import('@kugou/module/user_detail.js'),
   '/user/vip/detail': () => import('@kugou/module/user_vip_detail.js'),
   '/user/batch/union/vipinfo': () => import('@kugou/module/user_batch_union_vipinfo.js'),
@@ -106,7 +108,6 @@ export function setKugouVerificationHandler(handler: VerificationHandler | null)
 
 async function getCreateRequest(): Promise<(cfg: Record<string, unknown>) => Promise<KugouApiResponse>> {
   if (createRequestFn) return createRequestFn;
-  installCapacitorAxiosAdapter();
   const mod = (await import('@kugou/util/request.js')) as {
     createRequest?: (cfg: Record<string, unknown>) => Promise<KugouApiResponse>;
     default?: { createRequest?: (cfg: Record<string, unknown>) => Promise<KugouApiResponse> };
@@ -124,7 +125,6 @@ export async function initKugouEngine(): Promise<DeviceIdentity> {
   if (initPromise) return initPromise;
 
   initPromise = (async () => {
-    installCapacitorAxiosAdapter();
     const utilMod = (await import('@kugou/util/util.js')) as Record<string, any>;
     const util = utilMod.default || utilMod;
 
@@ -380,18 +380,51 @@ export const kugouApi = {
 
   async createLoginQr() {
     const keyRes = await callKugouRoute('/login/qr/key', {}, { skipAuth: true });
-    const qrcode = keyRes?.body?.data?.qrcode;
-    if (!qrcode) throw new Error('获取登录二维码失败');
-    const imgRes = await callKugouRoute('/login/qr/create', { key: qrcode, qrimg: true }, { skipAuth: true });
+    const data = keyRes?.body?.data;
+    const qrcode = data?.qrcode;
+    if (!qrcode) throw new Error('获取酷狗登录二维码失败');
+    let qrImg = String(data?.qrcode_img || '').trim();
+    if (!qrImg) {
+      const imgRes = await callKugouRoute('/login/qr/create', { key: qrcode, qrimg: true }, { skipAuth: true });
+      qrImg = String(imgRes?.body?.data?.base64 || '').trim();
+    }
+    if (qrImg && !qrImg.startsWith('data:')) {
+      qrImg = `data:image/png;base64,${qrImg}`;
+    }
     return {
       key: String(qrcode),
-      qrImg: String(imgRes?.body?.data?.base64 || ''),
-      url: String(imgRes?.body?.data?.url || ''),
+      qrImg,
+      url: `https://h5.kugou.com/apps/loginQRCode/html/index.html?qrcode=${qrcode}`,
     };
   },
 
   async checkLoginQr(key: string) {
     return callKugouRoute('/login/qr/check', { key }, { skipAuth: true });
+  },
+
+  async createWxLogin() {
+    const res = await callKugouRoute('/login/wx/create', {}, { skipAuth: true });
+    const body = res?.body || {};
+    const uuid = String(body?.uuid || '').trim();
+    const rawBase64 = String(body?.qrcode?.qrcodebase64 || '').trim();
+    if (!uuid || !rawBase64) {
+      throw new Error('获取微信登录凭证失败，请检查网络后重试');
+    }
+    const qrImg = rawBase64.startsWith('data:') ? rawBase64 : `data:image/jpeg;base64,${rawBase64}`;
+    return {
+      uuid,
+      rawBase64: rawBase64.replace(/^data:image\/[^;]+;base64,/, ''),
+      qrImg,
+      url: String(body?.qrcode?.qrcodeurl || `https://open.weixin.qq.com/connect/confirm?uuid=${uuid}`),
+    };
+  },
+
+  async checkWxLogin(uuid: string) {
+    return callKugouRoute('/login/wx/check', { uuid, timestamp: Date.now() }, { skipAuth: true });
+  },
+
+  async loginByOpenPlat(code: string) {
+    return callKugouRoute('/login/openplat', { code, plat: 2 }, { skipAuth: true });
   },
 
   async getUserDetail(authOverride?: { token: string; userid: string }) {

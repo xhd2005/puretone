@@ -1,18 +1,35 @@
-import axios, {
-  AxiosHeaders,
-  type AxiosAdapter,
-  type AxiosResponse,
-  type InternalAxiosRequestConfig,
-} from 'axios';
 import { Buffer } from 'buffer';
 import { nativeHttpRequest } from '@/native/echoHttp';
+
+export interface AxiosLikeConfig {
+  method?: string;
+  url?: string;
+  baseURL?: string;
+  params?: Record<string, unknown>;
+  data?: unknown;
+  headers?: Record<string, unknown>;
+  responseType?: string;
+  timeout?: number;
+  maxRedirects?: number;
+  withCredentials?: boolean;
+  validateStatus?: (status: number) => boolean;
+}
+
+export interface AxiosLikeResponse<T = any> {
+  data: T;
+  status: number;
+  statusText: string;
+  headers: Record<string, any>;
+  config: AxiosLikeConfig;
+  request?: { responseURL?: string };
+}
 
 function buildFullUrl(baseURL?: string, url?: string, params?: Record<string, unknown>): string {
   let full = url || '';
   if (baseURL && !/^https?:\/\//i.test(full)) {
     const base = baseURL.replace(/\/+$/, '');
     const rel = full.replace(/^\/+/, '');
-    full = `${base}/${rel}`;
+    full = rel ? `${base}/${rel}` : base;
   }
   if (params && typeof params === 'object') {
     const entries = Object.entries(params).filter(([, v]) => v !== undefined && v !== null);
@@ -50,14 +67,10 @@ function serializeBody(data: unknown): { body?: string; bodyEncoding?: 'utf8' | 
   return { body: String(data), bodyEncoding: 'utf8' };
 }
 
-function normalizeHeaders(raw: unknown): Record<string, string> {
+function normalizeHeaders(raw?: Record<string, unknown>): Record<string, string> {
   const out: Record<string, string> = {};
   if (!raw || typeof raw !== 'object') return out;
-  const obj =
-    typeof (raw as AxiosHeaders).toJSON === 'function'
-      ? (raw as AxiosHeaders).toJSON(true)
-      : (raw as Record<string, unknown>);
-  for (const [k, v] of Object.entries(obj)) {
+  for (const [k, v] of Object.entries(raw)) {
     if (v === undefined || v === null) continue;
     if (typeof v === 'object' && !Array.isArray(v)) continue;
     out[k] = Array.isArray(v) ? v.join('; ') : String(v);
@@ -65,11 +78,19 @@ function normalizeHeaders(raw: unknown): Record<string, string> {
   return out;
 }
 
-export const capacitorAxiosAdapter: AxiosAdapter = async (
-  config: InternalAxiosRequestConfig,
-): Promise<AxiosResponse> => {
+/**
+ * Unified Axios replacement aliased via Vite for BOTH ESM and CommonJS (`require('axios')`)
+ * so every single KuGouMusicApi & WeChat request executes through Android native OkHttp (`EchoHttpPlugin`).
+ */
+async function axiosShim<T = any>(
+  configOrUrl: AxiosLikeConfig | string,
+  extraConfig?: AxiosLikeConfig,
+): Promise<AxiosLikeResponse<T>> {
+  const config: AxiosLikeConfig =
+    typeof configOrUrl === 'string' ? { ...(extraConfig || {}), url: configOrUrl } : { ...(configOrUrl || {}) };
+
   const method = (config.method || 'GET').toUpperCase();
-  const fullUrl = buildFullUrl(config.baseURL, config.url, config.params as Record<string, unknown> | undefined);
+  const fullUrl = buildFullUrl(config.baseURL, config.url, config.params);
   const headers = normalizeHeaders(config.headers);
   const { body, bodyEncoding, contentType } = serializeBody(config.data);
 
@@ -78,7 +99,9 @@ export const capacitorAxiosAdapter: AxiosAdapter = async (
   }
 
   const wantsBinary = config.responseType === 'arraybuffer' || config.responseType === 'blob';
-  const timeout = typeof config.timeout === 'number' && config.timeout > 0 ? config.timeout : 15000;
+  // WeChat long-polling endpoint needs up to 35s read timeout
+  const defaultTimeout = fullUrl.includes('long.open.weixin.qq.com') ? 35000 : 15000;
+  const timeout = typeof config.timeout === 'number' && config.timeout > 0 ? config.timeout : defaultTimeout;
 
   const nativeRes = await nativeHttpRequest({
     method,
@@ -92,12 +115,12 @@ export const capacitorAxiosAdapter: AxiosAdapter = async (
     followRedirects: config.maxRedirects !== 0,
   });
 
-  const respHeaders: Record<string, unknown> = { ...nativeRes.headers };
+  const respHeaders: Record<string, any> = { ...nativeRes.headers };
   if (Array.isArray(nativeRes.setCookies) && nativeRes.setCookies.length > 0) {
     respHeaders['set-cookie'] = nativeRes.setCookies;
   }
 
-  let parsedData: unknown = nativeRes.body;
+  let parsedData: any = nativeRes.body;
   if (wantsBinary && nativeRes.bodyEncoding === 'base64') {
     const buf = Buffer.from(nativeRes.body, 'base64');
     parsedData = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
@@ -112,11 +135,11 @@ export const capacitorAxiosAdapter: AxiosAdapter = async (
     }
   }
 
-  const response: AxiosResponse = {
+  const response: AxiosLikeResponse<T> = {
     data: parsedData,
     status: nativeRes.status,
     statusText: String(nativeRes.status),
-    headers: respHeaders as AxiosResponse['headers'],
+    headers: respHeaders,
     config,
     request: { responseURL: nativeRes.url },
   };
@@ -124,8 +147,8 @@ export const capacitorAxiosAdapter: AxiosAdapter = async (
   const validateStatus = config.validateStatus ?? ((status: number) => status >= 200 && status < 300);
   if (!validateStatus(response.status)) {
     const err = new Error(`Request failed with status code ${response.status}`) as Error & {
-      response?: AxiosResponse;
-      config?: InternalAxiosRequestConfig;
+      response?: AxiosLikeResponse<T>;
+      config?: AxiosLikeConfig;
       status?: number;
     };
     err.response = response;
@@ -135,11 +158,39 @@ export const capacitorAxiosAdapter: AxiosAdapter = async (
   }
 
   return response;
-};
-
-let installed = false;
-export function installCapacitorAxiosAdapter(): void {
-  if (installed) return;
-  axios.defaults.adapter = capacitorAxiosAdapter;
-  installed = true;
 }
+
+const axiosExport = Object.assign(axiosShim, {
+  request: axiosShim,
+  get: <T = any>(url: string, config?: AxiosLikeConfig) => axiosShim<T>({ ...(config || {}), url, method: 'GET' }),
+  post: <T = any>(url: string, data?: unknown, config?: AxiosLikeConfig) =>
+    axiosShim<T>({ ...(config || {}), url, data, method: 'POST' }),
+  put: <T = any>(url: string, data?: unknown, config?: AxiosLikeConfig) =>
+    axiosShim<T>({ ...(config || {}), url, data, method: 'PUT' }),
+  delete: <T = any>(url: string, config?: AxiosLikeConfig) =>
+    axiosShim<T>({ ...(config || {}), url, method: 'DELETE' }),
+  create: (defaults?: AxiosLikeConfig) => {
+    const instance = <T = any>(cfg: AxiosLikeConfig | string) => {
+      const merged =
+        typeof cfg === 'string' ? { ...(defaults || {}), url: cfg } : { ...(defaults || {}), ...(cfg || {}) };
+      return axiosShim<T>(merged);
+    };
+    return Object.assign(instance, {
+      request: instance,
+      get: <T = any>(url: string, cfg?: AxiosLikeConfig) => instance<T>({ ...(cfg || {}), url, method: 'GET' }),
+      post: <T = any>(url: string, data?: unknown, cfg?: AxiosLikeConfig) =>
+        instance<T>({ ...(cfg || {}), url, data, method: 'POST' }),
+      defaults: { ...(defaults || {}) },
+    });
+  },
+  defaults: {} as Record<string, unknown>,
+  isAxiosError: (err: unknown) => Boolean(err && typeof err === 'object' && 'response' in err),
+});
+
+export default axiosExport;
+export { axiosShim as request };
+export const get = axiosExport.get;
+export const post = axiosExport.post;
+export const create = axiosExport.create;
+export const defaults = axiosExport.defaults;
+export const isAxiosError = axiosExport.isAxiosError;

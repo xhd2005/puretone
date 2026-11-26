@@ -13,6 +13,7 @@ export default defineConfig({
     alias: [
       { find: '@', replacement: resolve(__dirname, 'src') },
       { find: '@kugou', replacement: resolve(__dirname, 'server') },
+      { find: /^axios$/, replacement: resolve(__dirname, 'src/services/kugou/axiosShim.ts') },
       { find: 'crypto', replacement: resolve(__dirname, 'src/polyfills/nodeCryptoShim.ts') },
       { find: 'zlib', replacement: resolve(__dirname, 'src/polyfills/nodeZlibShim.ts') },
       { find: 'net', replacement: resolve(__dirname, 'src/polyfills/nodeNetShim.ts') },
@@ -21,7 +22,7 @@ export default defineConfig({
     ],
   },
   optimizeDeps: {
-    include: ['buffer', 'crypto-js', 'node-forge', 'pako', 'big-integer', 'qrcode', 'axios'],
+    include: ['buffer', 'crypto-js', 'node-forge', 'pako', 'big-integer', 'qrcode'],
   },
   build: {
     outDir: 'dist',

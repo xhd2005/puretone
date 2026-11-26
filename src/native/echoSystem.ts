@@ -27,6 +27,9 @@ export interface EchoSystemPluginInterface {
   cancelDailyReminder(): Promise<void>;
   requestNotificationPermission(): Promise<{ granted: boolean }>;
   copyToClipboard(options: { text: string }): Promise<void>;
+  isWeChatInstalled(): Promise<{ installed: boolean }>;
+  launchWeChatScanWithQr(options: { base64Image: string }): Promise<{ launched: boolean; savedToGallery: boolean; message?: string }>;
+  shareQrToWeChat(options: { base64Image: string }): Promise<{ launched: boolean; message?: string }>;
   addListener(eventName: 'insetsChange', listener: (insets: SafeAreaInsets) => void): Promise<PluginListenerHandle>;
   addListener(eventName: 'hardwareBack', listener: () => void): Promise<PluginListenerHandle>;
   addListener(eventName: 'autoClaimIntent', listener: () => void): Promise<PluginListenerHandle>;
@@ -126,6 +129,28 @@ export const echoSystem = {
     } else if (typeof navigator !== 'undefined' && navigator.clipboard) {
       await navigator.clipboard.writeText(text).catch(() => {});
     }
+  },
+
+  async isWeChatInstalled(): Promise<boolean> {
+    if (!Capacitor.isNativePlatform()) return false;
+    const res = await EchoSystemNative.isWeChatInstalled().catch(() => ({ installed: false }));
+    return Boolean(res?.installed);
+  },
+
+  async launchWeChatScanWithQr(
+    base64Image: string,
+  ): Promise<{ launched: boolean; savedToGallery: boolean; message?: string }> {
+    if (!Capacitor.isNativePlatform()) {
+      return { launched: false, savedToGallery: false, message: '仅支持在 Android 真机拉起微信' };
+    }
+    return EchoSystemNative.launchWeChatScanWithQr({ base64Image });
+  },
+
+  async shareQrToWeChat(base64Image: string): Promise<{ launched: boolean; message?: string }> {
+    if (!Capacitor.isNativePlatform()) {
+      return { launched: false, message: '仅支持在 Android 真机分享至微信' };
+    }
+    return EchoSystemNative.shareQrToWeChat({ base64Image });
   },
 
   async onInsetsChange(cb: (insets: SafeAreaInsets) => void): Promise<() => void> {
