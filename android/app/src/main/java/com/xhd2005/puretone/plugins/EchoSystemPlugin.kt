@@ -611,6 +611,62 @@ class EchoSystemPlugin : Plugin() {
     }
 
     @PluginMethod
+    fun saveImageToGallery(call: PluginCall) {
+        val rawB64 = call.getString("base64Image")?.trim() ?: ""
+        if (rawB64.isEmpty()) {
+            call.reject("Missing base64Image")
+            return
+        }
+        val cleanB64 = rawB64.substringAfter("base64,", rawB64)
+        val bytes = try {
+            Base64.decode(cleanB64, Base64.DEFAULT)
+        } catch (e: Exception) {
+            call.reject("Invalid base64 image", e)
+            return
+        }
+        val rawName = call.getString("fileName")?.trim().takeIf { !it.isNullOrBlank() }
+            ?: "PureTone_Poster_${System.currentTimeMillis()}.png"
+        val safeName = rawName.replace(Regex("[^a-zA-Z0-9._-]"), "_")
+        val mime = if (safeName.endsWith(".jpg", true) || safeName.endsWith(".jpeg", true)) "image/jpeg" else "image/png"
+        val saved = saveImageToGallery(bytes, safeName, mime)
+        call.resolve(JSObject().put("saved", saved))
+    }
+
+    @PluginMethod
+    fun shareImage(call: PluginCall) {
+        val rawB64 = call.getString("base64Image")?.trim() ?: ""
+        if (rawB64.isEmpty()) {
+            call.reject("Missing base64Image")
+            return
+        }
+        val cleanB64 = rawB64.substringAfter("base64,", rawB64)
+        val bytes = try {
+            Base64.decode(cleanB64, Base64.DEFAULT)
+        } catch (e: Exception) {
+            call.reject("Invalid base64 image", e)
+            return
+        }
+        val title = call.getString("title")?.trim().takeIf { !it.isNullOrBlank() } ?: "分享歌词海报"
+        try {
+            val cacheFile = File(context.cacheDir, "puretone_share_poster.png")
+            cacheFile.writeBytes(bytes)
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", cacheFile)
+            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "image/png"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            val chooser = Intent.createChooser(shareIntent, title).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(chooser)
+            call.resolve(JSObject().put("launched", true))
+        } catch (e: Exception) {
+            call.resolve(JSObject().put("launched", false).put("message", e.message ?: "无法调起系统分享"))
+        }
+    }
+
+    @PluginMethod
     fun shareQrToWeChat(call: PluginCall) {
         val rawB64 = call.getString("base64Image")?.trim() ?: ""
         if (rawB64.isEmpty()) {

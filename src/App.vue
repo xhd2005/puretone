@@ -19,6 +19,8 @@ import SongActionSheet from '@/components/SongActionSheet.vue';
 import UnblockSourceSheet from '@/components/UnblockSourceSheet.vue';
 import VerificationModal from '@/components/VerificationModal.vue';
 import UpdateModal from '@/components/UpdateModal.vue';
+import LyricPosterModal from '@/components/LyricPosterModal.vue';
+import ComplianceDisclaimerModal, { COMPLIANCE_ACCEPTED_KEY } from '@/components/ComplianceDisclaimerModal.vue';
 
 const router = useRouter();
 const settings = useSettingsStore();
@@ -40,6 +42,12 @@ onMounted(async () => {
   ]);
 
   void initKugouEngine();
+
+  // First-launch open-source compliance & disclaimer notice
+  const compliance = await echoSystem.kvGetJson<{ accepted?: boolean } | null>(COMPLIANCE_ACCEPTED_KEY, null);
+  if (!compliance?.accepted) {
+    ui.complianceModalOpen = true;
+  }
 
   await echoSystem.onHardwareBack(() => {
     if (ui.closeTopOverlay()) return;
@@ -96,14 +104,16 @@ onMounted(async () => {
   <LoginModal />
   <SongActionSheet />
   <UnblockSourceSheet />
+  <LyricPosterModal />
   <VerificationModal />
   <UpdateModal />
+  <ComplianceDisclaimerModal />
 
   <!-- iOS 26 Liquid Glass Top Pill Toast -->
   <Transition name="am-fade">
     <div
       v-if="ui.toastMessage"
-      class="fixed top-[calc(var(--safe-top)+14px)] left-1/2 -translate-x-1/2 z-[100] px-4 py-2 rounded-full lg-capsule text-[13px] font-semibold text-[var(--text-primary)] whitespace-nowrap max-w-[88vw] truncate pointer-events-none"
+      class="fixed top-[calc(var(--safe-top)+14px)] left-1/2 -translate-x-1/2 z-[110] px-4 py-2 rounded-full lg-capsule text-[13px] font-semibold text-[var(--text-primary)] whitespace-nowrap max-w-[88vw] truncate pointer-events-none"
     >
       {{ ui.toastMessage }}
     </div>

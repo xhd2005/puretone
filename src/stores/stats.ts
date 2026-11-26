@@ -4,7 +4,8 @@ import type { Song } from '@/types/music';
 import { echoSystem } from '@/native/echoSystem';
 import { formatLocalDate } from '@/services/vip/vipClaimEngine';
 
-const STATS_KEY = 'stats.listening.v1';
+const STATS_KEY_V1 = 'stats.listening.v1';
+const STATS_KEY_V2 = 'stats.listening.v2';
 
 export interface SongPlayStat {
   key: string;
@@ -15,14 +16,174 @@ export interface SongPlayStat {
   lastPlayedAt: number;
 }
 
-interface PersistedListeningStats {
+export interface StatBucket {
+  seconds: number;
+  plays: number;
+}
+
+export interface PersistedListeningStatsV2 {
+  version: 2;
   todayDate: string;
   todaySeconds: number;
   todayPlays: number;
   totalSeconds: number;
   totalPlays: number;
+  daily: Record<string, StatBucket>;
+  hourlyDate: string;
+  hourly: StatBucket[];
   songs: Record<string, SongPlayStat>;
   artists: Record<string, number>;
+}
+
+export interface DayChartPoint {
+  dateKey: string;
+  shortLabel: string;
+  fullLabel: string;
+  minutes: number;
+  seconds: number;
+  plays: number;
+  isToday: boolean;
+}
+
+export interface Last7DaysSeries {
+  days: DayChartPoint[];
+  totalMinutes: number;
+  totalPlays: number;
+  avgMinutes: number;
+  maxMinutes: number;
+}
+
+export interface HourChartPoint {
+  hour: number;
+  label: string;
+  minutes: number;
+  seconds: number;
+  plays: number;
+}
+
+export interface Today24HourSeries {
+  hours: HourChartPoint[];
+  totalMinutes: number;
+  totalPlays: number;
+  maxMinutes: number;
+  peakHour: number;
+}
+
+const WEEKDAY_CN = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+
+export function createEmptyHourlyBuckets(): StatBucket[] {
+  return Array.from({ length: 24 }, () => ({ seconds: 0, plays: 0 }));
+}
+
+function normalizeHourly(raw: unknown): StatBucket[] {
+  const out = createEmptyHourlyBuckets();
+  if (!Array.isArray(raw)) return out;
+  for (let i = 0; i < 24; i += 1) {
+    const item = raw[i] as Partial<StatBucket> | undefined;
+    if (item && typeof item === 'object') {
+      out[i] = {
+        seconds: Math.max(0, Number(item.seconds) || 0),
+        plays: Math.max(0, Number(item.plays) || 0),
+      };
+    }
+  }
+  return out;
+}
+
+function pruneDailyBuckets(daily: Record<string, StatBucket>, maxDays = 35): Record<string, StatBucket> {
+  const keys = Object.keys(daily).sort();
+  if (keys.length <= maxDays) return daily;
+  const kept: Record<string, StatBucket> = {};
+  for (const k of keys.slice(-maxDays)) {
+    kept[k] = daily[k];
+  }
+  return kept;
+}
+
+/**
+ * Pure builder for the iOS Screen Time style 7-day bar chart.
+ * Always produces 7 consecutive calendar days ending at `referenceDate`.
+ */
+export function buildLast7DaysSeries(
+  daily: Record<string, StatBucket>,
+  referenceDate: Date = new Date(),
+): Last7DaysSeries {
+  const days: DayChartPoint[] = [];
+  const base = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), referenceDate.getDate());
+  let totalSec = 0;
+  let totalPlays = 0;
+  let maxMin = 0;
+
+  for (let offset = 6; offset >= 0; offset -= 1) {
+    const d = new Date(base);
+    d.setDate(base.getDate() - offset);
+    const dateKey = formatLocalDate(d);
+    const bucket = daily[dateKey] || { seconds: 0, plays: 0 };
+    const seconds = Math.max(0, Number(bucket.seconds) || 0);
+    const plays = Math.max(0, Number(bucket.plays) || 0);
+    const minutes = Math.round(seconds / 60);
+    totalSec += seconds;
+    totalPlays += plays;
+    if (minutes > maxMin) maxMin = minutes;
+
+    days.push({
+      dateKey,
+      shortLabel: offset === 0 ? '今日' : WEEKDAY_CN[d.getDay()],
+      fullLabel: `${d.getMonth() + 1}月${d.getDate()}日 ${WEEKDAY_CN[d.getDay()]}`,
+      minutes,
+      seconds,
+      plays,
+      isToday: offset === 0,
+    });
+  }
+
+  const totalMinutes = Math.round(totalSec / 60);
+  const avgMinutes = Math.round(totalSec / 60 / 7);
+  return {
+    days,
+    totalMinutes,
+    totalPlays,
+    avgMinutes,
+    maxMinutes: Math.max(maxMin, avgMinutes, 10),
+  };
+}
+
+/**
+ * Pure builder for the iOS Screen Time style 24-hour activity chart.
+ */
+export function build24HourSeries(hourly: StatBucket[]): Today24HourSeries {
+  const normalized = normalizeHourly(hourly);
+  let totalSec = 0;
+  let totalPlays = 0;
+  let maxMin = 0;
+  let peakHour = -1;
+  let peakSec = 0;
+
+  const hours: HourChartPoint[] = normalized.map((bucket, h) => {
+    const minutes = Math.round(bucket.seconds / 60);
+    totalSec += bucket.seconds;
+    totalPlays += bucket.plays;
+    if (minutes > maxMin) maxMin = minutes;
+    if (bucket.seconds > peakSec) {
+      peakSec = bucket.seconds;
+      peakHour = h;
+    }
+    return {
+      hour: h,
+      label: `${String(h).padStart(2, '0')}:00`,
+      minutes,
+      seconds: bucket.seconds,
+      plays: bucket.plays,
+    };
+  });
+
+  return {
+    hours,
+    totalMinutes: Math.round(totalSec / 60),
+    totalPlays,
+    maxMinutes: Math.max(maxMin, 10),
+    peakHour,
+  };
 }
 
 export const useStatsStore = defineStore('stats', () => {
@@ -31,6 +192,9 @@ export const useStatsStore = defineStore('stats', () => {
   const todayPlays = ref(0);
   const totalSeconds = ref(0);
   const totalPlays = ref(0);
+  const daily = ref<Record<string, StatBucket>>({});
+  const hourlyDate = ref(formatLocalDate());
+  const hourly = ref<StatBucket[]>(createEmptyHourlyBuckets());
   const songs = ref<Record<string, SongPlayStat>>({});
   const artists = ref<Record<string, number>>({});
 
@@ -40,58 +204,116 @@ export const useStatsStore = defineStore('stats', () => {
     const today = formatLocalDate();
     if (todayDate.value !== today) {
       todayDate.value = today;
-      todaySeconds.value = 0;
-      todayPlays.value = 0;
+      todaySeconds.value = daily.value[today]?.seconds ?? 0;
+      todayPlays.value = daily.value[today]?.plays ?? 0;
     }
+    if (hourlyDate.value !== today) {
+      hourlyDate.value = today;
+      hourly.value = createEmptyHourlyBuckets();
+    }
+  }
+
+  function exportSnapshot(): PersistedListeningStatsV2 {
+    const trimmedSongs: Record<string, SongPlayStat> = {};
+    Object.values(songs.value)
+      .sort((a, b) => b.count - a.count || b.lastPlayedAt - a.lastPlayedAt)
+      .slice(0, 120)
+      .forEach((s) => {
+        trimmedSongs[s.key] = s;
+      });
+
+    return {
+      version: 2,
+      todayDate: todayDate.value,
+      todaySeconds: todaySeconds.value,
+      todayPlays: todayPlays.value,
+      totalSeconds: totalSeconds.value,
+      totalPlays: totalPlays.value,
+      daily: pruneDailyBuckets({ ...daily.value }, 35),
+      hourlyDate: hourlyDate.value,
+      hourly: normalizeHourly(hourly.value),
+      songs: trimmedSongs,
+      artists: { ...artists.value },
+    };
   }
 
   function schedulePersist() {
     if (saveTimer) return;
     saveTimer = setTimeout(() => {
       saveTimer = null;
-      const trimmedSongs: Record<string, SongPlayStat> = {};
-      Object.values(songs.value)
-        .sort((a, b) => b.count - a.count || b.lastPlayedAt - a.lastPlayedAt)
-        .slice(0, 120)
-        .forEach((s) => {
-          trimmedSongs[s.key] = s;
-        });
+      void echoSystem.kvSetJson(STATS_KEY_V2, exportSnapshot());
+    }, 1400);
+  }
 
-      const payload: PersistedListeningStats = {
-        todayDate: todayDate.value,
-        todaySeconds: todaySeconds.value,
-        todayPlays: todayPlays.value,
-        totalSeconds: totalSeconds.value,
-        totalPlays: totalPlays.value,
-        songs: trimmedSongs,
-        artists: artists.value,
+  async function importSnapshot(raw: Partial<PersistedListeningStatsV2>) {
+    const today = formatLocalDate();
+    const rawDaily = raw.daily && typeof raw.daily === 'object' ? raw.daily : {};
+    const cleanDaily: Record<string, StatBucket> = {};
+    for (const [k, v] of Object.entries(rawDaily)) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(k) || !v || typeof v !== 'object') continue;
+      cleanDaily[k] = {
+        seconds: Math.max(0, Number(v.seconds) || 0),
+        plays: Math.max(0, Number(v.plays) || 0),
       };
-      void echoSystem.kvSetJson(STATS_KEY, payload);
-    }, 1500);
+    }
+
+    if (raw.todayDate === today && !cleanDaily[today] && ((raw.todaySeconds ?? 0) > 0 || (raw.todayPlays ?? 0) > 0)) {
+      cleanDaily[today] = {
+        seconds: Math.max(0, Number(raw.todaySeconds) || 0),
+        plays: Math.max(0, Number(raw.todayPlays) || 0),
+      };
+    }
+
+    daily.value = pruneDailyBuckets(cleanDaily, 35);
+    todayDate.value = today;
+    todaySeconds.value = daily.value[today]?.seconds ?? 0;
+    todayPlays.value = daily.value[today]?.plays ?? 0;
+    hourlyDate.value = today;
+    hourly.value = raw.hourlyDate === today ? normalizeHourly(raw.hourly) : createEmptyHourlyBuckets();
+    totalSeconds.value = Math.max(todaySeconds.value, Number(raw.totalSeconds) || 0);
+    totalPlays.value = Math.max(todayPlays.value, Number(raw.totalPlays) || 0);
+    songs.value = raw.songs && typeof raw.songs === 'object' ? { ...raw.songs } : {};
+    artists.value = raw.artists && typeof raw.artists === 'object' ? { ...raw.artists } : {};
+    await echoSystem.kvSetJson(STATS_KEY_V2, exportSnapshot());
   }
 
   async function hydrate() {
-    const saved = await echoSystem.kvGetJson<Partial<PersistedListeningStats>>(STATS_KEY, {});
-    const today = formatLocalDate();
-    if (saved.todayDate === today) {
-      todayDate.value = today;
-      todaySeconds.value = Number(saved.todaySeconds || 0);
-      todayPlays.value = Number(saved.todayPlays || 0);
-    } else {
-      todayDate.value = today;
-      todaySeconds.value = 0;
-      todayPlays.value = 0;
+    const savedV2 = await echoSystem.kvGetJson<Partial<PersistedListeningStatsV2> | null>(STATS_KEY_V2, null);
+    if (savedV2 && typeof savedV2 === 'object') {
+      await importSnapshot(savedV2);
+      return;
     }
-    totalSeconds.value = Number(saved.totalSeconds || 0);
-    totalPlays.value = Number(saved.totalPlays || 0);
-    songs.value = saved.songs && typeof saved.songs === 'object' ? saved.songs : {};
-    artists.value = saved.artists && typeof saved.artists === 'object' ? saved.artists : {};
+    // Smoothly migrate v1 listening stats into v2 daily buckets
+    const savedV1 = await echoSystem.kvGetJson<Partial<PersistedListeningStatsV2> | null>(STATS_KEY_V1, null);
+    if (savedV1 && typeof savedV1 === 'object') {
+      const migratedDaily: Record<string, StatBucket> = {};
+      if (savedV1.todayDate && ((savedV1.todaySeconds ?? 0) > 0 || (savedV1.todayPlays ?? 0) > 0)) {
+        migratedDaily[savedV1.todayDate] = {
+          seconds: Number(savedV1.todaySeconds || 0),
+          plays: Number(savedV1.todayPlays || 0),
+        };
+      }
+      await importSnapshot({ ...savedV1, daily: migratedDaily });
+    }
   }
 
   function recordSongPlay(song: Song) {
     ensureTodayFresh();
+    const today = todayDate.value;
+    const h = new Date().getHours();
+
     todayPlays.value += 1;
     totalPlays.value += 1;
+
+    const prevDay = daily.value[today] || { seconds: 0, plays: 0 };
+    daily.value = {
+      ...daily.value,
+      [today]: { seconds: prevDay.seconds, plays: prevDay.plays + 1 },
+    };
+
+    const nextHours = hourly.value.slice();
+    nextHours[h] = { seconds: nextHours[h].seconds, plays: nextHours[h].plays + 1 };
+    hourly.value = nextHours;
 
     const key = song.hash ? song.hash.toLowerCase() : song.id;
     const prev = songs.value[key];
@@ -114,12 +336,29 @@ export const useStatsStore = defineStore('stats', () => {
   function addListeningDeltaSec(deltaSec: number) {
     if (!Number.isFinite(deltaSec) || deltaSec <= 0 || deltaSec > 15) return;
     ensureTodayFresh();
+    const today = todayDate.value;
+    const h = new Date().getHours();
+
     todaySeconds.value += deltaSec;
     totalSeconds.value += deltaSec;
+
+    const prevDay = daily.value[today] || { seconds: 0, plays: 0 };
+    daily.value = {
+      ...daily.value,
+      [today]: { seconds: prevDay.seconds + deltaSec, plays: prevDay.plays },
+    };
+
+    const nextHours = hourly.value.slice();
+    nextHours[h] = { seconds: nextHours[h].seconds + deltaSec, plays: nextHours[h].plays };
+    hourly.value = nextHours;
+
     schedulePersist();
   }
 
   const todayMinutes = computed(() => Math.round(todaySeconds.value / 60));
+
+  const last7DaysSeries = computed(() => buildLast7DaysSeries(daily.value));
+  const today24HourSeries = computed(() => build24HourSeries(hourly.value));
 
   const totalDurationLabel = computed(() => {
     const mins = Math.floor(totalSeconds.value / 60);
@@ -157,10 +396,16 @@ export const useStatsStore = defineStore('stats', () => {
     totalSeconds,
     totalPlays,
     totalDurationLabel,
+    daily,
+    hourly,
+    last7DaysSeries,
+    today24HourSeries,
     topSongs,
     topArtist,
     hydrate,
     recordSongPlay,
     addListeningDeltaSec,
+    exportSnapshot,
+    importSnapshot,
   };
 });

@@ -2,7 +2,7 @@ import { computed, ref, type Ref } from 'vue';
 import { echoSystem } from '@/native/echoSystem';
 
 export interface DraggableSheetOptions {
-  /** Height detents as viewport height ratios (ascending), e.g. [0.58, 0.92] */
+  /** Height detents as viewport height ratios (ascending), e.g. [0.60, 0.92] */
   detents?: number[];
   /** Index into detents when sheet opens */
   initialDetentIndex?: number;
@@ -13,9 +13,36 @@ export interface DraggableSheetOptions {
 }
 
 /**
- * iOS-style magnetic draggable bottom sheet controller.
- * Supports multi-detent height snapping (half <-> full <-> dismiss) + rubber-band resistance
- * + velocity flick detection + seamless chaining when inner list is scrolled to top.
+ * Pure GPU offset calculator (zero CSS height reflows!):
+ * Keeps the sheet at fixed max detent height and expresses intermediate detents & drags
+ * purely via Y-axis translate3d(0, offsetPx, 0) with gentle upward rubber-banding.
+ */
+export function computeDetentOffsetPx(
+  detents: number[],
+  detentIndex: number,
+  viewportH: number,
+  dragDeltaY: number,
+): number {
+  const vh = Math.max(400, Number.isFinite(viewportH) ? viewportH : 840);
+  if (!detents.length) {
+    return dragDeltaY >= 0 ? Math.round(dragDeltaY) : Math.round(dragDeltaY * 0.16);
+  }
+  const sorted = [...detents].sort((a, b) => a - b);
+  const clampedIdx = Math.min(Math.max(0, detentIndex), sorted.length - 1);
+  const maxPx = sorted[sorted.length - 1] * vh;
+  const baseOffset = Math.max(0, maxPx - sorted[clampedIdx] * vh);
+  const raw = baseOffset + dragDeltaY;
+  if (raw < 0) {
+    // Subtle rubber-band resistance above max detent
+    return Math.round(raw * 0.16);
+  }
+  return Math.round(raw);
+}
+
+/**
+ * 120fps GPU-composited iOS bottom sheet drag controller.
+ * IMPORTANT: Always wrap the panel inside an outer `.lg-sheet-slide` handled by Vue
+ * `<Transition name="lg-modal">` so enter/leave slide-up animations are NEVER overridden!
  */
 export function useDraggableSheet(options: DraggableSheetOptions) {
   const detents = options.detents && options.detents.length ? [...options.detents].sort((a, b) => a - b) : [];
@@ -47,58 +74,24 @@ export function useDraggableSheet(options: DraggableSheetOptions) {
 
   const sheetStyle = computed((): Record<string, string> => {
     const vh = getViewportH();
+    const maxDetent = detents.length ? detents[detents.length - 1] : 0;
+    const offsetY = computeDetentOffsetPx(detents, detentIndex.value, vh, isDragging.value ? dragDeltaY.value : 0);
 
-    if (detents.length > 0) {
-      const basePx = Math.round(detents[detentIndex.value] * vh);
-      const maxPx = Math.round(detents[detents.length - 1] * vh);
-      const minPx = Math.round(detents[0] * vh);
-
-      if (!isDragging.value) {
-        return {
-          height: `${basePx}px`,
-          transform: 'translate3d(0, 0, 0)',
-          transition: 'height 380ms var(--spring-ease), transform 380ms var(--spring-ease)',
-        };
-      }
-
-      const rawTargetH = basePx - dragDeltaY.value;
-      if (rawTargetH > maxPx) {
-        // Gentle upward rubber-band beyond max detent
-        const extra = (rawTargetH - maxPx) * 0.22;
-        return {
-          height: `${Math.round(maxPx + extra)}px`,
-          transform: 'translate3d(0, 0, 0)',
-          transition: 'none',
-        };
-      }
-      if (rawTargetH >= minPx) {
-        return {
-          height: `${Math.round(rawTargetH)}px`,
-          transform: 'translate3d(0, 0, 0)',
-          transition: 'none',
-        };
-      }
-      // Below min detent -> keep minPx height and smoothly translate downward toward dismissal
-      const downOffset = minPx - rawTargetH;
-      return {
-        height: `${minPx}px`,
-        transform: `translate3d(0, ${Math.round(downOffset)}px, 0)`,
-        transition: 'none',
-      };
+    const style: Record<string, string> = {};
+    if (maxDetent > 0) {
+      style.height = `${Math.round(maxDetent * vh)}px`;
     }
-
-    // Auto-height sheet (pull down to dismiss, subtle rubber-band upward)
-    if (!isDragging.value) {
-      return {
-        transform: 'translate3d(0, 0, 0)',
-        transition: 'transform 360ms var(--spring-ease)',
-      };
+    if (isDragging.value) {
+      style.transform = `translate3d(0, ${offsetY}px, 0)`;
+      style.transition = 'none';
+    } else if (offsetY !== 0) {
+      style.transform = `translate3d(0, ${offsetY}px, 0)`;
+      style.transition = 'transform 340ms var(--spring-ease)';
+    } else {
+      style.transform = 'translate3d(0, 0, 0)';
+      style.transition = 'transform 340ms var(--spring-ease)';
     }
-    const y = dragDeltaY.value >= 0 ? dragDeltaY.value : dragDeltaY.value * 0.18;
-    return {
-      transform: `translate3d(0, ${Math.round(y)}px, 0)`,
-      transition: 'none',
-    };
+    return style;
   });
 
   function beginDrag(clientY: number) {
@@ -136,8 +129,8 @@ export function useDraggableSheet(options: DraggableSheetOptions) {
       const projectedH = basePx - dy - vy * 140;
       const minPx = detents[0] * vh;
 
-      // Fast downward flick or pulled significantly below lowest detent -> dismiss
-      if ((vy > 0.72 && detentIndex.value === 0) || projectedH < minPx - 125 || (vy > 1.25 && dy > 90)) {
+      // Fast downward flick or pulled clearly below lowest detent -> dismiss
+      if ((vy > 0.72 && detentIndex.value === 0) || projectedH < minPx - 115 || (vy > 1.2 && dy > 85)) {
         echoSystem.haptic('light');
         options.onDismiss();
         return;
@@ -161,7 +154,7 @@ export function useDraggableSheet(options: DraggableSheetOptions) {
     }
 
     // Single-detent sheet dismiss check
-    if (dy > 105 || (vy > 0.65 && dy > 42)) {
+    if (dy > 96 || (vy > 0.62 && dy > 38)) {
       echoSystem.haptic('light');
       options.onDismiss();
     }

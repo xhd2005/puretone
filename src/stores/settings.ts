@@ -8,7 +8,7 @@ import { echoPlayer } from '@/native/echoPlayer';
 export type AppearanceMode = 'system' | 'light' | 'dark';
 export type AccentThemeMode = 'dynamic' | 'apple-red';
 
-interface PersistedSettings {
+export interface PersistedSettings {
   appearance: AppearanceMode;
   accentMode: AccentThemeMode;
   quality: AudioQuality;
@@ -184,6 +184,46 @@ export const useSettingsStore = defineStore('settings', () => {
     return true;
   }
 
+  function exportSnapshot(): PersistedSettings {
+    return {
+      appearance: appearance.value,
+      accentMode: accentMode.value,
+      quality: quality.value,
+      eqPreset: eqPreset.value,
+      enableUnblock: enableUnblock.value,
+      unblockPlatforms: [...unblockPlatforms.value],
+      autoClaimOnLaunch: autoClaimOnLaunch.value,
+      autoClaimAllAccounts: autoClaimAllAccounts.value,
+      enableConceptTasks: enableConceptTasks.value,
+      dailyReminderEnabled: dailyReminderEnabled.value,
+      dailyReminderHour: dailyReminderHour.value,
+      dailyReminderMinute: dailyReminderMinute.value,
+      showTranslation: showTranslation.value,
+      showCoverLyricsPreview: showCoverLyricsPreview.value,
+      showLockScreenLyrics: showLockScreenLyrics.value,
+    };
+  }
+
+  async function importSnapshot(saved: Partial<PersistedSettings>) {
+    if (saved.appearance) appearance.value = saved.appearance;
+    if (saved.accentMode) accentMode.value = saved.accentMode;
+    if (saved.quality) quality.value = saved.quality;
+    if (saved.eqPreset) eqPreset.value = saved.eqPreset;
+    if (typeof saved.enableUnblock === 'boolean') enableUnblock.value = saved.enableUnblock;
+    if (Array.isArray(saved.unblockPlatforms) && saved.unblockPlatforms.length) {
+      unblockPlatforms.value = [...saved.unblockPlatforms];
+    }
+    if (typeof saved.autoClaimOnLaunch === 'boolean') autoClaimOnLaunch.value = saved.autoClaimOnLaunch;
+    if (typeof saved.autoClaimAllAccounts === 'boolean') autoClaimAllAccounts.value = saved.autoClaimAllAccounts;
+    if (typeof saved.enableConceptTasks === 'boolean') enableConceptTasks.value = saved.enableConceptTasks;
+    if (typeof saved.showTranslation === 'boolean') showTranslation.value = saved.showTranslation;
+    if (typeof saved.showCoverLyricsPreview === 'boolean') showCoverLyricsPreview.value = saved.showCoverLyricsPreview;
+    if (typeof saved.showLockScreenLyrics === 'boolean') showLockScreenLyrics.value = saved.showLockScreenLyrics;
+    applyThemeClass();
+    void echoPlayer.setEqPreset(eqPreset.value);
+    await echoSystem.kvSetJson(STORAGE_KEY, exportSnapshot());
+  }
+
   return {
     appearance,
     accentMode,
@@ -204,5 +244,7 @@ export const useSettingsStore = defineStore('settings', () => {
     applyThemeClass,
     hydrate,
     setDailyReminder,
+    exportSnapshot,
+    importSnapshot,
   };
 });

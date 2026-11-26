@@ -60,6 +60,8 @@ export interface EchoSystemPluginInterface {
     savedToGallery: boolean;
     message?: string;
   }>;
+  saveImageToGallery(options: { base64Image: string; fileName?: string }): Promise<{ saved: boolean }>;
+  shareImage(options: { base64Image: string; title?: string }): Promise<{ launched: boolean; message?: string }>;
   shareQrToWeChat(options: { base64Image: string }): Promise<{ launched: boolean; message?: string }>;
   addListener(eventName: 'insetsChange', listener: (insets: SafeAreaInsets) => void): Promise<PluginListenerHandle>;
   addListener(eventName: 'hardwareBack', listener: () => void): Promise<PluginListenerHandle>;
@@ -148,7 +150,7 @@ export const echoSystem = {
     if (Capacitor.isNativePlatform()) {
       return EchoSystemNative.getLaunchFlags();
     }
-    return { autoClaim: false, openNowPlaying: false, versionName: '2.1.0', versionCode: 3 };
+    return { autoClaim: false, openNowPlaying: false, versionName: '2.2.0', versionCode: 4 };
   },
 
   async checkNotificationPermission(): Promise<{ granted: boolean; systemEnabled: boolean; runtimeGranted: boolean }> {
@@ -259,6 +261,29 @@ export const echoSystem = {
       return { launched: false, savedToGallery: false, message: '仅支持在 Android 真机拉起微信' };
     }
     return EchoSystemNative.launchWeChatScanWithQr({ base64Image });
+  },
+
+  async saveImageToGallery(base64Image: string, fileName?: string): Promise<boolean> {
+    if (Capacitor.isNativePlatform()) {
+      const res = await EchoSystemNative.saveImageToGallery({ base64Image, fileName }).catch(() => ({ saved: false }));
+      return Boolean(res?.saved);
+    }
+    if (typeof document !== 'undefined') {
+      const a = document.createElement('a');
+      a.href = base64Image;
+      a.download = fileName || `PureTone_Poster_${Date.now()}.png`;
+      a.click();
+      return true;
+    }
+    return false;
+  },
+
+  async shareImage(base64Image: string, title = '分享歌词海报'): Promise<{ launched: boolean; message?: string }> {
+    if (Capacitor.isNativePlatform()) {
+      return EchoSystemNative.shareImage({ base64Image, title }).catch(() => ({ launched: false, message: '分享失败' }));
+    }
+    const ok = await this.saveImageToGallery(base64Image);
+    return { launched: ok, message: ok ? '已保存高清海报图片' : '浏览器暂不支持系统分享' };
   },
 
   async shareQrToWeChat(base64Image: string): Promise<{ launched: boolean; message?: string }> {

@@ -12,7 +12,9 @@ export const useUiStore = defineStore('ui', () => {
   const loginModalOpen = ref(false);
   const actionSheetSong = ref<Song | null>(null);
   const unblockModalSong = ref<Song | null>(null);
+  const lyricPosterSong = ref<Song | null>(null);
   const updateReleaseInfo = ref<ReleaseUpdateInfo | null>(null);
+  const complianceModalOpen = ref(false);
 
   const toastMessage = ref('');
   let toastTimer: ReturnType<typeof setTimeout> | null = null;
@@ -26,7 +28,9 @@ export const useUiStore = defineStore('ui', () => {
         loginModalOpen.value ||
         actionSheetSong.value ||
         unblockModalSong.value ||
-        updateReleaseInfo.value,
+        lyricPosterSong.value ||
+        updateReleaseInfo.value ||
+        complianceModalOpen.value,
     ),
   );
 
@@ -63,8 +67,15 @@ export const useUiStore = defineStore('ui', () => {
   }
 
   function closeTopOverlay(): boolean {
+    if (complianceModalOpen.value) {
+      return true;
+    }
     if (updateReleaseInfo.value) {
       updateReleaseInfo.value = null;
+      return true;
+    }
+    if (lyricPosterSong.value) {
+      lyricPosterSong.value = null;
       return true;
     }
     if (unblockModalSong.value) {
@@ -97,7 +108,9 @@ export const useUiStore = defineStore('ui', () => {
     loginModalOpen,
     actionSheetSong,
     unblockModalSong,
+    lyricPosterSong,
     updateReleaseInfo,
+    complianceModalOpen,
     hasModalOverlay,
     toastMessage,
     insets,

@@ -331,11 +331,11 @@ async function handleOpenKugouH5() {
       class="fixed inset-0 z-[90] flex flex-col justify-end lg-scrim"
       @click="ui.loginModalOpen = false"
     >
-      <div
-        class="lg-sheet-panel rounded-t-[28px] px-5 pt-2 pb-[calc(var(--safe-bottom)+24px)] max-h-[88vh] am-scroll"
-        :style="dragSheet.sheetStyle.value"
-        @click.stop
-      >
+      <div class="lg-sheet-slide" @click.stop>
+        <div
+          class="lg-sheet-panel rounded-t-[28px] px-5 pt-2 pb-[calc(var(--safe-bottom)+24px)] max-h-[88vh] am-scroll"
+          :style="dragSheet.sheetStyle.value"
+        >
         <div
           class="touch-none pt-1 pb-3"
           @touchstart="dragSheet.onHandleTouchStart"
@@ -548,6 +548,7 @@ async function handleOpenKugouH5() {
             {{ submitting ? '登录中…' : '登录' }}
           </button>
         </form>
+        </div>
       </div>
     </div>
   </Transition>

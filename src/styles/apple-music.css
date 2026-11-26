@@ -126,13 +126,21 @@ body,
   border: 0.5px solid var(--glass-border);
 }
 
-/* iOS 26 Liquid Glass Sheet Panel */
+/* iOS 26 Liquid Glass Sheet Panel (GPU-fast surface: zero costly 92vh backdrop-filter drag jank) */
 .lg-sheet-panel {
   background: var(--lg-sheet-bg);
-  backdrop-filter: blur(42px) saturate(215%);
-  -webkit-backdrop-filter: blur(42px) saturate(215%);
   box-shadow: var(--lg-specular), 0 -12px 44px rgba(0, 0, 0, 0.16);
   border-top: 0.75px solid var(--glass-border);
+  will-change: transform;
+}
+
+/* Dedicated outer slide wrapper so Vue <Transition> enter/leave NEVER clashes with inner drag transform */
+.lg-sheet-slide {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  will-change: transform;
 }
 
 /* Airy Frosted Scrim (eliminates muddy gray slab in Light Mode!) */
@@ -198,22 +206,26 @@ body,
   opacity: 0.85;
 }
 
-/* Decoupled Modal Transition: Backdrop ONLY fades, inner .lg-sheet-panel slides independently! */
+/* Decoupled Modal Transition: Backdrop ONLY fades, .lg-sheet-slide glides smoothly from bottom! */
 .lg-modal-enter-active,
 .lg-modal-leave-active {
-  transition: opacity 240ms ease;
+  transition: opacity 260ms ease;
 }
-.lg-modal-enter-active .lg-sheet-panel,
-.lg-modal-leave-active .lg-sheet-panel {
+.lg-modal-enter-active > .lg-sheet-slide,
+.lg-modal-leave-active > .lg-sheet-slide,
+.lg-modal-enter-active > .lg-sheet-panel,
+.lg-modal-leave-active > .lg-sheet-panel {
   transition: transform 420ms var(--spring-ease);
 }
 .lg-modal-enter-from,
 .lg-modal-leave-to {
   opacity: 0;
 }
-.lg-modal-enter-from .lg-sheet-panel,
-.lg-modal-leave-to .lg-sheet-panel {
-  transform: translateY(100%);
+.lg-modal-enter-from > .lg-sheet-slide,
+.lg-modal-leave-to > .lg-sheet-slide,
+.lg-modal-enter-from > .lg-sheet-panel,
+.lg-modal-leave-to > .lg-sheet-panel {
+  transform: translate3d(0, 100%, 0);
 }
 
 /* Generic fade */

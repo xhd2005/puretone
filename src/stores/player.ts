@@ -30,6 +30,7 @@ export const usePlayerStore = defineStore('player', () => {
   const isResolving = ref(false);
   const currentTimeMs = ref(0);
   const durationMs = ref(0);
+  const playbackSpeed = ref<number>(1);
   const sourceTag = ref('');
   const palette = ref<CoverPalette>(DEFAULT_APPLE_PALETTE);
 
@@ -436,6 +437,9 @@ export const usePlayerStore = defineStore('player', () => {
         cacheKey: getTrackKey(song),
       });
       if (seq === trackSeq) {
+        if (playbackSpeed.value !== 1) {
+          void echoPlayer.setSpeed(playbackSpeed.value);
+        }
         isPlaying.value = autoPlay;
         scheduleNextTrackPrefetch(seq);
       }
@@ -572,6 +576,14 @@ export const usePlayerStore = defineStore('player', () => {
     lastSampleTimeMs.value = clamped;
     lastSampleAt.value = Date.now();
     await echoPlayer.seek(clamped);
+  }
+
+  async function setPlaybackSpeed(speed: number) {
+    const clamped = Math.max(0.5, Math.min(2.0, Number(speed) || 1));
+    playbackSpeed.value = clamped;
+    echoSystem.haptic('selection');
+    await echoPlayer.setSpeed(clamped);
+    useUiStore().showToast(`播放倍速：${clamped}x`);
   }
 
   function cyclePlayMode() {
@@ -747,6 +759,7 @@ export const usePlayerStore = defineStore('player', () => {
     isResolving,
     currentTimeMs,
     durationMs,
+    playbackSpeed,
     sourceTag,
     palette,
     lyrics,
@@ -765,6 +778,7 @@ export const usePlayerStore = defineStore('player', () => {
     next,
     previous,
     seek,
+    setPlaybackSpeed,
     cyclePlayMode,
     addToQueueNext,
     removeFromQueue,

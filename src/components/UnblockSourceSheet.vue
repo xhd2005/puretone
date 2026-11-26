@@ -91,11 +91,11 @@ function platformBadge(cand: UnblockCandidate): string {
       class="fixed inset-0 z-[85] flex flex-col justify-end lg-scrim"
       @click="ui.unblockModalSong = null"
     >
-      <div
-        class="lg-sheet-panel rounded-t-[28px] max-h-[82vh] flex flex-col pb-[calc(var(--safe-bottom)+14px)]"
-        :style="dragSheet.sheetStyle.value"
-        @click.stop
-      >
+      <div class="lg-sheet-slide" @click.stop>
+        <div
+          class="lg-sheet-panel rounded-t-[28px] max-h-[82vh] flex flex-col pb-[calc(var(--safe-bottom)+14px)]"
+          :style="dragSheet.sheetStyle.value"
+        >
         <div
           class="touch-none pt-3 pb-2"
           @touchstart="dragSheet.onHandleTouchStart"
@@ -201,6 +201,7 @@ function platformBadge(cand: UnblockCandidate): string {
               </button>
             </div>
           </div>
+        </div>
         </div>
       </div>
     </div>

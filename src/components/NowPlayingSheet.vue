@@ -18,6 +18,7 @@ import iconX from '@iconify/icons-tabler/x';
 import iconMusic from '@iconify/icons-tabler/music';
 import iconLanguage from '@iconify/icons-tabler/language';
 import iconMoon from '@iconify/icons-tabler/moon';
+import iconPhoto from '@iconify/icons-tabler/photo';
 import { usePlayerStore } from '@/stores/player';
 import { useSettingsStore } from '@/stores/settings';
 import { useUiStore } from '@/stores/ui';
@@ -404,6 +405,15 @@ const playModeLabel = computed(() => {
           </button>
 
           <div class="flex items-center gap-1.5 shrink-0">
+            <button
+              v-if="ui.nowPlayingMode === 'lyrics'"
+              type="button"
+              class="np-circle-btn lg-fluid-btn am-tap"
+              aria-label="生成歌词海报"
+              @click="ui.lyricPosterSong = player.currentSong"
+            >
+              <Icon :icon="iconPhoto" class="w-5 h-5" />
+            </button>
             <button
               v-if="ui.nowPlayingMode === 'lyrics' && player.lyrics.hasTranslation"
               type="button"
