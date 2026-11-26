@@ -40,7 +40,7 @@ jobs:
         uses: android-actions/setup-android@v3
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: Typecheck & Unit Tests
         run: |
@@ -58,8 +58,7 @@ jobs:
           chmod +x gradlew
           ./gradlew :app:testDebugUnitTest :app:assembleDebug
 
-      - name: Assemble Signed Release APK (if keystore secret configured)
-        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+      - name: Assemble Signed Release APK (when keystore secret configured)
         working-directory: android
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -67,8 +66,12 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > app/release.keystore
-          ./gradlew assembleRelease
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > app/release.keystore
+            ./gradlew :app:assembleRelease
+          else
+            echo "No release keystore secret configured; skipping signed release build."
+          fi
 
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
@@ -78,11 +81,11 @@ jobs:
           retention-days: 30
 
       - name: Upload Release APK Artifact
-        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: EchoMusic-Mobile-Release-APK
           path: android/app/build/outputs/apk/release/*.apk
+          if-no-files-found: ignore
           retention-days: 30
 
       - name: Create GitHub Release on Tag
