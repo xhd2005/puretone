@@ -11,6 +11,7 @@ import iconScan from '@iconify/icons-tabler/scan';
 import { useUiStore } from '@/stores/ui';
 import { useAccountsStore } from '@/stores/accounts';
 import { useVipStore } from '@/stores/vip';
+import { useDraggableSheet } from '@/composables/useDraggableSheet';
 import { echoSystem } from '@/native/echoSystem';
 import { extractAccountFromLogin, kugouApi } from '@/services/kugou/kugouEngine';
 import PureToneMark from './PureToneMark.vue';
@@ -18,6 +19,12 @@ import PureToneMark from './PureToneMark.vue';
 const ui = useUiStore();
 const accounts = useAccountsStore();
 const vip = useVipStore();
+
+const dragSheet = useDraggableSheet({
+  onDismiss: () => {
+    ui.loginModalOpen = false;
+  },
+});
 
 type LoginMode = 'wechat' | 'sms' | 'password' | 'qr';
 const mode = ref<LoginMode>('wechat');
@@ -325,10 +332,19 @@ async function handleOpenKugouH5() {
       @click="ui.loginModalOpen = false"
     >
       <div
-        class="lg-sheet-panel rounded-t-[28px] px-5 pt-3 pb-[calc(var(--safe-bottom)+24px)] max-h-[88vh] am-scroll"
+        class="lg-sheet-panel rounded-t-[28px] px-5 pt-2 pb-[calc(var(--safe-bottom)+24px)] max-h-[88vh] am-scroll"
+        :style="dragSheet.sheetStyle.value"
         @click.stop
       >
-        <div class="w-10 h-1 rounded-full bg-[var(--text-tertiary)]/55 mx-auto mb-3" />
+        <div
+          class="touch-none pt-1 pb-3"
+          @touchstart="dragSheet.onHandleTouchStart"
+          @touchmove="dragSheet.onHandleTouchMove"
+          @touchend="dragSheet.onHandleTouchEnd"
+          @touchcancel="dragSheet.onHandleTouchEnd"
+        >
+          <div class="w-11 h-1.5 rounded-full bg-[var(--text-tertiary)]/55 mx-auto" />
+        </div>
 
         <div class="flex items-center justify-between mb-4">
           <div class="flex items-center gap-3">

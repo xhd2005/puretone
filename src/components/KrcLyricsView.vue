@@ -156,7 +156,7 @@ function onTouchStart(e: TouchEvent) {
 
 function onTouchMove(e: TouchEvent) {
   const dy = Math.abs((e.touches[0]?.clientY ?? 0) - touchStartY);
-  if (dy > 10) {
+  if (dy > 6) {
     didScrollGesture = true;
     markUserScrolling();
   }

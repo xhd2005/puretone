@@ -14,6 +14,7 @@ import {
 import { useAccountsStore } from '@/stores/accounts';
 import { usePlayerStore } from '@/stores/player';
 import { useUiStore } from '@/stores/ui';
+import { useCollapsingTitle } from '@/composables/useCollapsingTitle';
 import AvatarButton from '@/components/AvatarButton.vue';
 import PlaylistCover from '@/components/PlaylistCover.vue';
 
@@ -21,17 +22,13 @@ const router = useRouter();
 const accounts = useAccountsStore();
 const player = usePlayerStore();
 const ui = useUiStore();
+const { largeTitleOpacity, compactTitleOpacity, headerGlassActive, onScroll } = useCollapsingTitle();
 
 const playlists = ref<PlaylistSummary[]>([]);
 const loading = ref(false);
-const scrolled = ref(false);
 
 const favoritePlaylist = computed(() => playlists.value.find((p) => p.isFavorite) || null);
 const otherPlaylists = computed(() => playlists.value.filter((p) => !p.isFavorite));
-
-function onScroll(e: Event) {
-  scrolled.value = ((e.target as HTMLElement)?.scrollTop ?? 0) > 34;
-}
 
 async function fetchPlaylists() {
   if (!accounts.isLoggedIn) {
@@ -66,11 +63,12 @@ watch(() => accounts.activeAccount?.userid, () => void fetchPlaylists());
 
 <template>
   <div class="h-full flex flex-col relative">
-    <header class="sticky-bar" :class="{ 'is-scrolled am-glass am-hairline-b': scrolled }">
+    <!-- Zero-Overlap Collapsing Sticky Header -->
+    <header class="sticky-bar" :class="{ 'sticky-glass': headerGlassActive }">
       <div class="flex items-center justify-between h-11 px-5">
         <span
-          class="text-[17px] font-bold tracking-tight transition-opacity duration-200"
-          :class="scrolled ? 'opacity-100' : 'opacity-0'"
+          class="text-[17px] font-bold tracking-tight text-[var(--text-primary)] pointer-events-none"
+          :style="{ opacity: compactTitleOpacity }"
         >
           资料库
         </span>
@@ -79,8 +77,11 @@ watch(() => accounts.activeAccount?.userid, () => void fetchPlaylists());
     </header>
 
     <div class="flex-1 am-scroll pb-48" @scroll.passive="onScroll">
-      <div class="px-5 pt-[calc(var(--safe-top)+44px)] pb-3">
-        <h1 class="text-[34px] font-bold tracking-[-0.025em] leading-none text-[var(--text-primary)]">
+      <div class="px-5 pt-[calc(var(--safe-top)+48px)] pb-3">
+        <h1
+          class="text-[34px] font-bold tracking-[-0.025em] leading-none text-[var(--text-primary)]"
+          :style="{ opacity: largeTitleOpacity }"
+        >
           资料库
         </h1>
       </div>
@@ -103,10 +104,11 @@ watch(() => accounts.activeAccount?.userid, () => void fetchPlaylists());
           </div>
         </button>
 
+        <!-- Navigates to /recent full list instead of auto-playing! -->
         <button
           type="button"
           class="lib-cat-row am-tap"
-          @click="player.recentPlays.length && player.playQueue(player.recentPlays, 0)"
+          @click="router.push('/recent')"
         >
           <div class="flex items-center gap-3.5">
             <Icon :icon="iconClock" class="w-6 h-6 am-accent-text" />
@@ -119,7 +121,6 @@ watch(() => accounts.activeAccount?.userid, () => void fetchPlaylists());
         </button>
       </div>
 
-      <!-- Logged-out state -->
       <div v-if="!accounts.isLoggedIn" class="px-5 py-12 text-center">
         <p class="text-[15px] text-[var(--text-secondary)]">登录酷狗账号以同步你的歌单和红心歌曲</p>
         <button
@@ -177,6 +178,7 @@ watch(() => accounts.activeAccount?.userid, () => void fetchPlaylists());
   right: 0;
   z-index: 20;
   padding-top: var(--safe-top);
+  transition: background-color 200ms ease;
 }
 
 .lib-cat-row {

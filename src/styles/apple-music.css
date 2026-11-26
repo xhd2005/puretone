@@ -28,9 +28,10 @@
   --pill-shadow: 0 14px 36px rgba(15, 23, 42, 0.11), 0 3px 10px rgba(15, 23, 42, 0.06), 0 0 0 0.5px rgba(15, 23, 42, 0.07);
 
   /* Liquid Glass Materials */
-  --lg-capsule-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.86) 0%, rgba(246, 248, 254, 0.72) 100%);
-  --lg-surface-bg: linear-gradient(155deg, rgba(255, 255, 255, 0.82) 0%, rgba(244, 246, 252, 0.66) 100%);
-  --lg-sheet-bg: rgba(246, 247, 252, 0.93);
+  --lg-capsule-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.90) 0%, rgba(246, 248, 254, 0.78) 100%);
+  --lg-surface-bg: linear-gradient(155deg, rgba(255, 255, 255, 0.86) 0%, rgba(244, 246, 252, 0.74) 100%);
+  --lg-sheet-bg: rgba(247, 248, 252, 0.975);
+  --sticky-glass-bg: rgba(255, 255, 255, 0.94);
   --lg-specular: inset 0 1.25px 0 rgba(255, 255, 255, 0.96), inset 0 -0.75px 0 rgba(15, 23, 42, 0.06), inset 0.75px 0 0 rgba(255, 255, 255, 0.55);
   --lg-active-pill: linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(240, 242, 249, 0.82) 100%);
   --lg-active-pill-shadow: 0 4px 14px rgba(15, 23, 42, 0.09), inset 0 1px 0 rgba(255, 255, 255, 1);
@@ -57,9 +58,10 @@
   --glass-border: rgba(255, 255, 255, 0.14);
   --pill-shadow: 0 18px 44px rgba(0, 0, 0, 0.62), 0 4px 14px rgba(0, 0, 0, 0.38), 0 0 0 0.5px rgba(255, 255, 255, 0.11);
 
-  --lg-capsule-bg: linear-gradient(180deg, rgba(46, 46, 54, 0.78) 0%, rgba(24, 24, 29, 0.72) 100%);
-  --lg-surface-bg: linear-gradient(155deg, rgba(44, 44, 52, 0.74) 0%, rgba(24, 24, 29, 0.64) 100%);
-  --lg-sheet-bg: rgba(24, 24, 28, 0.90);
+  --lg-capsule-bg: linear-gradient(180deg, rgba(46, 46, 54, 0.82) 0%, rgba(24, 24, 29, 0.76) 100%);
+  --lg-surface-bg: linear-gradient(155deg, rgba(44, 44, 52, 0.78) 0%, rgba(24, 24, 29, 0.68) 100%);
+  --lg-sheet-bg: rgba(22, 22, 26, 0.96);
+  --sticky-glass-bg: rgba(12, 12, 16, 0.90);
   --lg-specular: inset 0 1px 0 rgba(255, 255, 255, 0.24), inset 0 -0.75px 0 rgba(0, 0, 0, 0.45), inset 0.75px 0 0 rgba(255, 255, 255, 0.10);
   --lg-active-pill: linear-gradient(180deg, rgba(255, 255, 255, 0.20) 0%, rgba(255, 255, 255, 0.10) 100%);
   --lg-active-pill-shadow: 0 4px 14px rgba(0, 0, 0, 0.36), inset 0 1px 0 rgba(255, 255, 255, 0.28);
@@ -79,7 +81,7 @@ body,
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background-color: #000000;
+  background-color: var(--bg-canvas);
   color: var(--text-primary);
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "PingFang SC", "Noto Sans SC", "Helvetica Neue", sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -100,9 +102,19 @@ body,
 /* Frosted Header / Generic Glass */
 .am-glass {
   background-color: var(--glass-bg);
-  backdrop-filter: blur(30px) saturate(200%);
-  -webkit-backdrop-filter: blur(30px) saturate(200%);
+  backdrop-filter: blur(28px) saturate(190%);
+  -webkit-backdrop-filter: blur(28px) saturate(190%);
   border: 0.5px solid var(--glass-border);
+  transform: translateZ(0);
+}
+
+/* Crisp Scrolled Navigation Header (zero text bleed-through!) */
+.sticky-glass {
+  background-color: var(--sticky-glass-bg);
+  backdrop-filter: blur(28px) saturate(185%);
+  -webkit-backdrop-filter: blur(28px) saturate(185%);
+  border-bottom: 0.5px solid var(--hairline);
+  transform: translateZ(0);
 }
 
 /* iOS 26 Liquid Glass Capsule (Floating Tab Bar, MiniPlayer, Toast) */

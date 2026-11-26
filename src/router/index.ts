@@ -37,6 +37,12 @@ const router = createRouter({
       component: () => import('@/views/DailyRecommendView.vue'),
       meta: { tab: 'home', title: '每日推荐' },
     },
+    {
+      path: '/recent',
+      name: 'recent',
+      component: () => import('@/views/RecentPlaysView.vue'),
+      meta: { tab: 'library', title: '最近播放' },
+    },
   ],
 });
 

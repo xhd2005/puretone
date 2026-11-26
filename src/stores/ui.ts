@@ -2,6 +2,7 @@ import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import type { SafeAreaInsets } from '@/native/echoSystem';
 import type { Song } from '@/types/music';
+import type { ReleaseUpdateInfo } from '@/services/update/updateService';
 import { echoSystem } from '@/native/echoSystem';
 
 export const useUiStore = defineStore('ui', () => {
@@ -11,20 +12,21 @@ export const useUiStore = defineStore('ui', () => {
   const loginModalOpen = ref(false);
   const actionSheetSong = ref<Song | null>(null);
   const unblockModalSong = ref<Song | null>(null);
+  const updateReleaseInfo = ref<ReleaseUpdateInfo | null>(null);
 
   const toastMessage = ref('');
   let toastTimer: ReturnType<typeof setTimeout> | null = null;
 
   const insets = ref<SafeAreaInsets>({ top: 0, bottom: 0, left: 0, right: 0, imeBottom: 0 });
 
-  // Used by AppShell for iOS-style backdrop scale-back recession animation
   const hasModalOverlay = computed(() =>
     Boolean(
       nowPlayingOpen.value ||
         accountSheetOpen.value ||
         loginModalOpen.value ||
         actionSheetSong.value ||
-        unblockModalSong.value,
+        unblockModalSong.value ||
+        updateReleaseInfo.value,
     ),
   );
 
@@ -61,6 +63,10 @@ export const useUiStore = defineStore('ui', () => {
   }
 
   function closeTopOverlay(): boolean {
+    if (updateReleaseInfo.value) {
+      updateReleaseInfo.value = null;
+      return true;
+    }
     if (unblockModalSong.value) {
       unblockModalSong.value = null;
       return true;
@@ -91,6 +97,7 @@ export const useUiStore = defineStore('ui', () => {
     loginModalOpen,
     actionSheetSong,
     unblockModalSong,
+    updateReleaseInfo,
     hasModalOverlay,
     toastMessage,
     insets,

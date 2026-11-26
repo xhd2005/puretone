@@ -3,12 +3,13 @@ import { computed, ref, watch } from 'vue';
 import type { CoverPalette, ParsedLyrics, PlayMode, SleepTimerMode, Song, UnblockCandidate } from '@/types/music';
 import { echoPlayer } from '@/native/echoPlayer';
 import { echoSystem } from '@/native/echoSystem';
-import { kugouApi } from '@/services/kugou/kugouEngine';
+import { kugouApi, stripAudioExtension } from '@/services/kugou/kugouEngine';
 import { clearCachedResolvedStream, resolvePlayableStream } from '@/services/playback/urlResolver';
 import { fetchLyricsForSong } from '@/services/playback/krcParser';
 import { DEFAULT_APPLE_PALETTE, extractPaletteFromCoverUrl } from '@/services/playback/coverPalette';
 import { getTrackKey, pinSourceForSong, resolveCandidateUrl } from '@/services/playback/unblockEngine';
 import { useSettingsStore } from './settings';
+import { useStatsStore } from './stats';
 import { useUiStore } from './ui';
 
 const RECENT_KEY = 'player.recent.v1';
@@ -60,8 +61,11 @@ export const usePlayerStore = defineStore('player', () => {
   let notifPromptedThisSession = false;
   let prefetchTimer: ReturnType<typeof setTimeout> | null = null;
   let shuffleNextIndexCache = -1;
+  let lastLiveLyricSent = '';
+  let lastStatSampleAt = 0;
 
   const settingsStore = useSettingsStore();
+  const statsStore = useStatsStore();
 
   const currentSong = computed<Song | null>(() => {
     if (currentIndex.value < 0 || currentIndex.value >= queue.value.length) return null;
@@ -85,15 +89,22 @@ export const usePlayerStore = defineStore('player', () => {
   function applyPaletteToCss(p: CoverPalette) {
     if (typeof document === 'undefined') return;
     const root = document.documentElement;
-    root.style.setProperty('--accent-light', p.accentLight);
-    root.style.setProperty('--accent-dark', p.accentDark);
+    const useClassicRed = settingsStore.accentMode === 'apple-red';
+    root.style.setProperty('--accent-light', useClassicRed ? DEFAULT_APPLE_PALETTE.accentLight : p.accentLight);
+    root.style.setProperty('--accent-dark', useClassicRed ? DEFAULT_APPLE_PALETTE.accentDark : p.accentDark);
     root.style.setProperty('--fluid-1', p.fluidColors[0]);
     root.style.setProperty('--fluid-2', p.fluidColors[1]);
     root.style.setProperty('--fluid-3', p.fluidColors[2]);
     root.style.setProperty('--fluid-4', p.fluidColors[3]);
   }
 
-  watch(palette, applyPaletteToCss, { immediate: true });
+  watch([palette, () => settingsStore.accentMode], ([p]) => applyPaletteToCss(p), { immediate: true });
+  watch(isCurrentFavorite, (fav) => {
+    void echoPlayer.setFavoriteState(fav);
+  });
+  watch(playMode, (mode) => {
+    void echoPlayer.setPlayModeState(mode);
+  });
 
   async function persistQueue() {
     // Persist up to 200 items centered around currentIndex for fast startup
@@ -116,9 +127,42 @@ export const usePlayerStore = defineStore('player', () => {
   }
 
   function pushRecent(song: Song) {
-    const filtered = recentPlays.value.filter((s) => s.id !== song.id && s.hash !== song.hash);
-    recentPlays.value = [song, ...filtered].slice(0, 80);
+    const clean: Song = {
+      ...song,
+      title: stripAudioExtension(song.title) || song.title,
+      artist: stripAudioExtension(song.artist) || song.artist,
+    };
+    const filtered = recentPlays.value.filter((s) => s.id !== clean.id && s.hash !== clean.hash);
+    recentPlays.value = [clean, ...filtered].slice(0, 120);
     void echoSystem.kvSetJson(RECENT_KEY, recentPlays.value);
+  }
+
+  function clearRecentPlays() {
+    recentPlays.value = [];
+    void echoSystem.kvSetJson(RECENT_KEY, []);
+  }
+
+  function syncLockScreenLyricLine(posMs: number) {
+    if (!settingsStore.showLockScreenLyrics || !isPlaying.value) return;
+    const lines = lyrics.value.lines;
+    if (!lines.length) return;
+    let lo = 0;
+    let hi = lines.length - 1;
+    let ans = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (lines[mid].startMs <= posMs + 120) {
+        ans = mid;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    const text = ans >= 0 ? lines[ans].text.trim() : '';
+    if (text && text !== lastLiveLyricSent) {
+      lastLiveLyricSent = text;
+      void echoPlayer.setLiveLyric(text);
+    }
   }
 
   function clearSleepTimer() {
@@ -234,7 +278,21 @@ export const usePlayerStore = defineStore('player', () => {
       currentTimeMs.value = ev.currentTimeMs;
       if (ev.durationMs > 0) durationMs.value = ev.durationMs;
       lastSampleTimeMs.value = ev.currentTimeMs;
-      lastSampleAt.value = ev.sampledAt || Date.now();
+      const now = ev.sampledAt || Date.now();
+      lastSampleAt.value = now;
+
+      if (ev.isPlaying) {
+        if (lastStatSampleAt > 0) {
+          const deltaSec = (now - lastStatSampleAt) / 1000;
+          if (deltaSec > 0 && deltaSec <= 5) {
+            statsStore.addListeningDeltaSec(deltaSec);
+          }
+        }
+        lastStatSampleAt = now;
+        syncLockScreenLyricLine(ev.currentTimeMs);
+      } else {
+        lastStatSampleAt = 0;
+      }
     });
 
     await echoPlayer.onStateChange((ev) => {
@@ -263,6 +321,8 @@ export const usePlayerStore = defineStore('player', () => {
       else if (ev.command === 'play') void togglePlay(true);
       else if (ev.command === 'pause') void togglePlay(false);
       else if (ev.command === 'seek' && typeof ev.positionMs === 'number') void seek(ev.positionMs);
+      else if (ev.command === 'toggleFavorite' && currentSong.value) void toggleFavorite(currentSong.value);
+      else if (ev.command === 'cyclePlayMode') cyclePlayMode();
     });
   }
 
@@ -272,8 +332,13 @@ export const usePlayerStore = defineStore('player', () => {
       echoSystem.kvGetJson<Song[]>(RECENT_KEY, []),
       echoSystem.kvGetJson<PersistedQueue>(QUEUE_KEY, { queue: [], currentIndex: -1, playMode: 'sequence' }),
     ]);
-    recentPlays.value = Array.isArray(savedRecent) ? savedRecent : [];
-    queue.value = Array.isArray(savedQueue.queue) ? savedQueue.queue : [];
+    const cleanSong = (s: Song): Song => ({
+      ...s,
+      title: stripAudioExtension(s.title) || s.title,
+      artist: stripAudioExtension(s.artist) || s.artist,
+    });
+    recentPlays.value = Array.isArray(savedRecent) ? savedRecent.map(cleanSong) : [];
+    queue.value = Array.isArray(savedQueue.queue) ? savedQueue.queue.map(cleanSong) : [];
     currentIndex.value =
       savedQueue.currentIndex >= 0 && savedQueue.currentIndex < queue.value.length
         ? savedQueue.currentIndex
@@ -318,6 +383,8 @@ export const usePlayerStore = defineStore('player', () => {
     shuffleNextIndexCache = -1;
 
     const seq = ++trackSeq;
+    lastLiveLyricSent = '';
+    lastStatSampleAt = 0;
     isResolving.value = true;
     isBuffering.value = true;
     currentTimeMs.value = 0;
@@ -330,7 +397,11 @@ export const usePlayerStore = defineStore('player', () => {
     void refreshCoverPalette(song.coverUrl);
     void loadLyrics(song);
     pushRecent(song);
+    statsStore.recordSongPlay(song);
     void persistQueue();
+    void echoPlayer.setFavoriteState(isCurrentFavorite.value);
+    void echoPlayer.setPlayModeState(playMode.value);
+    void echoPlayer.setEqPreset(settingsStore.eqPreset);
 
     const ui = useUiStore();
     try {
@@ -702,6 +773,7 @@ export const usePlayerStore = defineStore('player', () => {
     toggleFavorite,
     setSleepTimer,
     clearSleepTimer,
+    clearRecentPlays,
     getInterpolatedTimeMs,
   };
 });

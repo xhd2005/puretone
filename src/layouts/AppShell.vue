@@ -130,21 +130,16 @@ function goTab(path: string) {
   background-color: var(--bg-canvas);
   transform-origin: center top;
   transition:
-    transform 420ms var(--spring-ease),
-    border-radius 380ms var(--spring-ease),
-    filter 320ms ease;
+    transform 400ms var(--spring-ease),
+    border-radius 360ms var(--spring-ease);
   will-change: transform;
+  backface-visibility: hidden;
 }
 
 .shell-root.is-receded {
-  transform: scale(0.946) translateY(8px);
+  transform: scale3d(0.95, 0.95, 1) translate3d(0, 6px, 0);
   border-radius: 24px;
   overflow: hidden;
-  filter: brightness(0.96);
-}
-
-.dark .shell-root.is-receded {
-  filter: brightness(0.84);
 }
 
 .tablet-sidebar {

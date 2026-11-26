@@ -4,10 +4,12 @@ import { useRouter } from 'vue-router';
 import { echoSystem } from '@/native/echoSystem';
 import { initKugouEngine } from '@/services/kugou/kugouEngine';
 import { hydratePlaylistCoverCache } from '@/services/playback/playlistCoverResolver';
+import { checkForAppUpdate } from '@/services/update/updateService';
 import { useSettingsStore } from '@/stores/settings';
 import { useAccountsStore } from '@/stores/accounts';
 import { useVipStore } from '@/stores/vip';
 import { usePlayerStore } from '@/stores/player';
+import { useStatsStore } from '@/stores/stats';
 import { useUiStore } from '@/stores/ui';
 import AppShell from '@/layouts/AppShell.vue';
 import NowPlayingSheet from '@/components/NowPlayingSheet.vue';
@@ -16,12 +18,14 @@ import LoginModal from '@/components/LoginModal.vue';
 import SongActionSheet from '@/components/SongActionSheet.vue';
 import UnblockSourceSheet from '@/components/UnblockSourceSheet.vue';
 import VerificationModal from '@/components/VerificationModal.vue';
+import UpdateModal from '@/components/UpdateModal.vue';
 
 const router = useRouter();
 const settings = useSettingsStore();
 const accounts = useAccountsStore();
 const vip = useVipStore();
 const player = usePlayerStore();
+const stats = useStatsStore();
 const ui = useUiStore();
 
 onMounted(async () => {
@@ -31,13 +35,12 @@ onMounted(async () => {
     accounts.hydrate(),
     vip.hydrate(),
     player.hydrate(),
+    stats.hydrate(),
     hydratePlaylistCoverCache(),
   ]);
 
-  // Initialize local KuGou device identity in background
   void initKugouEngine();
 
-  // Hardware & gesture back button coordination
   await echoSystem.onHardwareBack(() => {
     if (ui.closeTopOverlay()) return;
     const isRootTab = ['/home', '/library', '/search'].includes(router.currentRoute.value.path);
@@ -48,13 +51,11 @@ onMounted(async () => {
     }
   });
 
-  // Handle tap on daily VIP reminder notification
   await echoSystem.onAutoClaimIntent(() => {
     ui.accountSheetOpen = true;
     void vip.maybeAutoClaimOnLaunch(true);
   });
 
-  // Handle tap on 4x2 desktop widget cover or lock-screen notification
   await echoSystem.onOpenNowPlayingIntent(() => {
     if (player.currentSong) {
       ui.openNowPlaying('cover');
@@ -69,11 +70,22 @@ onMounted(async () => {
     ui.accountSheetOpen = true;
     void vip.maybeAutoClaimOnLaunch(true);
   } else {
-    // Silent auto-claim 2s after cold launch
     setTimeout(() => {
       void vip.maybeAutoClaimOnLaunch(false);
     }, 2000);
   }
+
+  // Silent daily update check (non-intrusive; only pops modal if a newer GitHub Release exists)
+  setTimeout(async () => {
+    try {
+      const update = await checkForAppUpdate({ silent: true, currentVersion: launchFlags.versionName });
+      if (update?.hasUpdate) {
+        ui.updateReleaseInfo = update;
+      }
+    } catch {
+      // silent network error
+    }
+  }, 4500);
 });
 </script>
 
@@ -85,6 +97,7 @@ onMounted(async () => {
   <SongActionSheet />
   <UnblockSourceSheet />
   <VerificationModal />
+  <UpdateModal />
 
   <!-- iOS 26 Liquid Glass Top Pill Toast -->
   <Transition name="am-fade">

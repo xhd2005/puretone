@@ -4,6 +4,8 @@ export type PlayMode = 'sequence' | 'shuffle' | 'repeat-one' | 'fm';
 
 export type SleepTimerMode = 'off' | '15' | '30' | '60' | 'track';
 
+export type PlaylistSortMode = 'default' | 'newest' | 'oldest' | 'title' | 'artist';
+
 export interface Song {
   id: string;
   hash: string;
@@ -11,6 +13,7 @@ export interface Song {
   hashFlac?: string;
   mixSongId?: number;
   fileId?: number;
+  addedAt?: number;
   albumId?: string;
   title: string;
   artist: string;
@@ -62,6 +65,11 @@ export interface ParsedLyrics {
   source: 'kugou-krc' | 'kugou-lrc' | 'netease' | 'lrclib' | 'none';
 }
 
+export interface VipTierStatus {
+  active: boolean;
+  endTime?: string;
+}
+
 export interface AccountProfile {
   userid: string;
   token: string;
@@ -72,6 +80,22 @@ export interface AccountProfile {
   isVip?: boolean;
   vipEndTime?: string;
   tvipEndTime?: string;
+  pGrade?: number;
+  friends?: number;
+  follows?: number;
+  fans?: number;
+  visitors?: number;
+  gender?: number; // 1 male, 0/2 female
+  province?: string;
+  city?: string;
+  registerTime?: number; // unix sec
+  listenDurationMin?: number; // KuGou cumulative minutes
+  vipTiers?: {
+    svip: VipTierStatus;
+    luxuryVip: VipTierStatus;
+    conceptVip: VipTierStatus;
+    listenVip: VipTierStatus;
+  };
   addedAt: number;
   lastUsedAt: number;
 }

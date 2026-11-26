@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { Icon } from '@iconify/vue';
 import iconPlayerPlayFilled from '@iconify/icons-tabler/player-play-filled';
 import iconRadio from '@iconify/icons-tabler/radio';
 import iconChevronRight from '@iconify/icons-tabler/chevron-right';
 import iconMusic from '@iconify/icons-tabler/music';
+import iconSparkles from '@iconify/icons-tabler/sparkles';
 import type { PlaylistSummary, Song } from '@/types/music';
 import { kugouApi } from '@/services/kugou/kugouEngine';
 import {
@@ -16,6 +17,7 @@ import { readPlaylistSnapshot } from '@/services/playback/playlistSnapshotCache'
 import { useAccountsStore } from '@/stores/accounts';
 import { usePlayerStore } from '@/stores/player';
 import { useUiStore } from '@/stores/ui';
+import { useCollapsingTitle } from '@/composables/useCollapsingTitle';
 import AvatarButton from '@/components/AvatarButton.vue';
 import PlaylistCover from '@/components/PlaylistCover.vue';
 import PureToneMark from '@/components/PureToneMark.vue';
@@ -24,15 +26,18 @@ const router = useRouter();
 const accounts = useAccountsStore();
 const player = usePlayerStore();
 const ui = useUiStore();
+const { largeTitleOpacity, compactTitleOpacity, headerGlassActive, onScroll } = useCollapsingTitle();
 
 const dailySongs = ref<Song[]>([]);
 const playlists = ref<PlaylistSummary[]>([]);
 const loading = ref(false);
-const scrolled = ref(false);
 
-function onScroll(e: Event) {
-  scrolled.value = ((e.target as HTMLElement)?.scrollTop ?? 0) > 34;
-}
+const todayLabel = `${new Date().getMonth() + 1}月${new Date().getDate()}日`;
+
+const dailyHeroCover = computed(() => dailySongs.value[0]?.coverUrl || '');
+const fmHeroCover = computed(
+  () => dailySongs.value[1]?.coverUrl || player.recentPlays[0]?.coverUrl || dailySongs.value[2]?.coverUrl || '',
+);
 
 function openPlaylist(pl: PlaylistSummary) {
   void router.push({
@@ -62,10 +67,8 @@ async function loadHomeData() {
     dailySongs.value = daily;
     playlists.value = pls;
 
-    // Backfill missing playlist covers cleanly in background (2x2 Apple Music collage!)
     void backfillMissingPlaylistCovers(pls);
 
-    // Sync "我喜欢" hashes + fileIds from snapshot first, then refresh page 1
     const fav = pls.find((p) => p.isFavorite);
     if (fav && fav.listId) {
       const favKey = getPlaylistCacheKey(fav);
@@ -95,15 +98,12 @@ watch(() => accounts.activeAccount?.userid, () => void loadHomeData());
 
 <template>
   <div class="h-full flex flex-col relative">
-    <!-- Collapsing iOS Sticky Header -->
-    <header
-      class="sticky-bar"
-      :class="{ 'is-scrolled am-glass am-hairline-b': scrolled }"
-    >
+    <!-- Zero-Overlap Collapsing Sticky Header -->
+    <header class="sticky-bar" :class="{ 'sticky-glass': headerGlassActive }">
       <div class="flex items-center justify-between h-11 px-5">
         <span
-          class="text-[17px] font-bold tracking-tight transition-opacity duration-200"
-          :class="scrolled ? 'opacity-100' : 'opacity-0'"
+          class="text-[17px] font-bold tracking-tight text-[var(--text-primary)] pointer-events-none"
+          :style="{ opacity: compactTitleOpacity }"
         >
           主页
         </span>
@@ -112,23 +112,26 @@ watch(() => accounts.activeAccount?.userid, () => void loadHomeData());
     </header>
 
     <div class="flex-1 am-scroll pb-48" @scroll.passive="onScroll">
-      <!-- iOS Large Title -->
-      <div class="px-5 pt-[calc(var(--safe-top)+44px)] pb-3 flex items-end justify-between">
-        <h1 class="text-[34px] font-bold tracking-[-0.025em] leading-none text-[var(--text-primary)]">
+      <!-- iOS Large Title (fades out cleanly before compact header appears!) -->
+      <div class="px-5 pt-[calc(var(--safe-top)+48px)] pb-3 flex items-end justify-between">
+        <h1
+          class="text-[34px] font-bold tracking-[-0.025em] leading-none text-[var(--text-primary)]"
+          :style="{ opacity: largeTitleOpacity }"
+        >
           主页
         </h1>
       </div>
 
-      <!-- Logged-out minimal PureTone welcome card -->
+      <!-- Logged-out welcome card -->
       <div v-if="!accounts.isLoggedIn" class="px-5 mt-2">
         <div class="rounded-[22px] p-5 bg-[var(--bg-grouped)]">
           <div class="flex items-center gap-3 mb-2.5">
             <PureToneMark :size="40" />
             <div>
               <div class="text-[19px] font-bold tracking-tight text-[var(--text-primary)]">
-                PureTone · 纯音
+                纯音 · PureTone
               </div>
-              <div class="text-[12px] text-[var(--text-secondary)]">纯净听歌，每日畅听</div>
+              <div class="text-[12px] text-[var(--text-secondary)]">极简无广告 · 每日畅听</div>
             </div>
           </div>
           <p class="text-[14px] text-[var(--text-secondary)] leading-relaxed">
@@ -144,29 +147,65 @@ watch(() => accounts.activeAccount?.userid, () => void loadHomeData());
         </div>
       </div>
 
-      <!-- 1. Editorial Personal FM Banner -->
+      <!-- 1. Apple Music 2-Column Editorial Poster Duo (每日精选 + 私人电台) -->
       <section class="px-5 mt-3">
-        <div
-          class="fm-card am-tap"
-          role="button"
-          tabindex="0"
-          @click="player.playPersonalFm()"
-        >
-          <div class="relative z-10 flex items-center justify-between gap-4">
-            <div class="min-w-0">
-              <div class="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-white/80">
-                <Icon :icon="iconRadio" class="w-3.5 h-3.5" />
-                <span>私人电台</span>
+        <div class="grid grid-cols-2 gap-3.5">
+          <!-- Poster A: Daily Mix -->
+          <div
+            class="editorial-poster poster-daily am-tap"
+            role="button"
+            tabindex="0"
+            @click="router.push('/daily')"
+          >
+            <img v-if="dailyHeroCover" :src="dailyHeroCover" alt="" class="poster-bg-img" />
+            <div class="poster-scrim scrim-daily" />
+            <div class="poster-body">
+              <div class="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest text-white/85">
+                <Icon :icon="iconSparkles" class="w-3 h-3" />
+                <span>{{ todayLabel }}</span>
               </div>
-              <div class="text-[22px] font-bold text-white tracking-tight mt-1">
-                为你专属调频
+              <div class="mt-auto">
+                <div class="text-[19px] font-bold text-white tracking-tight leading-tight">每日精选</div>
+                <div class="flex items-center justify-between gap-2 mt-1.5">
+                  <span class="text-[12px] text-white/75 truncate">
+                    {{ dailySongs.length ? `${dailySongs.length} 首专属品味` : '每日灵感更新' }}
+                  </span>
+                  <button
+                    type="button"
+                    class="poster-play-btn lg-fluid-btn am-tap shrink-0"
+                    aria-label="播放每日精选"
+                    @click.stop="dailySongs.length ? player.playQueue(dailySongs, 0) : router.push('/daily')"
+                  >
+                    <Icon :icon="iconPlayerPlayFilled" class="w-4 h-4 translate-x-[1px] text-white" />
+                  </button>
+                </div>
               </div>
-              <p class="text-[13px] text-white/75 mt-0.5 truncate">
-                根据你的红心与听歌口味持续推送
-              </p>
             </div>
-            <div class="w-12 h-12 rounded-full bg-white text-black flex items-center justify-center shadow-lg shrink-0">
-              <Icon :icon="iconPlayerPlayFilled" class="w-5 h-5 translate-x-[1px]" />
+          </div>
+
+          <!-- Poster B: Personal FM Station -->
+          <div
+            class="editorial-poster poster-fm am-tap"
+            role="button"
+            tabindex="0"
+            @click="player.playPersonalFm()"
+          >
+            <img v-if="fmHeroCover" :src="fmHeroCover" alt="" class="poster-bg-img" />
+            <div class="poster-scrim scrim-fm" />
+            <div class="poster-body">
+              <div class="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest text-white/85">
+                <Icon :icon="iconRadio" class="w-3 h-3" />
+                <span>STATION</span>
+              </div>
+              <div class="mt-auto">
+                <div class="text-[19px] font-bold text-white tracking-tight leading-tight">私人电台</div>
+                <div class="flex items-center justify-between gap-2 mt-1.5">
+                  <span class="text-[12px] text-white/75 truncate">为你持续调频</span>
+                  <div class="poster-play-btn lg-fluid-btn shrink-0">
+                    <Icon :icon="iconPlayerPlayFilled" class="w-4 h-4 translate-x-[1px] text-white" />
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -180,7 +219,7 @@ watch(() => accounts.activeAccount?.userid, () => void loadHomeData());
             class="flex items-center gap-1 bg-transparent border-0 p-0 text-[21px] font-bold tracking-tight text-[var(--text-primary)] am-tap"
             @click="router.push('/daily')"
           >
-            <span>每日推荐</span>
+            <span>今日推荐单曲</span>
             <Icon :icon="iconChevronRight" class="w-5 h-5 text-[var(--text-tertiary)]" />
           </button>
           <button
@@ -194,8 +233,8 @@ watch(() => accounts.activeAccount?.userid, () => void loadHomeData());
         </div>
 
         <div v-if="loading && !dailySongs.length" class="px-5 flex gap-3.5 overflow-hidden">
-          <div v-for="i in 3" :key="i" class="w-[152px] shrink-0">
-            <div class="w-[152px] h-[152px] rounded-[14px] bg-[var(--bg-subtle)] animate-pulse" />
+          <div v-for="i in 3" :key="i" class="w-[148px] shrink-0">
+            <div class="w-[148px] h-[148px] rounded-[14px] bg-[var(--bg-subtle)] animate-pulse" />
             <div class="h-3.5 w-28 rounded bg-[var(--bg-subtle)] mt-2 animate-pulse" />
           </div>
         </div>
@@ -204,10 +243,10 @@ watch(() => accounts.activeAccount?.userid, () => void loadHomeData());
           <div
             v-for="(song, idx) in dailySongs.slice(0, 12)"
             :key="song.id"
-            class="w-[152px] shrink-0 cursor-pointer am-tap"
+            class="w-[148px] shrink-0 cursor-pointer am-tap"
             @click="player.playQueue(dailySongs, idx)"
           >
-            <div class="w-[152px] h-[152px] rounded-[14px] overflow-hidden bg-[var(--bg-subtle)] shadow-sm">
+            <div class="w-[148px] h-[148px] rounded-[14px] overflow-hidden bg-[var(--bg-subtle)] shadow-sm">
               <img
                 v-if="song.coverUrl"
                 :src="song.coverUrl"
@@ -229,20 +268,27 @@ watch(() => accounts.activeAccount?.userid, () => void loadHomeData());
         </div>
       </section>
 
-      <!-- 3. Recently Played -->
+      <!-- 3. Recently Played (Title navigates to /recent full list!) -->
       <section v-if="player.recentPlays.length" class="mt-7">
-        <div class="px-5 mb-3">
-          <h2 class="text-[21px] font-bold tracking-tight text-[var(--text-primary)]">最近播放</h2>
+        <div class="px-5 flex items-center justify-between mb-3">
+          <button
+            type="button"
+            class="flex items-center gap-1 bg-transparent border-0 p-0 text-[21px] font-bold tracking-tight text-[var(--text-primary)] am-tap"
+            @click="router.push('/recent')"
+          >
+            <span>最近播放</span>
+            <Icon :icon="iconChevronRight" class="w-5 h-5 text-[var(--text-tertiary)]" />
+          </button>
         </div>
 
         <div class="am-hscroll flex gap-3.5 px-5">
           <div
             v-for="(song, idx) in player.recentPlays.slice(0, 14)"
             :key="`${song.id}-${idx}`"
-            class="w-[132px] shrink-0 cursor-pointer am-tap"
+            class="w-[130px] shrink-0 cursor-pointer am-tap"
             @click="player.playSong(song)"
           >
-            <div class="w-[132px] h-[132px] rounded-[12px] overflow-hidden bg-[var(--bg-subtle)] shadow-sm">
+            <div class="w-[130px] h-[130px] rounded-[12px] overflow-hidden bg-[var(--bg-subtle)] shadow-sm">
               <img v-if="song.coverUrl" :src="song.coverUrl" loading="lazy" class="w-full h-full object-cover" alt="" />
               <div v-else class="w-full h-full flex items-center justify-center text-[var(--text-tertiary)]">
                 <Icon :icon="iconMusic" class="w-8 h-8" />
@@ -298,16 +344,78 @@ watch(() => accounts.activeAccount?.userid, () => void loadHomeData());
   right: 0;
   z-index: 20;
   padding-top: var(--safe-top);
-  transition: background-color 220ms ease;
+  transition: background-color 200ms ease;
 }
 
-.fm-card {
+.editorial-poster {
   position: relative;
+  aspect-ratio: 1 / 1.06;
   border-radius: 22px;
-  padding: 20px 20px;
   overflow: hidden;
-  background: linear-gradient(135deg, var(--accent) 0%, #7c2d8a 56%, #1d1b38 100%);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.32), 0 14px 32px rgba(0, 0, 0, 0.16);
   cursor: pointer;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.28);
+}
+
+.dark .editorial-poster {
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.16);
+}
+
+.poster-daily {
+  background: linear-gradient(150deg, #ff4b6a 0%, #c81d48 58%, #3a0f24 100%);
+}
+
+.poster-fm {
+  background: linear-gradient(150deg, #27375c 0%, #172038 56%, #0c101c 100%);
+}
+
+.poster-bg-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scale(1.08);
+  filter: blur(1px) saturate(1.18);
+}
+
+.poster-scrim {
+  position: absolute;
+  inset: 0;
+}
+
+.scrim-daily {
+  background: linear-gradient(
+    180deg,
+    rgba(250, 35, 59, 0.30) 0%,
+    rgba(16, 12, 20, 0.25) 45%,
+    rgba(14, 10, 18, 0.84) 100%
+  );
+}
+
+.scrim-fm {
+  background: linear-gradient(
+    180deg,
+    rgba(30, 58, 110, 0.34) 0%,
+    rgba(12, 16, 28, 0.30) 45%,
+    rgba(10, 13, 22, 0.86) 100%
+  );
+}
+
+.poster-body {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+}
+
+.poster-play-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 </style>

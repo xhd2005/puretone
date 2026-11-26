@@ -203,6 +203,36 @@ class EchoPlayerPlugin : Plugin(), PlayerBridgeListener {
     }
 
     @PluginMethod
+    fun setFavoriteState(call: PluginCall) {
+        val favorite = call.getBoolean("favorite", false) ?: false
+        EchoPlaybackService.activeService?.setFavoriteState(favorite)
+        call.resolve()
+    }
+
+    @PluginMethod
+    fun setPlayModeState(call: PluginCall) {
+        val mode = call.getString("mode") ?: "sequence"
+        EchoPlaybackService.activeService?.setPlayModeState(mode)
+        call.resolve()
+    }
+
+    @PluginMethod
+    fun setLiveLyric(call: PluginCall) {
+        val line = call.getString("line") ?: ""
+        EchoPlaybackService.activeService?.setLiveLyric(line)
+        call.resolve()
+    }
+
+    @PluginMethod
+    fun setEqPreset(call: PluginCall) {
+        val preset = call.getString("preset") ?: "flat"
+        ensureServiceBound { svc ->
+            svc.setEqPreset(preset)
+            call.resolve()
+        }
+    }
+
+    @PluginMethod
     fun updateMetadata(call: PluginCall) {
         val metadata = parseMetadata(call.data)
         EchoPlaybackService.activeService?.updateMetadata(metadata)

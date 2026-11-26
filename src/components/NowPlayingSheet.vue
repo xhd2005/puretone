@@ -74,9 +74,8 @@ function revealLyricsHud(autoHide = true) {
 }
 
 function onLyricsUserScroll() {
-  if (ui.nowPlayingMode === 'lyrics' && player.isPlaying && !scrubbing.value) {
-    clearLyricsHideTimer();
-    lyricsHudVisible.value = false;
+  if (ui.nowPlayingMode === 'lyrics') {
+    revealLyricsHud(true);
   }
 }
 
@@ -91,6 +90,37 @@ function onLyricsTapBlank() {
 }
 
 const isLyricsImmersive = computed(() => ui.nowPlayingMode === 'lyrics' && !lyricsHudVisible.value);
+
+const coverLyricsPreview = computed(() => {
+  if (!settings.showCoverLyricsPreview) return null;
+  const lines = player.lyrics.lines;
+  if (!lines.length) return null;
+  const t = player.currentTimeMs + 120;
+  let lo = 0;
+  let hi = lines.length - 1;
+  let idx = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (lines[mid].startMs <= t) {
+      idx = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  if (idx < 0) {
+    return {
+      current: lines[0]?.text || '',
+      next: lines[1]?.text || '',
+      isIntro: true,
+    };
+  }
+  return {
+    current: lines[idx]?.text || '',
+    next: lines[idx + 1]?.text || '',
+    isIntro: false,
+  };
+});
 
 watch(
   () => ui.nowPlayingOpen,
@@ -428,6 +458,24 @@ const playModeLabel = computed(() => {
             </div>
           </div>
 
+          <!-- Cover Page 2-Line Live Lyrics Preview (Tap to enter full-screen KRC lyrics) -->
+          <button
+            v-if="coverLyricsPreview"
+            type="button"
+            class="np-cover-lyrics am-tap"
+            @click.stop="toggleMode('lyrics')"
+          >
+            <div
+              class="text-[14px] leading-snug truncate transition-colors"
+              :class="coverLyricsPreview.isIntro ? 'text-white/62 font-medium' : 'text-white/94 font-semibold'"
+            >
+              {{ coverLyricsPreview.current }}
+            </div>
+            <div v-if="coverLyricsPreview.next" class="text-[12px] leading-snug text-white/46 truncate mt-0.5">
+              {{ coverLyricsPreview.next }}
+            </div>
+          </button>
+
           <div class="np-meta-row">
             <div class="min-w-0 flex-1 pr-3">
               <h1 class="text-[22px] font-bold text-white truncate tracking-tight leading-snug">
@@ -677,12 +725,25 @@ const playModeLabel = computed(() => {
 
 .np-artwork {
   position: relative;
-  width: min(82vw, 344px);
+  width: min(79vw, 336px);
+  max-height: 100%;
+  max-width: 100%;
   aspect-ratio: 1;
   border-radius: 18px;
   overflow: hidden;
   background: rgba(255, 255, 255, 0.08);
   transition: transform 480ms var(--spring-ease), box-shadow 480ms ease;
+}
+
+.np-cover-lyrics {
+  display: block;
+  width: 100%;
+  text-align: center;
+  background: transparent;
+  border: 0;
+  padding: 6px 8px 2px;
+  margin-top: 4px;
+  flex-shrink: 0;
 }
 
 .np-artwork.is-playing {

@@ -1,13 +1,18 @@
 import { defineStore } from 'pinia';
 import { computed, ref, watch } from 'vue';
 import type { AudioQuality } from '@/types/music';
+import type { EqPresetId } from '@/native/echoPlayer';
 import { echoSystem } from '@/native/echoSystem';
+import { echoPlayer } from '@/native/echoPlayer';
 
 export type AppearanceMode = 'system' | 'light' | 'dark';
+export type AccentThemeMode = 'dynamic' | 'apple-red';
 
 interface PersistedSettings {
   appearance: AppearanceMode;
+  accentMode: AccentThemeMode;
   quality: AudioQuality;
+  eqPreset: EqPresetId;
   enableUnblock: boolean;
   unblockPlatforms: string[];
   autoClaimOnLaunch: boolean;
@@ -17,13 +22,17 @@ interface PersistedSettings {
   dailyReminderHour: number;
   dailyReminderMinute: number;
   showTranslation: boolean;
+  showCoverLyricsPreview: boolean;
+  showLockScreenLyrics: boolean;
 }
 
 const STORAGE_KEY = 'settings.v1';
 
 const DEFAULTS: PersistedSettings = {
   appearance: 'system',
+  accentMode: 'dynamic',
   quality: 'flac',
+  eqPreset: 'flat',
   enableUnblock: true,
   unblockPlatforms: ['kuwo', 'kugou', 'joox', 'bilibili'],
   autoClaimOnLaunch: true,
@@ -33,11 +42,15 @@ const DEFAULTS: PersistedSettings = {
   dailyReminderHour: 9,
   dailyReminderMinute: 0,
   showTranslation: true,
+  showCoverLyricsPreview: true,
+  showLockScreenLyrics: true,
 };
 
 export const useSettingsStore = defineStore('settings', () => {
   const appearance = ref<AppearanceMode>(DEFAULTS.appearance);
+  const accentMode = ref<AccentThemeMode>(DEFAULTS.accentMode);
   const quality = ref<AudioQuality>(DEFAULTS.quality);
+  const eqPreset = ref<EqPresetId>(DEFAULTS.eqPreset);
   const enableUnblock = ref<boolean>(DEFAULTS.enableUnblock);
   const unblockPlatforms = ref<string[]>([...DEFAULTS.unblockPlatforms]);
   const autoClaimOnLaunch = ref<boolean>(DEFAULTS.autoClaimOnLaunch);
@@ -47,6 +60,8 @@ export const useSettingsStore = defineStore('settings', () => {
   const dailyReminderHour = ref<number>(DEFAULTS.dailyReminderHour);
   const dailyReminderMinute = ref<number>(DEFAULTS.dailyReminderMinute);
   const showTranslation = ref<boolean>(DEFAULTS.showTranslation);
+  const showCoverLyricsPreview = ref<boolean>(DEFAULTS.showCoverLyricsPreview);
+  const showLockScreenLyrics = ref<boolean>(DEFAULTS.showLockScreenLyrics);
 
   const systemPrefersDark = ref<boolean>(
     typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: dark)').matches,
@@ -72,17 +87,26 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   watch(isDark, () => applyThemeClass(), { immediate: true });
+  watch(eqPreset, (preset) => {
+    void echoPlayer.setEqPreset(preset);
+  });
+  watch(showLockScreenLyrics, (enabled) => {
+    if (!enabled) void echoPlayer.setLiveLyric('');
+  });
 
   let hydrated = false;
 
   async function hydrate() {
     const saved = await echoSystem.kvGetJson<Partial<PersistedSettings>>(STORAGE_KEY, {});
     appearance.value = saved.appearance ?? DEFAULTS.appearance;
+    accentMode.value = saved.accentMode ?? DEFAULTS.accentMode;
     quality.value = saved.quality ?? DEFAULTS.quality;
+    eqPreset.value = saved.eqPreset ?? DEFAULTS.eqPreset;
     enableUnblock.value = saved.enableUnblock ?? DEFAULTS.enableUnblock;
-    unblockPlatforms.value = Array.isArray(saved.unblockPlatforms) && saved.unblockPlatforms.length
-      ? saved.unblockPlatforms
-      : [...DEFAULTS.unblockPlatforms];
+    unblockPlatforms.value =
+      Array.isArray(saved.unblockPlatforms) && saved.unblockPlatforms.length
+        ? saved.unblockPlatforms
+        : [...DEFAULTS.unblockPlatforms];
     autoClaimOnLaunch.value = saved.autoClaimOnLaunch ?? DEFAULTS.autoClaimOnLaunch;
     autoClaimAllAccounts.value = saved.autoClaimAllAccounts ?? DEFAULTS.autoClaimAllAccounts;
     enableConceptTasks.value = saved.enableConceptTasks ?? DEFAULTS.enableConceptTasks;
@@ -90,15 +114,20 @@ export const useSettingsStore = defineStore('settings', () => {
     dailyReminderHour.value = saved.dailyReminderHour ?? DEFAULTS.dailyReminderHour;
     dailyReminderMinute.value = saved.dailyReminderMinute ?? DEFAULTS.dailyReminderMinute;
     showTranslation.value = saved.showTranslation ?? DEFAULTS.showTranslation;
+    showCoverLyricsPreview.value = saved.showCoverLyricsPreview ?? DEFAULTS.showCoverLyricsPreview;
+    showLockScreenLyrics.value = saved.showLockScreenLyrics ?? DEFAULTS.showLockScreenLyrics;
     hydrated = true;
     applyThemeClass();
+    void echoPlayer.setEqPreset(eqPreset.value);
   }
 
   async function persist() {
     if (!hydrated) return;
     const payload: PersistedSettings = {
       appearance: appearance.value,
+      accentMode: accentMode.value,
       quality: quality.value,
+      eqPreset: eqPreset.value,
       enableUnblock: enableUnblock.value,
       unblockPlatforms: unblockPlatforms.value,
       autoClaimOnLaunch: autoClaimOnLaunch.value,
@@ -108,6 +137,8 @@ export const useSettingsStore = defineStore('settings', () => {
       dailyReminderHour: dailyReminderHour.value,
       dailyReminderMinute: dailyReminderMinute.value,
       showTranslation: showTranslation.value,
+      showCoverLyricsPreview: showCoverLyricsPreview.value,
+      showLockScreenLyrics: showLockScreenLyrics.value,
     };
     await echoSystem.kvSetJson(STORAGE_KEY, payload);
   }
@@ -115,7 +146,9 @@ export const useSettingsStore = defineStore('settings', () => {
   watch(
     [
       appearance,
+      accentMode,
       quality,
+      eqPreset,
       enableUnblock,
       unblockPlatforms,
       autoClaimOnLaunch,
@@ -125,6 +158,8 @@ export const useSettingsStore = defineStore('settings', () => {
       dailyReminderHour,
       dailyReminderMinute,
       showTranslation,
+      showCoverLyricsPreview,
+      showLockScreenLyrics,
     ],
     () => {
       void persist();
@@ -132,23 +167,28 @@ export const useSettingsStore = defineStore('settings', () => {
     { deep: true },
   );
 
-  async function setDailyReminder(enabled: boolean, hour = dailyReminderHour.value, minute = dailyReminderMinute.value): Promise<boolean> {
+  async function setDailyReminder(
+    enabled: boolean,
+    hour = dailyReminderHour.value,
+    minute = dailyReminderMinute.value,
+  ): Promise<boolean> {
     dailyReminderHour.value = hour;
     dailyReminderMinute.value = minute;
     if (enabled) {
       const ok = await echoSystem.scheduleDailyReminder(hour, minute);
       dailyReminderEnabled.value = ok;
       return ok;
-    } else {
-      await echoSystem.cancelDailyReminder();
-      dailyReminderEnabled.value = false;
-      return true;
     }
+    await echoSystem.cancelDailyReminder();
+    dailyReminderEnabled.value = false;
+    return true;
   }
 
   return {
     appearance,
+    accentMode,
     quality,
+    eqPreset,
     enableUnblock,
     unblockPlatforms,
     autoClaimOnLaunch,
@@ -158,6 +198,8 @@ export const useSettingsStore = defineStore('settings', () => {
     dailyReminderHour,
     dailyReminderMinute,
     showTranslation,
+    showCoverLyricsPreview,
+    showLockScreenLyrics,
     isDark,
     applyThemeClass,
     hydrate,

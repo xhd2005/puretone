@@ -292,6 +292,12 @@ export function fixCoverUrl(raw?: string, size = 480): string {
     .replace(/^http:\/\//i, 'https://');
 }
 
+const AUDIO_EXT_RE = /\.(mp3|flac|m4a|wav|ape|ogg|aac|wma)$/i;
+
+export function stripAudioExtension(raw?: string): string {
+  return String(raw || '').trim().replace(AUDIO_EXT_RE, '').trim();
+}
+
 export function normalizeSong(raw: Record<string, any>): Song {
   const hash128 = String(raw.hash ?? raw.FileHash ?? raw.filehash ?? raw.audio_info?.hash ?? '').trim();
   const hash320 = String(
@@ -302,9 +308,9 @@ export function normalizeSong(raw: Record<string, any>): Song {
   ).trim();
 
   const hash = hash128 || hash320 || hashFlac;
-  const rawName = String(raw.songname ?? raw.SongName ?? raw.ori_audio_name ?? raw.name ?? raw.filename ?? '').trim();
+  const rawName = stripAudioExtension(raw.songname ?? raw.SongName ?? raw.ori_audio_name ?? raw.name ?? raw.filename ?? '');
   let title = rawName;
-  let artist = String(
+  let artist = stripAudioExtension(
     raw.author_name ??
       raw.singername ??
       raw.SingerName ??
@@ -314,12 +320,12 @@ export function normalizeSong(raw: Record<string, any>): Song {
       (Array.isArray(raw.Singers)
         ? raw.Singers.map((s: any) => s?.name).filter(Boolean).join(' / ')
         : ''),
-  ).trim();
+  );
 
   if (!artist && rawName.includes(' - ')) {
     const idx = rawName.indexOf(' - ');
-    artist = rawName.slice(0, idx).trim();
-    title = rawName.slice(idx + 3).trim();
+    artist = stripAudioExtension(rawName.slice(0, idx));
+    title = stripAudioExtension(rawName.slice(idx + 3));
   }
 
   const rawDur = Number(
@@ -338,6 +344,7 @@ export function normalizeSong(raw: Record<string, any>): Song {
 
   const mixSongId = Number(raw.mixsongid ?? raw.mixSongId ?? raw.album_audio_id ?? raw.MixSongID ?? 0) || undefined;
   const fileId = Number(raw.fileid ?? raw.fileId ?? 0) || undefined;
+  const addedAt = Number(raw.addtime ?? raw.add_time ?? raw.create_time ?? 0) || undefined;
   const privilege = Number(raw.privilege ?? raw.Privilege ?? raw.pay_type ?? 0);
   const isVip = privilege === 10 || privilege === 8 || Number(raw.pay_type_320 ?? 0) === 3;
   const isGray = privilege === 5 || Number(raw.fail_process ?? 0) === 12;
@@ -349,6 +356,7 @@ export function normalizeSong(raw: Record<string, any>): Song {
     hashFlac: hashFlac || undefined,
     mixSongId,
     fileId,
+    addedAt,
     albumId: raw.album_id ? String(raw.album_id) : raw.AlbumID ? String(raw.AlbumID) : undefined,
     title: title || '未知歌曲',
     artist: artist || '未知歌手',

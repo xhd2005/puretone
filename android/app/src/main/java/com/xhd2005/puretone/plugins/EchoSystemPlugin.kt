@@ -36,8 +36,13 @@ import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
 import com.getcapacitor.annotation.Permission
 import com.getcapacitor.annotation.PermissionCallback
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import java.io.File
+import java.io.FileOutputStream
 import java.util.Calendar
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 private class PureToneKvDbHelper(context: Context) :
     SQLiteOpenHelper(context, "puretone_kv.db", null, 1) {
@@ -71,6 +76,13 @@ private class PureToneKvDbHelper(context: Context) :
 class EchoSystemPlugin : Plugin() {
 
     private lateinit var dbHelper: PureToneKvDbHelper
+    private val updateExecutor = Executors.newSingleThreadExecutor()
+    private val updateHttpClient = OkHttpClient.Builder()
+        .connectTimeout(20, TimeUnit.SECONDS)
+        .readTimeout(90, TimeUnit.SECONDS)
+        .followRedirects(true)
+        .followSslRedirects(true)
+        .build()
     private var latestInsets: JSObject = JSObject().apply {
         put("top", 0)
         put("bottom", 0)
@@ -321,6 +333,114 @@ class EchoSystemPlugin : Plugin() {
         } catch (_: Exception) {
             call.resolve(JSObject().put("opened", false))
         }
+    }
+
+    @PluginMethod
+    fun downloadAndInstallApk(call: PluginCall) {
+        val url = call.getString("url")?.trim() ?: ""
+        if (!url.startsWith("http://") && !url.startsWith("https://")) {
+            call.resolve(JSObject().put("started", false).put("message", "无效的更新包地址"))
+            return
+        }
+        val rawName = call.getString("fileName")?.trim().orEmpty()
+        val safeName = if (rawName.endsWith(".apk", ignoreCase = true)) {
+            rawName.replace(Regex("[^a-zA-Z0-9._-]"), "_")
+        } else {
+            "PureTone-update.apk"
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !context.packageManager.canRequestPackageInstalls()) {
+            try {
+                val permIntent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
+                    data = Uri.parse("package:${context.packageName}")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(permIntent)
+            } catch (_: Exception) {
+                // ignore
+            }
+            call.resolve(
+                JSObject()
+                    .put("started", false)
+                    .put("needsInstallPermission", true)
+                    .put("message", "请先开启「允许安装未知应用」，返回后再点击立即安装"),
+            )
+            return
+        }
+
+        call.resolve(JSObject().put("started", true).put("needsInstallPermission", false))
+
+        updateExecutor.execute {
+            try {
+                val updatesDir = File(context.cacheDir, "updates")
+                if (!updatesDir.exists()) updatesDir.mkdirs()
+                val apkFile = File(updatesDir, safeName)
+                if (apkFile.exists()) apkFile.delete()
+
+                val req = Request.Builder()
+                    .url(url)
+                    .header("User-Agent", "PureTone-Android/2.1")
+                    .build()
+                updateHttpClient.newCall(req).execute().use { res ->
+                    if (!res.isSuccessful) {
+                        notifyUpdateProgress(0L, 0L, 0, false, "下载失败（HTTP ${res.code}）")
+                        return@execute
+                    }
+                    val body = res.body ?: run {
+                        notifyUpdateProgress(0L, 0L, 0, false, "安装包响应为空")
+                        return@execute
+                    }
+                    val total = body.contentLength().coerceAtLeast(0L)
+                    var downloaded = 0L
+                    var lastEmit = 0L
+                    val buf = ByteArray(16 * 1024)
+                    body.byteStream().use { input ->
+                        FileOutputStream(apkFile).use { out ->
+                            while (true) {
+                                val read = input.read(buf)
+                                if (read == -1) break
+                                out.write(buf, 0, read)
+                                downloaded += read
+                                val now = System.currentTimeMillis()
+                                if (now - lastEmit >= 160L) {
+                                    lastEmit = now
+                                    val pct = if (total > 0L) ((downloaded * 100L) / total).toInt().coerceIn(0, 99) else 0
+                                    notifyUpdateProgress(downloaded, total, pct, false, null)
+                                }
+                            }
+                            out.flush()
+                        }
+                    }
+
+                    notifyUpdateProgress(downloaded, total.coerceAtLeast(downloaded), 100, true, null)
+
+                    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", apkFile)
+                    val installIntent = Intent(Intent.ACTION_VIEW).apply {
+                        setDataAndType(uri, "application/vnd.android.package-archive")
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    context.startActivity(installIntent)
+                }
+            } catch (e: Exception) {
+                notifyUpdateProgress(0L, 0L, 0, false, e.message ?: "下载更新失败，请尝试浏览器下载")
+            }
+        }
+    }
+
+    private fun notifyUpdateProgress(
+        downloadedBytes: Long,
+        totalBytes: Long,
+        percent: Int,
+        done: Boolean,
+        error: String?,
+    ) {
+        val obj = JSObject()
+            .put("downloadedBytes", downloadedBytes)
+            .put("totalBytes", totalBytes)
+            .put("percent", percent)
+            .put("done", done)
+        if (!error.isNullOrBlank()) obj.put("error", error)
+        notifyListeners("updateDownloadProgress", obj)
     }
 
     @PluginMethod

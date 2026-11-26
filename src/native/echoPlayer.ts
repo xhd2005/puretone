@@ -41,9 +41,11 @@ export interface PlayerErrorEvent {
 }
 
 export interface MediaCommandEvent {
-  command: 'play' | 'pause' | 'next' | 'previous' | 'seek';
+  command: 'play' | 'pause' | 'next' | 'previous' | 'seek' | 'toggleFavorite' | 'cyclePlayMode';
   positionMs?: number;
 }
+
+export type EqPresetId = 'flat' | 'vocal' | 'bass' | 'night' | 'live';
 
 export interface AudioCacheStats {
   usedBytes: number;
@@ -74,6 +76,10 @@ export interface EchoPlayerPluginInterface {
   setVolume(options: { volume: number }): Promise<void>;
   setSpeed(options: { speed: number }): Promise<void>;
   setRepeatOne(options: { enabled: boolean }): Promise<void>;
+  setFavoriteState(options: { favorite: boolean }): Promise<void>;
+  setPlayModeState(options: { mode: string }): Promise<void>;
+  setLiveLyric(options: { line: string }): Promise<void>;
+  setEqPreset(options: { preset: EqPresetId }): Promise<void>;
   updateMetadata(options: PlayerTrackMetadata): Promise<void>;
   getAudioCacheStats(): Promise<AudioCacheStats>;
   clearAudioCache(): Promise<{ cleared: boolean }>;
@@ -312,6 +318,18 @@ export const echoPlayer = {
   async setRepeatOne(enabled: boolean) {
     if (Capacitor.isNativePlatform()) return EchoPlayerNative.setRepeatOne({ enabled });
     return getWebFallback().setRepeatOne(enabled);
+  },
+  async setFavoriteState(favorite: boolean) {
+    if (Capacitor.isNativePlatform()) return EchoPlayerNative.setFavoriteState({ favorite }).catch(() => {});
+  },
+  async setPlayModeState(mode: string) {
+    if (Capacitor.isNativePlatform()) return EchoPlayerNative.setPlayModeState({ mode }).catch(() => {});
+  },
+  async setLiveLyric(line: string) {
+    if (Capacitor.isNativePlatform()) return EchoPlayerNative.setLiveLyric({ line }).catch(() => {});
+  },
+  async setEqPreset(preset: EqPresetId) {
+    if (Capacitor.isNativePlatform()) return EchoPlayerNative.setEqPreset({ preset }).catch(() => {});
   },
   async updateMetadata(metadata: PlayerTrackMetadata) {
     if (Capacitor.isNativePlatform()) return EchoPlayerNative.updateMetadata(metadata);

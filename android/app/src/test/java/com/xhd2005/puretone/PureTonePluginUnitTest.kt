@@ -1,5 +1,6 @@
 package com.xhd2005.puretone
 
+import com.xhd2005.puretone.player.EchoPlaybackService
 import com.xhd2005.puretone.plugins.EchoHttpPlugin
 import com.xhd2005.puretone.plugins.EchoSystemPlugin
 import org.junit.Assert.assertEquals
@@ -40,5 +41,28 @@ class PureTonePluginUnitTest {
         assertEquals(26, todayCal.get(Calendar.DAY_OF_MONTH))
         assertEquals(21, todayCal.get(Calendar.HOUR_OF_DAY))
         assertEquals(30, todayCal.get(Calendar.MINUTE))
+    }
+
+    @Test
+    fun computeEqBandGains_producesExpectedCurvesForPresets() {
+        val freqs = intArrayOf(60, 230, 910, 3600, 14000)
+        val flat = EchoPlaybackService.computeEqBandGains("flat", freqs)
+        assertTrue(flat.all { it == 0 })
+
+        val bass = EchoPlaybackService.computeEqBandGains("bass", freqs)
+        assertTrue(bass[0] > bass[2])
+
+        val vocal = EchoPlaybackService.computeEqBandGains("vocal", freqs)
+        assertTrue(vocal[2] > vocal[0])
+
+        val night = EchoPlaybackService.computeEqBandGains("night", freqs)
+        assertTrue(night[4] < 0 && night[0] > 0)
+    }
+
+    @Test
+    fun selectNotificationAccentRgb_extractsDarkenedRichAccentAndAvoidsWashout() {
+        val brightBlue = listOf(Triple(50, 180, 255), Triple(40, 160, 240))
+        val (r, g, b) = EchoPlaybackService.selectNotificationAccentRgb(brightBlue)
+        assertTrue(b > r && b <= 185)
     }
 }

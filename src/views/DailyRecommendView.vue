@@ -34,7 +34,7 @@ function shufflePlay() {
 
 <template>
   <div class="h-full flex flex-col relative">
-    <header class="am-glass am-hairline-b sticky top-0 z-20 pt-[var(--safe-top)]">
+    <header class="sticky-glass sticky top-0 z-20 pt-[var(--safe-top)]">
       <div class="h-11 px-3 flex items-center justify-between">
         <button
           type="button"

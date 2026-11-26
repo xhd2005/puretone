@@ -11,46 +11,30 @@ defineProps<{
     viewBox="0 0 108 108"
     fill="none"
     xmlns="http://www.w3.org/2000/svg"
-    class="shrink-0 rounded-[24%] shadow-md"
+    class="shrink-0 rounded-[23%] shadow-md"
     aria-label="PureTone Logo"
   >
     <defs>
-      <linearGradient id="pt-bg" x1="12" y1="8" x2="98" y2="102" gradientUnits="userSpaceOnUse">
-        <stop offset="0%" stop-color="#FA243C" />
-        <stop offset="38%" stop-color="#C91F6B" />
-        <stop offset="72%" stop-color="#6B1D5C" />
-        <stop offset="100%" stop-color="#1E1030" />
+      <linearGradient id="pt-red" x1="54" y1="0" x2="54" y2="108" gradientUnits="userSpaceOnUse">
+        <stop offset="0%" stop-color="#FF526E" />
+        <stop offset="52%" stop-color="#FA233B" />
+        <stop offset="100%" stop-color="#DC122E" />
       </linearGradient>
-      <radialGradient id="pt-glow" cx="28" cy="24" r="62" gradientUnits="userSpaceOnUse">
-        <stop offset="0%" stop-color="#FF6B81" stop-opacity="0.55" />
-        <stop offset="60%" stop-color="#FF375F" stop-opacity="0.12" />
-        <stop offset="100%" stop-color="#FA243C" stop-opacity="0" />
+      <radialGradient id="pt-sheen" cx="54" cy="8" r="66" gradientUnits="userSpaceOnUse">
+        <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.22" />
+        <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0" />
       </radialGradient>
     </defs>
-    <rect width="108" height="108" rx="26" fill="url(#pt-bg)" />
-    <rect width="108" height="108" rx="26" fill="url(#pt-glow)" />
-    <circle cx="54" cy="54" r="31" fill="#FFFFFF" fill-opacity="0.09" />
+    <rect width="108" height="108" rx="25" fill="url(#pt-red)" />
+    <rect width="108" height="108" rx="25" fill="url(#pt-sheen)" />
     <path
-      d="M37 74V34H50.5C58.8 34 64.5 39.4 64.5 46.8C64.5 54.2 58.8 59.5 50.5 59.5H42.5"
-      stroke="#FFFFFF"
-      stroke-width="6.4"
-      stroke-linecap="round"
-      stroke-linejoin="round"
+      d="M52.4 32.5C52.4 29.4 54.9 27.2 58.0 27.8C65.0 29.2 71.2 33.0 74.6 38.4C76.0 40.7 75.2 43.7 72.8 44.8C70.8 45.8 68.5 45.1 67.2 43.3C64.9 40.2 62.2 38.3 58.8 37.5V65.2C58.8 72.9 52.1 78.7 43.9 78.7C36.5 78.7 31.4 74.1 31.4 68.1C31.4 61.3 37.5 56.3 45.4 56.3C48.0 56.3 50.4 56.9 52.4 57.9Z"
+      fill="#8B0018"
+      fill-opacity="0.13"
     />
     <path
-      d="M67.8 38.5C72.2 43.2 72.2 52.8 67.8 57.8"
-      stroke="#FFFFFF"
-      stroke-opacity="0.9"
-      stroke-width="4.4"
-      stroke-linecap="round"
+      d="M51.2 30.8C51.2 27.7 53.7 25.5 56.8 26.1C63.8 27.5 70.0 31.3 73.4 36.7C74.8 39.0 74.0 42.0 71.6 43.1C69.6 44.1 67.3 43.4 66.0 41.6C63.7 38.5 61.0 36.6 57.6 35.8V63.5C57.6 71.2 50.9 77.0 42.7 77.0C35.3 77.0 30.2 72.4 30.2 66.4C30.2 59.6 36.3 54.6 44.2 54.6C46.8 54.6 49.2 55.2 51.2 56.2Z"
+      fill="#FFFFFF"
     />
-    <path
-      d="M74.4 32.5C81.2 40.4 81.2 56.2 74.4 64.2"
-      stroke="#FFFFFF"
-      stroke-opacity="0.6"
-      stroke-width="3.8"
-      stroke-linecap="round"
-    />
-    <circle cx="50.5" cy="73.8" r="3.6" fill="#FFFFFF" fill-opacity="0.9" />
   </svg>
 </template>

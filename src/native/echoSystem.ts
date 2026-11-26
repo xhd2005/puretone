@@ -17,6 +17,14 @@ export interface AppLaunchFlags {
 
 export type HapticStyle = 'light' | 'medium' | 'heavy' | 'selection' | 'success';
 
+export interface UpdateDownloadProgressEvent {
+  downloadedBytes: number;
+  totalBytes: number;
+  percent: number;
+  done: boolean;
+  error?: string;
+}
+
 export interface EchoSystemPluginInterface {
   kvGet(options: { key: string }): Promise<{ value: string | null }>;
   kvSet(options: { key: string; value: string }): Promise<void>;
@@ -34,6 +42,11 @@ export interface EchoSystemPluginInterface {
   openAppNotificationSettings(): Promise<{ opened: boolean }>;
   openAppDetailsSettings(): Promise<{ opened: boolean }>;
   openExternalUrl(options: { url: string }): Promise<{ opened: boolean }>;
+  downloadAndInstallApk(options: { url: string; fileName?: string }): Promise<{
+    started: boolean;
+    needsInstallPermission?: boolean;
+    message?: string;
+  }>;
   copyToClipboard(options: { text: string }): Promise<void>;
   isWeChatInstalled(): Promise<{ installed: boolean }>;
   launchKugouWithQr(options: { base64Image: string }): Promise<{
@@ -52,6 +65,10 @@ export interface EchoSystemPluginInterface {
   addListener(eventName: 'hardwareBack', listener: () => void): Promise<PluginListenerHandle>;
   addListener(eventName: 'autoClaimIntent', listener: () => void): Promise<PluginListenerHandle>;
   addListener(eventName: 'openNowPlayingIntent', listener: () => void): Promise<PluginListenerHandle>;
+  addListener(
+    eventName: 'updateDownloadProgress',
+    listener: (ev: UpdateDownloadProgressEvent) => void,
+  ): Promise<PluginListenerHandle>;
 }
 
 const EchoSystemNative = registerPlugin<EchoSystemPluginInterface>('EchoSystem');
@@ -131,7 +148,7 @@ export const echoSystem = {
     if (Capacitor.isNativePlatform()) {
       return EchoSystemNative.getLaunchFlags();
     }
-    return { autoClaim: false, openNowPlaying: false, versionName: '2.0.0', versionCode: 2 };
+    return { autoClaim: false, openNowPlaying: false, versionName: '2.1.0', versionCode: 3 };
   },
 
   async checkNotificationPermission(): Promise<{ granted: boolean; systemEnabled: boolean; runtimeGranted: boolean }> {
@@ -175,6 +192,25 @@ export const echoSystem = {
       return true;
     }
     return false;
+  },
+
+  async downloadAndInstallApk(
+    url: string,
+    fileName?: string,
+  ): Promise<{ started: boolean; needsInstallPermission?: boolean; message?: string }> {
+    if (!Capacitor.isNativePlatform()) {
+      if (typeof window !== 'undefined') window.open(url, '_blank', 'noopener');
+      return { started: false, message: '已在浏览器打开下载链接' };
+    }
+    return EchoSystemNative.downloadAndInstallApk({ url, fileName });
+  },
+
+  async onUpdateDownloadProgress(cb: (ev: UpdateDownloadProgressEvent) => void): Promise<() => void> {
+    if (Capacitor.isNativePlatform()) {
+      const h = await EchoSystemNative.addListener('updateDownloadProgress', cb);
+      return () => void h.remove();
+    }
+    return () => {};
   },
 
   async scheduleDailyReminder(hour: number, minute: number): Promise<boolean> {

@@ -33,6 +33,9 @@ onUnmounted(() => document.removeEventListener('visibilitychange', onVisibility)
   overflow: hidden;
   background: #0d0d10;
   z-index: 0;
+  contain: strict;
+  backface-visibility: hidden;
+  transform: translateZ(0);
 }
 
 .fluid-base {
@@ -45,9 +48,10 @@ onUnmounted(() => document.removeEventListener('visibilitychange', onVisibility)
 .orb {
   position: absolute;
   border-radius: 50%;
-  filter: blur(78px);
-  opacity: 0.85;
+  filter: blur(56px);
+  opacity: 0.82;
   will-change: transform;
+  backface-visibility: hidden;
   transition: background-color 900ms ease;
 }
 

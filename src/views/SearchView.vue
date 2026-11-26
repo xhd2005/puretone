@@ -9,12 +9,14 @@ import { kugouApi } from '@/services/kugou/kugouEngine';
 import { getPlaylistCacheKey } from '@/services/playback/playlistCoverResolver';
 import { echoSystem } from '@/native/echoSystem';
 import { usePlayerStore } from '@/stores/player';
+import { useCollapsingTitle } from '@/composables/useCollapsingTitle';
 import AvatarButton from '@/components/AvatarButton.vue';
 import SongRow from '@/components/SongRow.vue';
 import PlaylistCover from '@/components/PlaylistCover.vue';
 
 const router = useRouter();
 const player = usePlayerStore();
+const { largeTitleOpacity, compactTitleOpacity, headerGlassActive, onScroll } = useCollapsingTitle();
 
 const HISTORY_KEY = 'search.history.v1';
 
@@ -88,35 +90,52 @@ function clearHistory() {
 </script>
 
 <template>
-  <div class="h-full flex flex-col">
-    <!-- Top Header + Sticky iOS Search Bar -->
-    <div class="pt-[calc(var(--safe-top)+12px)] px-5 pb-3 bg-[var(--bg-canvas)] shrink-0">
-      <div class="flex items-center justify-between mb-3">
-        <h1 class="text-[34px] font-bold tracking-[-0.025em] leading-none text-[var(--text-primary)]">搜索</h1>
+  <div class="h-full flex flex-col relative">
+    <!-- Zero-Overlap Collapsing Sticky Header -->
+    <header class="sticky-bar" :class="{ 'sticky-glass': headerGlassActive }">
+      <div class="flex items-center justify-between h-11 px-5">
+        <span
+          class="text-[17px] font-bold tracking-tight text-[var(--text-primary)] pointer-events-none"
+          :style="{ opacity: compactTitleOpacity }"
+        >
+          搜索
+        </span>
         <AvatarButton />
       </div>
+    </header>
 
-      <form class="search-box" @submit.prevent="runSearch()">
-        <Icon :icon="iconSearch" class="w-4.5 h-4.5 text-[var(--text-secondary)] shrink-0" />
-        <input
-          v-model="query"
-          type="search"
-          enterkeyhint="search"
-          placeholder="艺人、歌曲、歌词与歌单"
-          class="flex-1 bg-transparent border-0 outline-none text-[16px] text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]"
-        />
-        <button
-          v-if="query"
-          type="button"
-          class="w-5 h-5 rounded-full bg-[var(--text-tertiary)] text-[var(--bg-canvas)] border-0 flex items-center justify-center shrink-0"
-          @click="clearSearch"
+    <div class="flex-1 am-scroll pb-48" @scroll.passive="onScroll">
+      <div class="px-5 pt-[calc(var(--safe-top)+48px)] pb-3">
+        <h1
+          class="text-[34px] font-bold tracking-[-0.025em] leading-none text-[var(--text-primary)]"
+          :style="{ opacity: largeTitleOpacity }"
         >
-          <Icon :icon="iconX" class="w-3 h-3" />
-        </button>
-      </form>
-    </div>
+          搜索
+        </h1>
+      </div>
 
-    <div class="flex-1 am-scroll pb-48">
+      <!-- Sticky Search Input Bar cleanly sitting under header -->
+      <div class="px-5 pb-3 sticky top-[calc(var(--safe-top)+44px)] z-15 bg-[var(--bg-canvas)]/95 backdrop-blur-md">
+        <form class="search-box" @submit.prevent="runSearch()">
+          <Icon :icon="iconSearch" class="w-4.5 h-4.5 text-[var(--text-secondary)] shrink-0" />
+          <input
+            v-model="query"
+            type="search"
+            enterkeyhint="search"
+            placeholder="艺人、歌曲、歌词与歌单"
+            class="flex-1 bg-transparent border-0 outline-none text-[16px] text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]"
+          />
+          <button
+            v-if="query"
+            type="button"
+            class="w-5 h-5 rounded-full bg-[var(--text-tertiary)] text-[var(--bg-canvas)] border-0 flex items-center justify-center shrink-0"
+            @click="clearSearch"
+          >
+            <Icon :icon="iconX" class="w-3 h-3" />
+          </button>
+        </form>
+      </div>
+
       <!-- Live Suggestions -->
       <div v-if="suggestions.length && !submittedQuery" class="px-5 divide-y divide-[var(--hairline)]">
         <button
@@ -160,7 +179,7 @@ function clearHistory() {
           <div v-if="!songs.length" class="py-12 text-center text-[14px] text-[var(--text-secondary)]">未找到相关歌曲</div>
           <SongRow
             v-for="(song, idx) in songs"
-            :key="`${song.id}-${idx}`"
+            :key="song.hash || `${song.id}-${idx}`"
             :song="song"
             @play="player.playQueue(songs, idx)"
           />
@@ -232,6 +251,16 @@ function clearHistory() {
 </template>
 
 <style scoped>
+.sticky-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  padding-top: var(--safe-top);
+  transition: background-color 200ms ease;
+}
+
 .search-box {
   height: 40px;
   border-radius: 14px;

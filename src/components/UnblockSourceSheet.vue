@@ -10,6 +10,7 @@ import type { PinnedSource, UnblockCandidate } from '@/types/music';
 import { useUiStore } from '@/stores/ui';
 import { usePlayerStore } from '@/stores/player';
 import { useSettingsStore } from '@/stores/settings';
+import { useDraggableSheet } from '@/composables/useDraggableSheet';
 import { echoSystem } from '@/native/echoSystem';
 import {
   getPinnedSource,
@@ -20,6 +21,12 @@ import {
 const ui = useUiStore();
 const player = usePlayerStore();
 const settings = useSettingsStore();
+
+const dragSheet = useDraggableSheet({
+  onDismiss: () => {
+    ui.unblockModalSong = null;
+  },
+});
 
 const scanning = ref(false);
 const applyingId = ref('');
@@ -86,9 +93,18 @@ function platformBadge(cand: UnblockCandidate): string {
     >
       <div
         class="lg-sheet-panel rounded-t-[28px] max-h-[82vh] flex flex-col pb-[calc(var(--safe-bottom)+14px)]"
+        :style="dragSheet.sheetStyle.value"
         @click.stop
       >
-        <div class="w-10 h-1 rounded-full bg-[var(--text-tertiary)]/55 mx-auto mt-3 mb-2" />
+        <div
+          class="touch-none pt-3 pb-2"
+          @touchstart="dragSheet.onHandleTouchStart"
+          @touchmove="dragSheet.onHandleTouchMove"
+          @touchend="dragSheet.onHandleTouchEnd"
+          @touchcancel="dragSheet.onHandleTouchEnd"
+        >
+          <div class="w-11 h-1.5 rounded-full bg-[var(--text-tertiary)]/55 mx-auto" />
+        </div>
 
         <div class="flex items-center justify-between px-5 pb-3 am-hairline-b">
           <div class="min-w-0 pr-3">

@@ -11,6 +11,7 @@ import iconMoon from '@iconify/icons-tabler/moon';
 import type { SleepTimerMode } from '@/types/music';
 import { usePlayerStore } from '@/stores/player';
 import { useUiStore } from '@/stores/ui';
+import { useDraggableSheet } from '@/composables/useDraggableSheet';
 import { echoSystem } from '@/native/echoSystem';
 
 const player = usePlayerStore();
@@ -18,6 +19,12 @@ const ui = useUiStore();
 
 const song = computed(() => ui.actionSheetSong);
 const isFav = computed(() => Boolean(song.value?.hash && player.favoriteHashes.has(song.value.hash.toLowerCase())));
+
+const dragSheet = useDraggableSheet({
+  onDismiss: () => {
+    ui.actionSheetSong = null;
+  },
+});
 
 const sleepOptions: Array<{ id: SleepTimerMode; label: string }> = [
   { id: 'off', label: '关闭' },
@@ -71,10 +78,19 @@ async function copyTitle() {
   <Transition name="lg-modal">
     <div v-if="song" class="fixed inset-0 z-[80] flex flex-col justify-end lg-scrim" @click="close">
       <div
-        class="lg-sheet-panel rounded-t-[28px] px-4 pt-3 pb-[calc(var(--safe-bottom)+18px)]"
+        class="lg-sheet-panel rounded-t-[28px] px-4 pt-2 pb-[calc(var(--safe-bottom)+18px)]"
+        :style="dragSheet.sheetStyle.value"
         @click.stop
       >
-        <div class="w-10 h-1 rounded-full bg-[var(--text-tertiary)]/55 mx-auto mb-3.5" />
+        <div
+          class="pt-1 pb-3 touch-none"
+          @touchstart="dragSheet.onHandleTouchStart"
+          @touchmove="dragSheet.onHandleTouchMove"
+          @touchend="dragSheet.onHandleTouchEnd"
+          @touchcancel="dragSheet.onHandleTouchEnd"
+        >
+          <div class="w-11 h-1.5 rounded-full bg-[var(--text-tertiary)]/55 mx-auto" />
+        </div>
 
         <!-- Song Header -->
         <div class="flex items-center gap-3 px-2 pb-3.5 am-hairline-b">

@@ -1,5 +1,6 @@
-import type { Song } from '@/types/music';
+import type { PlaylistSortMode, Song } from '@/types/music';
 import { echoSystem } from '@/native/echoSystem';
+import { stripAudioExtension } from '@/services/kugou/kugouEngine';
 
 export interface PlaylistSnapshot {
   key: string;
@@ -18,6 +19,7 @@ function compactSong(s: Song): Song {
     ...(s.hashFlac ? { hashFlac: s.hashFlac } : {}),
     ...(s.mixSongId ? { mixSongId: s.mixSongId } : {}),
     ...(s.fileId ? { fileId: s.fileId } : {}),
+    ...(s.addedAt ? { addedAt: s.addedAt } : {}),
     ...(s.albumId ? { albumId: s.albumId } : {}),
     title: s.title,
     artist: s.artist,
@@ -46,11 +48,60 @@ export function dedupeSongsByKey(songs: Song[]): Song[] {
   return out;
 }
 
+/**
+ * Sorts playlist tracks cleanly.
+ * KuGou's v3 cloud playlist endpoint returns "我喜欢" oldest-first; `'newest'` places
+ * the most recently liked songs at index 0 using `addedAt`, then `fileId`, then reverse index.
+ */
+export function sortPlaylistSongs(songs: Song[], mode: PlaylistSortMode): Song[] {
+  if (songs.length <= 1 || mode === 'default') return [...songs];
+
+  if (mode === 'title') {
+    return [...songs].sort((a, b) => a.title.localeCompare(b.title, 'zh-Hans-CN'));
+  }
+  if (mode === 'artist') {
+    return [...songs].sort(
+      (a, b) => a.artist.localeCompare(b.artist, 'zh-Hans-CN') || a.title.localeCompare(b.title, 'zh-Hans-CN'),
+    );
+  }
+
+  const withAddedAt = songs.filter((s) => (s.addedAt ?? 0) > 0).length;
+  const withFileId = songs.filter((s) => (s.fileId ?? 0) > 0).length;
+  const indexed = songs.map((song, idx) => ({ song, idx }));
+
+  if (withAddedAt >= Math.max(2, Math.floor(songs.length * 0.5))) {
+    indexed.sort((a, b) => {
+      const diff = (a.song.addedAt ?? 0) - (b.song.addedAt ?? 0);
+      if (diff !== 0) return mode === 'newest' ? -diff : diff;
+      return mode === 'newest' ? b.idx - a.idx : a.idx - b.idx;
+    });
+    return indexed.map((x) => x.song);
+  }
+
+  if (withFileId >= Math.max(2, Math.floor(songs.length * 0.5))) {
+    indexed.sort((a, b) => {
+      const diff = (a.song.fileId ?? 0) - (b.song.fileId ?? 0);
+      if (diff !== 0) return mode === 'newest' ? -diff : diff;
+      return mode === 'newest' ? b.idx - a.idx : a.idx - b.idx;
+    });
+    return indexed.map((x) => x.song);
+  }
+
+  return mode === 'newest' ? [...songs].reverse() : [...songs];
+}
+
 export async function readPlaylistSnapshot(key: string): Promise<PlaylistSnapshot | null> {
   if (!key) return null;
   const snap = await echoSystem.kvGetJson<PlaylistSnapshot | null>(SNAPSHOT_PREFIX + key, null);
   if (!snap || !Array.isArray(snap.songs)) return null;
-  return snap;
+  return {
+    ...snap,
+    songs: snap.songs.map((s) => ({
+      ...s,
+      title: stripAudioExtension(s.title) || s.title,
+      artist: stripAudioExtension(s.artist) || s.artist,
+    })),
+  };
 }
 
 export async function writePlaylistSnapshot(key: string, songs: Song[], totalCount?: number): Promise<void> {
