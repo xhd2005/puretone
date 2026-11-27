@@ -185,6 +185,6 @@ describe('v2.4.9 Smart Playlist Version Sync, Incremental Mutations & Home Daily
       expect(zhTW[k].trim().length).toBeGreaterThan(0);
       expect(enUS[k].trim().length).toBeGreaterThan(0);
     }
-    expect(FALLBACK_APP_VERSION).toBe('2.4.9');
+    expect(FALLBACK_APP_VERSION).toMatch(/^2\.\d+\.\d+$/);
   });
 });

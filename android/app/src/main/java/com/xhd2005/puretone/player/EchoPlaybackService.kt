@@ -33,6 +33,10 @@ import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.database.StandaloneDatabaseProvider
+import androidx.media3.datasource.DataSource
+import androidx.media3.datasource.DataSpec
+import androidx.media3.datasource.HttpDataSource
+import androidx.media3.datasource.TransferListener
 import androidx.media3.datasource.cache.Cache
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.CacheEvictor
@@ -41,8 +45,14 @@ import androidx.media3.datasource.cache.ContentMetadata
 import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import java.util.TreeSet
+import java.util.concurrent.ConcurrentHashMap
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
+import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
+import androidx.media3.extractor.DefaultExtractorsFactory
+import okhttp3.ConnectionPool
 import androidx.media3.session.CommandButton
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaNotification
@@ -94,6 +104,13 @@ interface PlayerBridgeListener {
     fun onError(code: String, message: String, trackSeq: Int)
     fun onMediaCommand(command: String, positionMs: Long?)
     fun onNativeTrackAdvanced(queueIndex: Int, trackSeq: Int)
+    fun onPlaybackRecoveryNeeded(
+        reason: String,
+        positionMs: Long,
+        errorCode: String,
+        message: String,
+        trackSeq: Int,
+    )
 }
 
 @OptIn(UnstableApi::class)
@@ -344,19 +361,70 @@ private class DynamicLruCacheEvictor(initialMaxBytes: Long) : CacheEvictor {
 }
 
 @OptIn(UnstableApi::class)
+private class PerItemHeaderDataSource(
+    private val delegate: DataSource,
+    private val headerLookup: (cacheKey: String?, uri: String?) -> Map<String, String>,
+) : DataSource {
+    override fun addTransferListener(transferListener: TransferListener) {
+        delegate.addTransferListener(transferListener)
+    }
+
+    override fun open(dataSpec: DataSpec): Long {
+        val merged = EchoPlaybackService.resolveRequestHeaders(
+            existingHeaders = dataSpec.httpRequestHeaders,
+            itemHeaders = headerLookup(dataSpec.key, dataSpec.uri.toString()),
+        )
+        val updated = dataSpec.buildUpon()
+            .setHttpRequestHeaders(merged)
+            .build()
+        return delegate.open(updated)
+    }
+
+    override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+        return delegate.read(buffer, offset, length)
+    }
+
+    override fun getUri(): Uri? = delegate.uri
+
+    override fun getResponseHeaders(): Map<String, List<String>> = delegate.responseHeaders
+
+    override fun close() = delegate.close()
+}
+
+@OptIn(UnstableApi::class)
+private class ResilientAudioLoadErrorPolicy : DefaultLoadErrorHandlingPolicy(5) {
+    override fun getRetryDelayMsFor(loadErrorInfo: LoadErrorHandlingPolicy.LoadErrorInfo): Long {
+        val ex = loadErrorInfo.exception
+        if (ex is HttpDataSource.InvalidResponseCodeException) {
+            // Do not waste seconds retrying expired/forbidden CDN URLs (403/404/410) —
+            // fail fast so onPlayerError triggers immediate fresh-URL recovery at exact timestamp.
+            if (ex.responseCode in setOf(401, 403, 404, 410, 416, 451)) {
+                return C.TIME_UNSET
+            }
+        }
+        if (loadErrorInfo.errorCount > 5) return C.TIME_UNSET
+        return (loadErrorInfo.errorCount * 600L).coerceAtMost(3000L)
+    }
+}
+
+@OptIn(UnstableApi::class)
 class EchoPlaybackService : MediaSessionService() {
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val okHttpClient: OkHttpClient = OkHttpClient.Builder()
+        .connectionPool(ConnectionPool(4, 30, TimeUnit.SECONDS))
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(true)
         .followRedirects(true)
         .followSslRedirects(true)
         .build()
 
-    private lateinit var upstreamFactory: OkHttpDataSource.Factory
+    // Thread-safe per-track HTTP header registry (keyed by "ck:<cacheKey>" and "uri:<url>") so
+    // pre-buffering Track B (e.g. Bilibili Referer) NEVER collides with playing Track A (e.g. KuGou).
+    private val itemHeadersByKey = ConcurrentHashMap<String, Map<String, String>>()
     private lateinit var exoPlayer: ExoPlayer
     private var mediaSession: MediaSession? = null
     private val audioEffects = PureToneAudioEffects()
@@ -384,7 +452,15 @@ class EchoPlaybackService : MediaSessionService() {
     private var autoFadeActiveForSeq: Int = -1
     private var fadeRunnable: Runnable? = null
     private var retryRunnable: Runnable? = null
+    private var recoveryFallbackRunnable: Runnable? = null
     private var retriedCurrentError: Boolean = false
+    private var isolatedUpcomingForSeq: Int = -1
+    private var recoveredPrematureEofForSeq: Int = -1
+    private var checkedShortTrialForSeq: Int = -1
+    private var isCurrentLoadRecovery: Boolean = false
+    private var lastPlayingPositionMs: Long = 0L
+    private var lastKnownStreamDurationMs: Long = 0L
+    private var originalCatalogDurationMs: Long = 0L
     private var isExplicitLoading: Boolean = false
 
     // Mirrors ExoPlayer's native playlist items (index 0..N-1) so screen-off transitions
@@ -412,8 +488,12 @@ class EchoPlaybackService : MediaSessionService() {
         override fun run() {
             if (::exoPlayer.isInitialized && exoPlayer.isPlaying) {
                 val pos = exoPlayer.currentPosition.coerceAtLeast(0L)
-                val dur = exoPlayer.duration.takeIf { it != C.TIME_UNSET && it > 0L }
-                    ?: (currentMetadata?.durationMs ?: 0L)
+                val exoDur = exoPlayer.duration.takeIf { it != C.TIME_UNSET && it > 0L } ?: 0L
+                val dur = exoDur.takeIf { it > 0L } ?: (currentMetadata?.durationMs ?: 0L)
+                lastPlayingPositionMs = pos
+                if (exoDur > 0L) {
+                    lastKnownStreamDurationMs = exoDur
+                }
                 // Smooth single-engine track transition fade-out near track tail when next track is queued
                 val fadeWin = transitionFadeMs
                 if (fadeWin > 0L &&
@@ -487,21 +567,40 @@ class EchoPlaybackService : MediaSessionService() {
             ),
         )
 
-        upstreamFactory = OkHttpDataSource.Factory(okHttpClient)
-            .setUserAgent("MELUNE-Android/2.4 (Linux; Android 16)")
+        val rawUpstreamFactory = OkHttpDataSource.Factory(okHttpClient)
+        val perItemUpstreamFactory = DataSource.Factory {
+            PerItemHeaderDataSource(rawUpstreamFactory.createDataSource(), ::lookupItemHeaders)
+        }
 
         val cacheDataSourceFactory = CacheDataSource.Factory()
             .setCache(getOrCreateAudioCache(applicationContext))
-            .setUpstreamDataSourceFactory(upstreamFactory)
+            .setUpstreamDataSourceFactory(perItemUpstreamFactory)
             .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+
+        val extractorsFactory = DefaultExtractorsFactory()
+            .setConstantBitrateSeekingEnabled(true)
+
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                20_000, // minBufferMs: rock-solid mobile buffering
+                30_000, // maxBufferMs: keeps next-track pre-buffering fresher than 50s default
+                1_500,  // bufferForPlaybackMs
+                3_000,  // bufferForPlaybackAfterRebufferMs
+            )
+            .setBackBuffer(5_000, true)
+            .build()
 
         val audioAttributes = AudioAttributes.Builder()
             .setUsage(C.USAGE_MEDIA)
             .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
             .build()
 
+        val mediaSourceFactory = DefaultMediaSourceFactory(cacheDataSourceFactory, extractorsFactory)
+            .setLoadErrorHandlingPolicy(ResilientAudioLoadErrorPolicy())
+
         exoPlayer = ExoPlayer.Builder(this)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(cacheDataSourceFactory))
+            .setMediaSourceFactory(mediaSourceFactory)
+            .setLoadControl(loadControl)
             .setAudioAttributes(audioAttributes, true)
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_NETWORK)
@@ -521,50 +620,59 @@ class EchoPlaybackService : MediaSessionService() {
                     ?: queuedTracks.getOrNull(idx)
                     ?: return
 
-                // Native seamless transition (e.g. screen-off pocket playback or Bluetooth next-track!)
-                retriedCurrentError = false
-                cancelRetry()
-                autoFadeActiveForSeq = -1
-                currentTrackSeq += 1
-                val newSeq = currentTrackSeq
-                currentMetadata = matched.metadata
-                currentArtworkBytes = null
-                currentArtworkBitmap = null
-                currentLiveLyric = ""
-                lastLiveLyricUpdatedAt = 0L
-                currentAccentColor = DEFAULT_NOTIFICATION_ACCENT
-                upstreamFactory.setDefaultRequestProperties(matched.headers)
-
-                // Trim already-played entries before current item so playlist stays lean
-                if (idx > 0 && idx < queuedTracks.size) {
-                    val keepFrom = idx
-                    val trimmed = queuedTracks.subList(keepFrom, queuedTracks.size).toList()
-                    queuedTracks.clear()
-                    queuedTracks.addAll(trimmed)
-                    if (exoPlayer.currentMediaItemIndex > 0) {
-                        try {
-                            exoPlayer.removeMediaItems(0, exoPlayer.currentMediaItemIndex)
-                        } catch (_: Exception) {
-                        }
-                    }
-                }
-
-                // Gentle fade-in for the newly entered track when smooth transition is active
-                if (transitionFadeMs > 0L && exoPlayer.playWhenReady) {
-                    val fadeInDur = min(transitionFadeMs, 1600L).coerceAtLeast(240L)
-                    animateVolume((targetVolume * 0.10f).coerceIn(0f, targetVolume), targetVolume, fadeInDur)
-                } else {
+                // Guard against truncated stream / truncated cache / sneaky 60s trial hitting EOF early
+                if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO &&
+                    shouldTriggerPrematureEndRecovery(
+                        lastPositionMs = lastPlayingPositionMs,
+                        knownStreamDurationMs = lastKnownStreamDurationMs,
+                        catalogDurationMs = originalCatalogDurationMs,
+                        alreadyRecovered = recoveredPrematureEofForSeq == currentTrackSeq,
+                    )
+                ) {
+                    val prevEntry = queuedTracks.firstOrNull()
+                    val resumePos = lastPlayingPositionMs.coerceAtLeast(0L)
+                    val expectedSeq = currentTrackSeq
+                    recoveredPrematureEofForSeq = expectedSeq
+                    removeAudioCacheKey(applicationContext, prevEntry?.cacheKey)
                     cancelFade()
-                    exoPlayer.volume = targetVolume
+                    cancelRetry()
+                    cancelRecoveryFallback()
+                    exoPlayer.pause()
+                    acquireBriefTransitionWakeLock()
+                    bridgeListener?.onPlaybackRecoveryNeeded(
+                        reason = "premature_eof",
+                        positionMs = resumePos,
+                        errorCode = "PREMATURE_EOF",
+                        message = "音频流提前中断，正在原地续播",
+                        trackSeq = expectedSeq,
+                    )
+                    // Deep-sleep safety net: NEVER auto-skip mid-song! Try 1 native reload on Track A (index 0)
+                    // after purging bad cache; if still unrecoverable, pause cleanly on current track.
+                    val fallback = Runnable {
+                        if (expectedSeq != currentTrackSeq || !::exoPlayer.isInitialized) return@Runnable
+                        if (!retriedCurrentError && exoPlayer.mediaItemCount > 0) {
+                            retriedCurrentError = true
+                            isExplicitLoading = true
+                            try {
+                                exoPlayer.seekTo(0, resumePos)
+                                exoPlayer.prepare()
+                                exoPlayer.play()
+                            } catch (_: Exception) {
+                            } finally {
+                                isExplicitLoading = false
+                            }
+                            return@Runnable
+                        }
+                        exoPlayer.pause()
+                        bridgeListener?.onError("PREMATURE_EOF", "音频流提前中断，已暂停在当前进度", expectedSeq)
+                        syncWidgetState()
+                    }
+                    recoveryFallbackRunnable = fallback
+                    mainHandler.postDelayed(fallback, RECOVERY_FALLBACK_TIMEOUT_MS)
+                    return
                 }
 
-                acquireBriefTransitionWakeLock()
-                forceRefreshNotification()
-                syncWidgetState()
-                if (!matched.metadata.coverUrl.isNullOrBlank()) {
-                    fetchAndApplyArtwork(matched.metadata.coverUrl, newSeq, matched.metadata)
-                }
-                bridgeListener?.onNativeTrackAdvanced(matched.queueIndex, newSeq)
+                commitNativeTransition(matched, idx)
             }
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -577,6 +685,37 @@ class EchoPlaybackService : MediaSessionService() {
                 val buffering = playbackState == Player.STATE_BUFFERING
                 val ended = playbackState == Player.STATE_ENDED
                 if (ended) {
+                    if (shouldTriggerPrematureEndRecovery(
+                            lastPositionMs = lastPlayingPositionMs,
+                            knownStreamDurationMs = lastKnownStreamDurationMs,
+                            catalogDurationMs = originalCatalogDurationMs,
+                            alreadyRecovered = recoveredPrematureEofForSeq == currentTrackSeq,
+                        )
+                    ) {
+                        val curIdx = exoPlayer.currentMediaItemIndex.coerceAtLeast(0)
+                        val activeEntry = queuedTracks.getOrNull(curIdx) ?: queuedTracks.firstOrNull()
+                        val resumePos = lastPlayingPositionMs.coerceAtLeast(0L)
+                        val expectedSeq = currentTrackSeq
+                        recoveredPrematureEofForSeq = expectedSeq
+                        removeAudioCacheKey(applicationContext, activeEntry?.cacheKey)
+                        cancelRecoveryFallback()
+                        acquireBriefTransitionWakeLock()
+                        bridgeListener?.onPlaybackRecoveryNeeded(
+                            reason = "premature_eof",
+                            positionMs = resumePos,
+                            errorCode = "PREMATURE_EOF",
+                            message = "音频流提前中断，正在原地续播",
+                            trackSeq = expectedSeq,
+                        )
+                        val fallback = Runnable {
+                            if (expectedSeq != currentTrackSeq || !::exoPlayer.isInitialized) return@Runnable
+                            bridgeListener?.onError("PREMATURE_EOF", "音频流提前中断，已暂停在当前进度", expectedSeq)
+                            syncWidgetState()
+                        }
+                        recoveryFallbackRunnable = fallback
+                        mainHandler.postDelayed(fallback, RECOVERY_FALLBACK_TIMEOUT_MS)
+                        return
+                    }
                     acquireBriefTransitionWakeLock()
                     bridgeListener?.onStateChange(false, false, true, currentTrackSeq)
                     syncWidgetState()
@@ -585,6 +724,37 @@ class EchoPlaybackService : MediaSessionService() {
                     if (playbackState == Player.STATE_READY) {
                         retriedCurrentError = false
                         val dur = exoPlayer.duration.takeIf { it != C.TIME_UNSET && it > 0L } ?: 0L
+                        val pos = exoPlayer.currentPosition.coerceAtLeast(0L)
+                        lastPlayingPositionMs = pos
+                        if (dur > 0L) {
+                            lastKnownStreamDurationMs = dur
+                        }
+
+                        // Detect 30s/60s VIP trial snippets IMMEDIATELY at header load (before chorus cut-off!)
+                        val expectedSeq = currentTrackSeq
+                        if (isUnexpectedShortStream(
+                                actualStreamDurationMs = dur,
+                                catalogDurationMs = originalCatalogDurationMs,
+                                alreadyCheckedOrRecovery = isCurrentLoadRecovery || checkedShortTrialForSeq == expectedSeq,
+                            )
+                        ) {
+                            checkedShortTrialForSeq = expectedSeq
+                            val curIdx = exoPlayer.currentMediaItemIndex.coerceAtLeast(0)
+                            val activeEntry = queuedTracks.getOrNull(curIdx) ?: queuedTracks.firstOrNull()
+                            removeAudioCacheKey(applicationContext, activeEntry?.cacheKey)
+                            cancelFade()
+                            cancelRecoveryFallback()
+                            exoPlayer.pause()
+                            bridgeListener?.onPlaybackRecoveryNeeded(
+                                reason = "short_trial_stream",
+                                positionMs = pos,
+                                errorCode = "TRIAL_SNIPPET",
+                                message = "检测到试听片段，自动切换完整音源",
+                                trackSeq = expectedSeq,
+                            )
+                            return
+                        }
+
                         // Ensure lock-screen seekbar duration stays exact once ExoPlayer resolves stream duration
                         val meta = currentMetadata
                         if (dur > 0L && meta != null && abs(dur - meta.durationMs) > 2000L) {
@@ -592,7 +762,7 @@ class EchoPlaybackService : MediaSessionService() {
                             applyMetadataToActiveItem(currentMetadata!!, currentArtworkBytes)
                         }
                         bridgeListener?.onTimeUpdate(
-                            exoPlayer.currentPosition.coerceAtLeast(0L),
+                            pos,
                             dur,
                             exoPlayer.isPlaying,
                             currentTrackSeq,
@@ -603,36 +773,92 @@ class EchoPlaybackService : MediaSessionService() {
             }
 
             override fun onPlayerError(error: PlaybackException) {
-                // While cycling through brief mobile signal dropouts, attempt one gentle auto-recovery
-                // or advance natively to the next preloaded track instead of stopping dead.
-                val isNetworkErr = error.errorCode in 2000..2999
-                if (isNetworkErr && !retriedCurrentError) {
-                    retriedCurrentError = true
+                val curIdx = exoPlayer.currentMediaItemIndex.coerceAtLeast(0)
+                val activeEntry = queuedTracks.getOrNull(curIdx) ?: queuedTracks.firstOrNull()
+                val savedPosMs = exoPlayer.currentPosition.takeIf { it > 0L } ?: lastPlayingPositionMs.coerceAtLeast(0L)
+                val hasUpcoming = exoPlayer.mediaItemCount > curIdx + 1
+                val failingSpec = extractFailingDataSpec(error)
+                val expectedSeq = currentTrackSeq
+
+                // STAGE 1: Isolate pre-buffering errors from upcoming tracks so a bad Track B
+                // NEVER aborts or skips Track A at ~4/5 progress!
+                if (isUpcomingPreloadError(
+                        failingUri = failingSpec?.uri?.toString(),
+                        failingKey = failingSpec?.key,
+                        activeUri = activeEntry?.url,
+                        activeKey = activeEntry?.cacheKey,
+                        hasUpcomingItems = hasUpcoming,
+                        alreadyIsolated = isolatedUpcomingForSeq == expectedSeq,
+                        savedPositionMs = savedPosMs,
+                        knownStreamDurationMs = lastKnownStreamDurationMs,
+                    )
+                ) {
+                    isolatedUpcomingForSeq = expectedSeq
                     cancelRetry()
-                    val task = Runnable {
-                        if (!::exoPlayer.isInitialized) return@Runnable
+                    cancelRecoveryFallback()
+                    isExplicitLoading = true
+                    try {
+                        if (exoPlayer.mediaItemCount > curIdx + 1) {
+                            exoPlayer.removeMediaItems(curIdx + 1, exoPlayer.mediaItemCount)
+                        }
+                        while (queuedTracks.size > curIdx + 1) {
+                            queuedTracks.removeAt(queuedTracks.lastIndex)
+                        }
+                        rebuildItemHeaderRegistry()
+                        exoPlayer.seekTo(curIdx, savedPosMs)
+                        exoPlayer.prepare()
+                        exoPlayer.play()
+                    } catch (_: Exception) {
+                    } finally {
+                        isExplicitLoading = false
+                    }
+                    bridgeListener?.onPlaybackRecoveryNeeded(
+                        reason = "upcoming_dropped",
+                        positionMs = savedPosMs,
+                        errorCode = error.errorCodeName,
+                        message = error.message ?: "下一首预加载异常，已隔离保护当前曲目",
+                        trackSeq = expectedSeq,
+                    )
+                    return
+                }
+
+                // STAGE 2: Current track itself hit a stream/CDN/cache failure.
+                // Evict only this track's cache entry and request JS to re-resolve a fresh URL
+                // and resume seamlessly at savedPosMs — NEVER auto-skipping mid-song!
+                removeAudioCacheKey(applicationContext, activeEntry?.cacheKey)
+                cancelRetry()
+                cancelRecoveryFallback()
+                acquireBriefTransitionWakeLock()
+                val errMsg = error.message ?: "音频流加载中断"
+                bridgeListener?.onPlaybackRecoveryNeeded(
+                    reason = "stream_error",
+                    positionMs = savedPosMs,
+                    errorCode = error.errorCodeName,
+                    message = errMsg,
+                    trackSeq = expectedSeq,
+                )
+
+                // Screen-off Doze fallback: try 1 native reload at savedPosMs; NEVER seekToNextMediaItem()!
+                val fallback = Runnable {
+                    if (expectedSeq != currentTrackSeq || !::exoPlayer.isInitialized) return@Runnable
+                    if (!retriedCurrentError) {
+                        retriedCurrentError = true
+                        isExplicitLoading = true
                         try {
+                            exoPlayer.seekTo(curIdx, savedPosMs)
                             exoPlayer.prepare()
                             exoPlayer.play()
                         } catch (_: Exception) {
+                        } finally {
+                            isExplicitLoading = false
                         }
+                        return@Runnable
                     }
-                    retryRunnable = task
-                    mainHandler.postDelayed(task, 1500L)
-                    return
+                    bridgeListener?.onError(error.errorCodeName, errMsg, expectedSeq)
+                    syncWidgetState()
                 }
-                if (exoPlayer.hasNextMediaItem() && exoPlayer.repeatMode != Player.REPEAT_MODE_ONE) {
-                    exoPlayer.seekToNextMediaItem()
-                    exoPlayer.prepare()
-                    exoPlayer.play()
-                    return
-                }
-                bridgeListener?.onError(
-                    error.errorCodeName,
-                    error.message ?: "音频解码或网络加载失败",
-                    currentTrackSeq,
-                )
-                syncWidgetState()
+                recoveryFallbackRunnable = fallback
+                mainHandler.postDelayed(fallback, RECOVERY_FALLBACK_TIMEOUT_MS)
             }
         })
 
@@ -729,6 +955,7 @@ class EchoPlaybackService : MediaSessionService() {
     override fun onDestroy() {
         cancelFade()
         cancelRetry()
+        cancelRecoveryFallback()
         releaseTransitionWakeLock()
         mainHandler.removeCallbacks(timeTicker)
         audioEffects.release()
@@ -743,6 +970,7 @@ class EchoPlaybackService : MediaSessionService() {
         if (::exoPlayer.isInitialized) {
             exoPlayer.release()
         }
+        itemHeadersByKey.clear()
         super.onDestroy()
     }
 
@@ -837,6 +1065,104 @@ class EchoPlaybackService : MediaSessionService() {
         retryRunnable = null
     }
 
+    private fun cancelRecoveryFallback() {
+        recoveryFallbackRunnable?.let { mainHandler.removeCallbacks(it) }
+        recoveryFallbackRunnable = null
+    }
+
+    private fun registerItemHeaders(entry: QueuedTrackEntry) {
+        val snapshot = HashMap<String, String>(entry.headers)
+        if (!entry.cacheKey.isNullOrBlank()) {
+            itemHeadersByKey["ck:${entry.cacheKey}"] = snapshot
+        }
+        if (entry.url.isNotBlank()) {
+            itemHeadersByKey["uri:${entry.url}"] = snapshot
+        }
+    }
+
+    private fun rebuildItemHeaderRegistry() {
+        itemHeadersByKey.clear()
+        for (entry in queuedTracks) {
+            registerItemHeaders(entry)
+        }
+    }
+
+    private fun lookupItemHeaders(cacheKey: String?, uri: String?): Map<String, String> {
+        if (!cacheKey.isNullOrBlank()) {
+            itemHeadersByKey["ck:$cacheKey"]?.let { return it }
+        }
+        if (!uri.isNullOrBlank()) {
+            itemHeadersByKey["uri:$uri"]?.let { return it }
+        }
+        return emptyMap()
+    }
+
+    private fun extractFailingDataSpec(error: PlaybackException): DataSpec? {
+        var cur: Throwable? = error.cause
+        var guard = 0
+        while (cur != null && guard < 10) {
+            if (cur is HttpDataSource.HttpDataSourceException) {
+                return cur.dataSpec
+            }
+            cur = cur.cause
+            guard += 1
+        }
+        return null
+    }
+
+    private fun commitNativeTransition(matched: QueuedTrackEntry, idx: Int) {
+        retriedCurrentError = false
+        cancelRetry()
+        cancelRecoveryFallback()
+        autoFadeActiveForSeq = -1
+        isolatedUpcomingForSeq = -1
+        recoveredPrematureEofForSeq = -1
+        checkedShortTrialForSeq = -1
+        isCurrentLoadRecovery = false
+        lastPlayingPositionMs = 0L
+        lastKnownStreamDurationMs = 0L
+        originalCatalogDurationMs = matched.metadata.durationMs.coerceAtLeast(0L)
+        currentTrackSeq += 1
+        val newSeq = currentTrackSeq
+        currentMetadata = matched.metadata
+        currentArtworkBytes = null
+        currentArtworkBitmap = null
+        currentLiveLyric = ""
+        lastLiveLyricUpdatedAt = 0L
+        currentAccentColor = DEFAULT_NOTIFICATION_ACCENT
+
+        // Trim already-played entries before current item so playlist stays lean
+        if (idx > 0 && idx < queuedTracks.size) {
+            val trimmed = queuedTracks.subList(idx, queuedTracks.size).toList()
+            queuedTracks.clear()
+            queuedTracks.addAll(trimmed)
+            if (exoPlayer.currentMediaItemIndex > 0) {
+                try {
+                    exoPlayer.removeMediaItems(0, exoPlayer.currentMediaItemIndex)
+                } catch (_: Exception) {
+                }
+            }
+        }
+        rebuildItemHeaderRegistry()
+
+        // Gentle fade-in for the newly entered track when smooth transition is active
+        if (transitionFadeMs > 0L && exoPlayer.playWhenReady) {
+            val fadeInDur = min(transitionFadeMs, 1600L).coerceAtLeast(240L)
+            animateVolume((targetVolume * 0.10f).coerceIn(0f, targetVolume), targetVolume, fadeInDur)
+        } else {
+            cancelFade()
+            exoPlayer.volume = targetVolume
+        }
+
+        acquireBriefTransitionWakeLock()
+        forceRefreshNotification()
+        syncWidgetState()
+        if (!matched.metadata.coverUrl.isNullOrBlank()) {
+            fetchAndApplyArtwork(matched.metadata.coverUrl, newSeq, matched.metadata)
+        }
+        bridgeListener?.onNativeTrackAdvanced(matched.queueIndex, newSeq)
+    }
+
     private fun animateVolume(from: Float, to: Float, durationMs: Long, onDone: (() -> Unit)? = null) {
         cancelFade()
         if (!::exoPlayer.isInitialized) {
@@ -874,11 +1200,22 @@ class EchoPlaybackService : MediaSessionService() {
         trackSeq: Int,
         cacheKey: String? = null,
         queueIndex: Int = -1,
+        startPositionMs: Long = 0L,
+        isRecovery: Boolean = false,
     ) {
         mainHandler.post {
             cancelFade()
             cancelRetry()
+            cancelRecoveryFallback()
             retriedCurrentError = false
+            isolatedUpcomingForSeq = -1
+            recoveredPrematureEofForSeq = -1
+            checkedShortTrialForSeq = -1
+            isCurrentLoadRecovery = isRecovery
+            val safeStartMs = startPositionMs.coerceAtLeast(0L)
+            lastPlayingPositionMs = safeStartMs
+            lastKnownStreamDurationMs = 0L
+            originalCatalogDurationMs = metadata.durationMs.coerceAtLeast(0L)
             isExplicitLoading = true
             try {
                 currentTrackSeq = trackSeq
@@ -888,7 +1225,6 @@ class EchoPlaybackService : MediaSessionService() {
                 currentLiveLyric = ""
                 lastLiveLyricUpdatedAt = 0L
                 currentAccentColor = DEFAULT_NOTIFICATION_ACCENT
-                upstreamFactory.setDefaultRequestProperties(headers)
 
                 val mediaId = makeUniqueMediaId(trackSeq, queueIndex, metadata)
                 val entry = QueuedTrackEntry(
@@ -901,15 +1237,26 @@ class EchoPlaybackService : MediaSessionService() {
                 )
                 queuedTracks.clear()
                 queuedTracks.add(entry)
+                rebuildItemHeaderRegistry()
 
                 val item = buildMediaItem(mediaId, url, metadata, null, cacheKey)
                 autoFadeActiveForSeq = -1
                 exoPlayer.volume = if (autoPlay) 0f else targetVolume
-                exoPlayer.setMediaItem(item)
+                if (safeStartMs > 0L) {
+                    exoPlayer.setMediaItem(item, safeStartMs)
+                } else {
+                    exoPlayer.setMediaItem(item)
+                }
                 exoPlayer.prepare()
                 exoPlayer.playWhenReady = autoPlay
                 if (autoPlay) {
-                    val fadeInDur = if (transitionFadeMs > 0L) min(transitionFadeMs, 1200L).coerceAtLeast(220L) else 180L
+                    val fadeInDur = if (safeStartMs > 0L) {
+                        220L
+                    } else if (transitionFadeMs > 0L) {
+                        min(transitionFadeMs, 1200L).coerceAtLeast(220L)
+                    } else {
+                        180L
+                    }
                     animateVolume(0f, targetVolume, fadeInDur)
                 }
             } finally {
@@ -937,11 +1284,15 @@ class EchoPlaybackService : MediaSessionService() {
                 queuedTracks.removeAt(queuedTracks.lastIndex)
             }
 
-            if (entries.isEmpty()) return@post
+            if (entries.isEmpty()) {
+                rebuildItemHeaderRegistry()
+                return@post
+            }
             val mediaItems = entries.map { e ->
                 queuedTracks.add(e)
                 buildMediaItem(e.mediaId, e.url, e.metadata, null, e.cacheKey)
             }
+            rebuildItemHeaderRegistry()
             exoPlayer.addMediaItems(mediaItems)
         }
     }
@@ -1009,7 +1360,13 @@ class EchoPlaybackService : MediaSessionService() {
     fun stopPlayback() = mainHandler.post {
         cancelFade()
         cancelRetry()
+        cancelRecoveryFallback()
+        isCurrentLoadRecovery = false
+        lastPlayingPositionMs = 0L
+        lastKnownStreamDurationMs = 0L
+        originalCatalogDurationMs = 0L
         queuedTracks.clear()
+        itemHeadersByKey.clear()
         exoPlayer.stop()
         exoPlayer.clearMediaItems()
         exoPlayer.volume = targetVolume
@@ -1018,6 +1375,7 @@ class EchoPlaybackService : MediaSessionService() {
 
     fun seekTo(positionMs: Long) = mainHandler.post {
         val safePos = positionMs.coerceAtLeast(0L)
+        lastPlayingPositionMs = safePos
         exoPlayer.seekTo(safePos)
         val dur = exoPlayer.duration.takeIf { it != C.TIME_UNSET && it > 0L }
             ?: (currentMetadata?.durationMs ?: 0L)
@@ -1279,6 +1637,8 @@ class EchoPlaybackService : MediaSessionService() {
 
     companion object {
         const val MEDIA_CHANNEL_ID = "puretone_media_playback_v2"
+        const val DEFAULT_USER_AGENT = "MELUNE-Android/2.4 (Linux; Android 16)"
+        const val RECOVERY_FALLBACK_TIMEOUT_MS = 4_500L
         const val DEFAULT_AUDIO_CACHE_MAX_MB = 2048
         const val MAX_AUDIO_CACHE_BYTES = DEFAULT_AUDIO_CACHE_MAX_MB.toLong() * 1024L * 1024L
         private const val CACHE_PREFS_NAME = "melune_cache_prefs"
@@ -1286,6 +1646,113 @@ class EchoPlaybackService : MediaSessionService() {
         const val ACTION_TOGGLE_FAVORITE = "com.xhd2005.puretone.ACTION_TOGGLE_FAVORITE"
         const val ACTION_CYCLE_PLAY_MODE = "com.xhd2005.puretone.ACTION_CYCLE_PLAY_MODE"
         private const val DEFAULT_NOTIFICATION_ACCENT = 0xFF1A2D70.toInt()
+
+        fun resolveRequestHeaders(
+            existingHeaders: Map<String, String>,
+            itemHeaders: Map<String, String>,
+            defaultUserAgent: String = DEFAULT_USER_AGENT,
+        ): Map<String, String> {
+            val merged = LinkedHashMap<String, String>(existingHeaders)
+            for ((k, v) in itemHeaders) {
+                if (k.isNotBlank() && v.isNotBlank()) {
+                    merged[k] = v
+                }
+            }
+            val hasUa = merged.keys.any { it.equals("User-Agent", ignoreCase = true) }
+            if (!hasUa && defaultUserAgent.isNotBlank()) {
+                merged["User-Agent"] = defaultUserAgent
+            }
+            return merged
+        }
+
+        /**
+         * Determines whether a PlaybackException originated from pre-buffering an upcoming queued
+         * track (which typically triggers ~30-50s before track end, right around 4/5 progress)
+         * rather than the actively playing track itself.
+         */
+        fun isUpcomingPreloadError(
+            failingUri: String?,
+            failingKey: String?,
+            activeUri: String?,
+            activeKey: String?,
+            hasUpcomingItems: Boolean,
+            alreadyIsolated: Boolean,
+            savedPositionMs: Long,
+            knownStreamDurationMs: Long,
+        ): Boolean {
+            if (!hasUpcomingItems) return false
+            val cleanFailKey = failingKey?.trim().orEmpty()
+            val cleanActiveKey = activeKey?.trim().orEmpty()
+            if (cleanFailKey.isNotEmpty() && cleanActiveKey.isNotEmpty() && cleanFailKey != cleanActiveKey) {
+                return true
+            }
+            val cleanFailUri = failingUri?.trim().orEmpty()
+            val cleanActiveUri = activeUri?.trim().orEmpty()
+            if (cleanFailUri.isNotEmpty() && cleanActiveUri.isNotEmpty() && cleanFailUri != cleanActiveUri) {
+                return true
+            }
+            // If we have an explicit DataSpec match proving it IS the active track, do NOT misclassify as upcoming
+            if ((cleanFailKey.isNotEmpty() && cleanFailKey == cleanActiveKey) ||
+                (cleanFailUri.isNotEmpty() && cleanFailUri == cleanActiveUri)
+            ) {
+                return false
+            }
+            // No HTTP DataSpec (e.g. ParserException while pre-preparing upcoming MediaItem):
+            // isolate upcoming items once if active track was already playing well before its tail.
+            if (!alreadyIsolated && savedPositionMs >= 3_000L) {
+                if (knownStreamDurationMs <= 0L || savedPositionMs < knownStreamDurationMs - 5_000L) {
+                    return true
+                }
+            }
+            return false
+        }
+
+        /**
+         * Detects 30s/60s VIP trial snippets immediately at STATE_READY when actual stream container
+         * duration is drastically shorter than catalog song duration (stopping chorus cut-offs!).
+         */
+        fun isUnexpectedShortStream(
+            actualStreamDurationMs: Long,
+            catalogDurationMs: Long,
+            alreadyCheckedOrRecovery: Boolean,
+        ): Boolean {
+            if (alreadyCheckedOrRecovery) return false
+            if (catalogDurationMs < 90_000L) return false
+            if (actualStreamDurationMs <= 0L) return false
+            val diffMs = catalogDurationMs - actualStreamDurationMs
+            val ratio = actualStreamDurationMs.toDouble() / catalogDurationMs.toDouble()
+            return actualStreamDurationMs <= 75_000L && diffMs >= 30_000L && ratio < 0.70
+        }
+
+        /**
+         * Detects silently truncated audio streams, corrupt cache spans, or sneaky trial clips
+         * that hit EOF suspiciously early (e.g. at chorus ~60s or ~4/5 progress) without error.
+         */
+        fun shouldTriggerPrematureEndRecovery(
+            lastPositionMs: Long,
+            knownStreamDurationMs: Long,
+            catalogDurationMs: Long = 0L,
+            alreadyRecovered: Boolean,
+        ): Boolean {
+            if (alreadyRecovered) return false
+            if (lastPositionMs < 10_000L) return false
+            // Case 1: Stream container itself says it's much longer than where EOF occurred (e.g. 4/5 cut-off)
+            if (knownStreamDurationMs >= 60_000L) {
+                val remainingMs = knownStreamDurationMs - lastPositionMs
+                val ratio = lastPositionMs.toDouble() / knownStreamDurationMs.toDouble()
+                if (remainingMs >= 12_000L && ratio < 0.92) {
+                    return true
+                }
+            }
+            // Case 2: Stream ended around ~30-75s (chorus) while catalog song is clearly a full song (>= 100s)
+            if (catalogDurationMs >= 100_000L &&
+                lastPositionMs <= 75_000L &&
+                catalogDurationMs - lastPositionMs >= 35_000L
+            ) {
+                return true
+            }
+            return false
+        }
 
         val CMD_TOGGLE_FAVORITE by lazy { SessionCommand(ACTION_TOGGLE_FAVORITE, Bundle.EMPTY) }
         val CMD_CYCLE_PLAY_MODE by lazy { SessionCommand(ACTION_CYCLE_PLAY_MODE, Bundle.EMPTY) }
@@ -1464,12 +1931,19 @@ class EchoPlaybackService : MediaSessionService() {
             return try {
                 val cache = getOrCreateAudioCache(appContext)
                 val contentLen = ContentMetadata.getContentLength(cache.getContentMetadata(cleanKey))
-                if (contentLen > 0L) {
-                    cache.isCached(cleanKey, 0L, contentLen)
-                } else {
-                    val spans = cache.getCachedSpans(cleanKey)
-                    spans.sumOf { it.length } >= 256L * 1024L
-                }
+                contentLen > 0L && cache.isCached(cleanKey, 0L, contentLen)
+            } catch (_: Exception) {
+                false
+            }
+        }
+
+        fun removeAudioCacheKey(appContext: Context, cacheKey: String?): Boolean {
+            val cleanKey = cacheKey?.trim().orEmpty()
+            if (cleanKey.isEmpty()) return false
+            return try {
+                val cache = sharedAudioCache ?: getOrCreateAudioCache(appContext)
+                cache.removeResource(cleanKey)
+                true
             } catch (_: Exception) {
                 false
             }

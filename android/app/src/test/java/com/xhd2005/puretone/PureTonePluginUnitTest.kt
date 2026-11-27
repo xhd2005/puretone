@@ -101,4 +101,107 @@ class PureTonePluginUnitTest {
         assertEquals(18, shortened.length)
         assertTrue(shortened.endsWith("…"))
     }
+
+    @Test
+    fun perItemHeaderResolution_isolatesRefererAndPreservesCustomUserAgent() {
+        val biliHeaders = EchoPlaybackService.resolveRequestHeaders(
+            existingHeaders = emptyMap(),
+            itemHeaders = mapOf(
+                "Referer" to "https://www.bilibili.com/",
+                "User-Agent" to "CustomMobileUA/1.0",
+            ),
+        )
+        assertEquals("https://www.bilibili.com/", biliHeaders["Referer"])
+        assertEquals("CustomMobileUA/1.0", biliHeaders["User-Agent"])
+
+        // KuGou official track gets default UA and zero leaked Bilibili Referer
+        val kugouHeaders = EchoPlaybackService.resolveRequestHeaders(
+            existingHeaders = emptyMap(),
+            itemHeaders = emptyMap(),
+        )
+        assertFalse(kugouHeaders.containsKey("Referer"))
+        assertEquals(EchoPlaybackService.DEFAULT_USER_AGENT, kugouHeaders["User-Agent"])
+    }
+
+    @Test
+    fun isUpcomingPreloadError_accuratelyIsolatesTrackBFailuresAtFourFifths() {
+        // Explicit DataSpec mismatch (Track B failed at 4/5 of Track A) -> MUST isolate!
+        assertTrue(
+            EchoPlaybackService.isUpcomingPreloadError(
+                failingUri = "https://cdn.bilibili.com/trackB.m4s",
+                failingKey = "v2:hash:b:320:bilibili",
+                activeUri = "https://trackercdn.kugou.com/trackA.flac",
+                activeKey = "v2:hash:a:flac:official",
+                hasUpcomingItems = true,
+                alreadyIsolated = false,
+                savedPositionMs = 192_000L,
+                knownStreamDurationMs = 240_000L,
+            ),
+        )
+
+        // Explicit DataSpec match proves Track A itself failed -> do NOT misclassify as upcoming
+        assertFalse(
+            EchoPlaybackService.isUpcomingPreloadError(
+                failingUri = "https://trackercdn.kugou.com/trackA.flac",
+                failingKey = "v2:hash:a:flac:official",
+                activeUri = "https://trackercdn.kugou.com/trackA.flac",
+                activeKey = "v2:hash:a:flac:official",
+                hasUpcomingItems = true,
+                alreadyIsolated = false,
+                savedPositionMs = 192_000L,
+                knownStreamDurationMs = 240_000L,
+            ),
+        )
+
+        // Non-HTTP ParserException while upcoming items exist & not yet isolated -> isolate once
+        assertTrue(
+            EchoPlaybackService.isUpcomingPreloadError(
+                failingUri = null,
+                failingKey = null,
+                activeUri = "https://trackercdn.kugou.com/trackA.flac",
+                activeKey = "v2:hash:a:flac:official",
+                hasUpcomingItems = true,
+                alreadyIsolated = false,
+                savedPositionMs = 185_000L,
+                knownStreamDurationMs = 240_000L,
+            ),
+        )
+
+        // Already isolated once -> treat subsequent error as Track A error
+        assertFalse(
+            EchoPlaybackService.isUpcomingPreloadError(
+                failingUri = null,
+                failingKey = null,
+                activeUri = "https://trackercdn.kugou.com/trackA.flac",
+                activeKey = "v2:hash:a:flac:official",
+                hasUpcomingItems = true,
+                alreadyIsolated = true,
+                savedPositionMs = 185_000L,
+                knownStreamDurationMs = 240_000L,
+            ),
+        )
+    }
+
+    @Test
+    fun shortTrialAndPrematureEofGuards_catchChorusAndFourFifthsCutoffsWithoutFalsePositives() {
+        // 60s VIP trial snippet on a 4-minute song -> detected immediately at STATE_READY!
+        assertTrue(EchoPlaybackService.isUnexpectedShortStream(60_000L, 240_000L, false))
+        // 30s preview on a 3-minute song -> detected
+        assertTrue(EchoPlaybackService.isUnexpectedShortStream(30_000L, 180_000L, false))
+        // Legitimate 3:35 radio edit vs 4:00 album version -> NOT misclassified as trial
+        assertFalse(EchoPlaybackService.isUnexpectedShortStream(215_000L, 240_000L, false))
+        // Short 45s interlude track -> NOT misclassified
+        assertFalse(EchoPlaybackService.isUnexpectedShortStream(45_000L, 50_000L, false))
+        // Already a recovery reload -> never loops
+        assertFalse(EchoPlaybackService.isUnexpectedShortStream(60_000L, 240_000L, true))
+
+        // 4/5 truncated EOF (192s / 240s) -> triggers recovery!
+        assertTrue(EchoPlaybackService.shouldTriggerPrematureEndRecovery(192_000L, 240_000L, 240_000L, false))
+        // Chorus 60s sneaky trial EOF -> triggers recovery!
+        assertTrue(EchoPlaybackService.shouldTriggerPrematureEndRecovery(60_000L, 60_000L, 240_000L, false))
+        // Normal end-of-song (238s / 240s) -> does NOT trigger recovery
+        assertFalse(EchoPlaybackService.shouldTriggerPrematureEndRecovery(238_000L, 240_000L, 240_000L, false))
+        // Already recovered once -> does NOT loop
+        assertFalse(EchoPlaybackService.shouldTriggerPrematureEndRecovery(192_000L, 240_000L, 240_000L, true))
+    }
 }

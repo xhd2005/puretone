@@ -120,10 +120,16 @@ class EchoPlayerPlugin : Plugin(), PlayerBridgeListener {
         val trackSeq = call.getInt("trackSeq") ?: 0
         val cacheKey = call.getString("cacheKey")?.takeIf { it.isNotBlank() }
         val queueIndex = call.getInt("queueIndex") ?: -1
+        val startPositionMs = (
+            call.getInt("startPositionMs")?.toLong()
+                ?: call.getDouble("startPositionMs")?.toLong()
+                ?: 0L
+            ).coerceAtLeast(0L)
+        val isRecovery = call.getBoolean("isRecovery", false) ?: false
 
         startForegroundPlaybackServiceSafe()
         ensureServiceBound { svc ->
-            svc.loadTrack(url, headers, metadata, autoPlay, trackSeq, cacheKey, queueIndex)
+            svc.loadTrack(url, headers, metadata, autoPlay, trackSeq, cacheKey, queueIndex, startPositionMs, isRecovery)
             call.resolve()
         }
     }
@@ -353,6 +359,16 @@ class EchoPlayerPlugin : Plugin(), PlayerBridgeListener {
     }
 
     @PluginMethod
+    fun removeCachedTrack(call: PluginCall) {
+        val cacheKey = call.getString("cacheKey")?.trim() ?: ""
+        val appCtx = context.applicationContext
+        Thread {
+            val removed = EchoPlaybackService.removeAudioCacheKey(appCtx, cacheKey)
+            call.resolve(JSObject().put("removed", removed))
+        }.start()
+    }
+
+    @PluginMethod
     fun clearAudioCache(call: PluginCall) {
         val ok = EchoPlaybackService.clearAudioCache(context.applicationContext)
         call.resolve(JSObject().put("cleared", ok))
@@ -427,6 +443,24 @@ class EchoPlayerPlugin : Plugin(), PlayerBridgeListener {
             "trackAutoAdvanced",
             JSObject()
                 .put("queueIndex", queueIndex)
+                .put("trackSeq", trackSeq),
+        )
+    }
+
+    override fun onPlaybackRecoveryNeeded(
+        reason: String,
+        positionMs: Long,
+        errorCode: String,
+        message: String,
+        trackSeq: Int,
+    ) {
+        notifyListeners(
+            "playbackRecovery",
+            JSObject()
+                .put("reason", reason)
+                .put("positionMs", positionMs)
+                .put("errorCode", errorCode)
+                .put("message", message)
                 .put("trackSeq", trackSeq),
         )
     }

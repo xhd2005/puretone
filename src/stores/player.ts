@@ -4,10 +4,11 @@ import type { CoverPalette, ParsedLyrics, PlayMode, SleepTimerMode, Song, Unbloc
 import { echoPlayer, type UpcomingNativeTrack } from '@/native/echoPlayer';
 import { echoSystem } from '@/native/echoSystem';
 import { cleanSongTitleAndArtist, kugouApi } from '@/services/kugou/kugouEngine';
-import { clearCachedResolvedStream, resolvePlayableStream } from '@/services/playback/urlResolver';
+import { clearCachedResolvedStream, buildAudioCacheKey, resolvePlayableStream } from '@/services/playback/urlResolver';
+import { decidePlaybackRecovery, MAX_STREAM_RECOVERY_ATTEMPTS } from '@/services/playback/playbackRecovery';
 import { fetchLyricsForSong } from '@/services/playback/krcParser';
 import { DEFAULT_APPLE_PALETTE, extractPaletteFromCoverUrl } from '@/services/playback/coverPalette';
-import { getTrackKey, pinSourceForSong, resolveCandidateUrl } from '@/services/playback/unblockEngine';
+import { pinSourceForSong, resolveCandidateUrl } from '@/services/playback/unblockEngine';
 import {
   prependSongsToPlaylistSnapshot,
   removeSongsFromPlaylistSnapshot,
@@ -69,6 +70,11 @@ export const usePlayerStore = defineStore('player', () => {
   let shuffleNextIndexCache = -1;
   let lastLiveLyricSent = '';
   let lastStatSampleAt = 0;
+  let activeTrackCacheKey = '';
+  let activeTrackIsUnblocked = false;
+  let recoveryAttemptsForCurrentTrack = 0;
+  let recoveryInFlight = false;
+  let needsRecoveryResumeOnPlay = false;
 
   const settingsStore = useSettingsStore();
   const statsStore = useStatsStore();
@@ -308,7 +314,7 @@ export const usePlayerStore = defineStore('player', () => {
         }
       }
 
-      const upcomingIndices = pickUpcomingIndices(3);
+      const upcomingIndices = pickUpcomingIndices(2);
       if (!upcomingIndices.length) {
         await echoPlayer.clearNext();
         return;
@@ -324,6 +330,8 @@ export const usePlayerStore = defineStore('player', () => {
             enableUnblock: settingsStore.enableUnblock,
           });
           if (expectedSeq !== trackSeq) return;
+          const nextCacheKey =
+            resolved.cacheKey ?? buildAudioCacheKey(nextSong, resolved.quality, resolved.sourceTag, resolved.isUnblocked);
           resolvedTracks.push({
             mediaId: `pt_${expectedSeq}_${qIdx}_${nextSong.id}`,
             queueIndex: qIdx,
@@ -336,7 +344,7 @@ export const usePlayerStore = defineStore('player', () => {
               coverUrl: nextSong.coverUrl,
               durationMs: (nextSong.duration || 0) * 1000,
             },
-            cacheKey: getTrackKey(nextSong),
+            cacheKey: nextCacheKey,
           });
           // Push incrementally as soon as the immediate next track is ready!
           if (resolvedTracks.length === 1) {
@@ -396,7 +404,92 @@ export const usePlayerStore = defineStore('player', () => {
       if (currentSong.value) {
         clearCachedResolvedStream(currentSong.value);
       }
-      ui.showToast(`播放异常：${ev.message}，可尝试换源`);
+      if (activeTrackCacheKey) {
+        void echoPlayer.removeCachedTrack(activeTrackCacheKey);
+      }
+      const decision = decidePlaybackRecovery({
+        reason: 'stream_error',
+        positionMs: currentTimeMs.value,
+        attemptsSoFar: MAX_STREAM_RECOVERY_ATTEMPTS,
+        enableUnblock: settingsStore.enableUnblock,
+        alreadyUnblocked: activeTrackIsUnblocked,
+        songTitle: currentSong.value?.title || '当前歌曲',
+        errorMessage: ev.message,
+      });
+      if (decision.action === 'stop_with_notice') {
+        needsRecoveryResumeOnPlay = true;
+        ui.showToast(decision.toastMessage);
+      }
+    });
+
+    await echoPlayer.onPlaybackRecovery(async (ev) => {
+      if (ev.trackSeq !== trackSeq) return;
+      const song = currentSong.value;
+      if (!song) return;
+
+      if (ev.reason === 'upcoming_dropped') {
+        // Upcoming lookahead item failed pre-buffering; native already protected & resumed Track A.
+        // Quietly clear stale prefetched URLs and refresh valid upcoming tracks in the background.
+        for (const qIdx of pickUpcomingIndices(2)) {
+          const upSong = queue.value[qIdx];
+          if (upSong) clearCachedResolvedStream(upSong);
+        }
+        scheduleNextTrackPrefetch(trackSeq, 900);
+        return;
+      }
+
+      if (recoveryInFlight) return;
+      recoveryInFlight = true;
+      const ui = useUiStore();
+      const targetPosMs = ev.positionMs || currentTimeMs.value;
+      try {
+        while (currentSong.value?.id === song.id) {
+          const decision = decidePlaybackRecovery({
+            reason: ev.reason,
+            positionMs: targetPosMs,
+            attemptsSoFar: recoveryAttemptsForCurrentTrack,
+            enableUnblock: settingsStore.enableUnblock,
+            alreadyUnblocked: activeTrackIsUnblocked,
+            songTitle: song.title,
+            errorMessage: ev.message,
+          });
+
+          if (
+            decision.action === 'reload_same_source' ||
+            decision.action === 'reload_force_unblock' ||
+            decision.action === 'reload_stable_quality'
+          ) {
+            recoveryAttemptsForCurrentTrack = decision.attempt;
+            clearCachedResolvedStream(song);
+            if (activeTrackCacheKey) {
+              await echoPlayer.removeCachedTrack(activeTrackCacheKey).catch(() => {});
+            }
+            const ok = await loadAndPlayCurrent(true, undefined, {
+              startPositionMs: decision.positionMs,
+              bypassCache: true,
+              forceUnblock: decision.action === 'reload_force_unblock',
+              overrideQuality: decision.action === 'reload_stable_quality' ? '128' : undefined,
+              isRecovery: true,
+            });
+            if (ok) return;
+            // Fresh URL resolution failed immediately — loop to next recovery tier (never auto-skip!)
+            if (decision.action === 'reload_force_unblock') {
+              activeTrackIsUnblocked = true;
+            }
+            continue;
+          }
+
+          if (decision.action === 'stop_with_notice') {
+            isPlaying.value = false;
+            isBuffering.value = false;
+            needsRecoveryResumeOnPlay = true;
+            ui.showToast(decision.toastMessage);
+          }
+          return;
+        }
+      } finally {
+        recoveryInFlight = false;
+      }
     });
 
     await echoPlayer.onMediaCommand((ev) => {
@@ -418,6 +511,11 @@ export const usePlayerStore = defineStore('player', () => {
       shuffleNextIndexCache = -1;
       lastLiveLyricSent = '';
       lastStatSampleAt = 0;
+      recoveryAttemptsForCurrentTrack = 0;
+      recoveryInFlight = false;
+      needsRecoveryResumeOnPlay = false;
+      activeTrackCacheKey = '';
+      activeTrackIsUnblocked = false;
       currentTimeMs.value = 0;
       isPlaying.value = true;
       isBuffering.value = false;
@@ -440,7 +538,7 @@ export const usePlayerStore = defineStore('player', () => {
         return;
       }
 
-      // Immediately top up the next 3 upcoming tracks in ExoPlayer
+      // Immediately top up the next 2 upcoming tracks in ExoPlayer
       scheduleNextTrackPrefetch(trackSeq, 600);
     });
   }
@@ -498,50 +596,84 @@ export const usePlayerStore = defineStore('player', () => {
   async function loadAndPlayCurrent(
     autoPlay = true,
     customStream?: { url: string; sourceTag: string; headers?: Record<string, string> },
-  ) {
+    resumeOptions?: {
+      startPositionMs?: number;
+      bypassCache?: boolean;
+      forceUnblock?: boolean;
+      overrideQuality?: '128' | '320' | 'flac';
+      isRecovery?: boolean;
+    },
+  ): Promise<boolean> {
     const song = currentSong.value;
-    if (!song) return;
+    if (!song) return false;
     if (prefetchTimer) clearTimeout(prefetchTimer);
     shuffleNextIndexCache = -1;
 
+    const isRecovery = Boolean(resumeOptions?.isRecovery);
+    const resumePosMs = Math.max(0, Math.round(resumeOptions?.startPositionMs || 0));
+
     const seq = ++trackSeq;
-    lastLiveLyricSent = '';
     lastStatSampleAt = 0;
+    needsRecoveryResumeOnPlay = false;
     isResolving.value = true;
     isBuffering.value = true;
-    currentTimeMs.value = 0;
-    lastSampleTimeMs.value = 0;
-    lastSampleAt.value = Date.now();
-    durationMs.value = (song.duration || 0) * 1000;
-    sourceTag.value = customStream?.sourceTag || '';
 
-    void ensureNotificationReadyForMedia();
-    void refreshCoverPalette(song.coverUrl);
-    void loadLyrics(song);
-    pushRecent(song);
-    statsStore.recordSongPlay(song);
-    void persistQueue();
-    void echoPlayer.setFavoriteState(isCurrentFavorite.value);
-    void echoPlayer.setPlayModeState(playMode.value);
-    void echoPlayer.setEqPreset(settingsStore.eqPreset);
+    if (!isRecovery) {
+      recoveryAttemptsForCurrentTrack = 0;
+      recoveryInFlight = false;
+      lastLiveLyricSent = '';
+      currentTimeMs.value = 0;
+      lastSampleTimeMs.value = 0;
+      lastSampleAt.value = Date.now();
+      durationMs.value = (song.duration || 0) * 1000;
+      sourceTag.value = customStream?.sourceTag || '';
+
+      void ensureNotificationReadyForMedia();
+      void refreshCoverPalette(song.coverUrl);
+      void loadLyrics(song);
+      pushRecent(song);
+      statsStore.recordSongPlay(song);
+      void persistQueue();
+      void echoPlayer.setFavoriteState(isCurrentFavorite.value);
+      void echoPlayer.setPlayModeState(playMode.value);
+      void echoPlayer.setEqPreset(settingsStore.eqPreset);
+    } else {
+      currentTimeMs.value = resumePosMs;
+      lastSampleTimeMs.value = resumePosMs;
+      lastSampleAt.value = Date.now();
+    }
 
     const ui = useUiStore();
     try {
       let playUrl = customStream?.url || '';
       let tag = customStream?.sourceTag || '';
       let headers = customStream?.headers;
+      let resolvedQuality = resumeOptions?.overrideQuality || settingsStore.quality;
+      let resolvedUnblocked = Boolean(customStream && /解灰|酷狗异版/i.test(customStream.sourceTag || ''));
+      let cacheKey: string | undefined;
 
       if (!playUrl) {
-        const resolved = await resolvePlayableStream(song, settingsStore.quality, {
+        const resolved = await resolvePlayableStream(song, resolvedQuality, {
           enableUnblock: settingsStore.enableUnblock,
+          bypassCache: resumeOptions?.bypassCache,
+          forceUnblock: resumeOptions?.forceUnblock,
         });
-        if (seq !== trackSeq) return;
+        if (seq !== trackSeq) return false;
         playUrl = resolved.url;
         tag = resolved.sourceTag;
         headers = resolved.headers;
+        resolvedQuality = resolved.quality;
+        resolvedUnblocked = resolved.isUnblocked;
+        cacheKey = resolved.cacheKey;
       }
 
+      if (!cacheKey) {
+        cacheKey = buildAudioCacheKey(song, resolvedQuality, tag, resolvedUnblocked);
+      }
+      activeTrackCacheKey = cacheKey || '';
+      activeTrackIsUnblocked = resolvedUnblocked;
       sourceTag.value = tag;
+
       await echoPlayer.setRepeatOne(playMode.value === 'repeat-one');
       await echoPlayer.load({
         url: playUrl,
@@ -555,8 +687,10 @@ export const usePlayerStore = defineStore('player', () => {
         },
         autoPlay,
         trackSeq: seq,
-        cacheKey: getTrackKey(song),
+        cacheKey,
         queueIndex: currentIndex.value,
+        startPositionMs: resumePosMs,
+        isRecovery,
       });
       if (seq === trackSeq) {
         if (playbackSpeed.value !== 1) {
@@ -565,12 +699,16 @@ export const usePlayerStore = defineStore('player', () => {
         isPlaying.value = autoPlay;
         scheduleNextTrackPrefetch(seq);
       }
+      return true;
     } catch (err: any) {
-      if (seq !== trackSeq) return;
-      isPlaying.value = false;
-      isBuffering.value = false;
-      ui.showToast(err?.message || '暂无可用音源，已为你打开换源面板');
-      ui.unblockModalSong = song;
+      if (seq !== trackSeq) return false;
+      if (!isRecovery) {
+        isPlaying.value = false;
+        isBuffering.value = false;
+        ui.showToast(err?.message || '暂无可用音源，已为你打开换源面板');
+        ui.unblockModalSong = song;
+      }
+      return false;
     } finally {
       if (seq === trackSeq) isResolving.value = false;
     }
@@ -628,6 +766,16 @@ export const usePlayerStore = defineStore('player', () => {
     if (target) {
       if (trackSeq === 0) {
         await loadAndPlayCurrent(true);
+        return;
+      }
+      if (needsRecoveryResumeOnPlay) {
+        needsRecoveryResumeOnPlay = false;
+        recoveryAttemptsForCurrentTrack = 0;
+        await loadAndPlayCurrent(true, undefined, {
+          startPositionMs: currentTimeMs.value,
+          bypassCache: true,
+          isRecovery: true,
+        });
         return;
       }
       await echoPlayer.play();

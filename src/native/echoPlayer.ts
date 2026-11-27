@@ -50,6 +50,16 @@ export interface TrackAutoAdvancedEvent {
   trackSeq: number;
 }
 
+export type PlaybackRecoveryReason = 'upcoming_dropped' | 'stream_error' | 'premature_eof' | 'short_trial_stream';
+
+export interface PlaybackRecoveryEvent {
+  reason: PlaybackRecoveryReason;
+  positionMs: number;
+  errorCode: string;
+  message: string;
+  trackSeq: number;
+}
+
 export interface UpcomingNativeTrack {
   mediaId?: string;
   queueIndex: number;
@@ -76,6 +86,8 @@ export interface EchoPlayerPluginInterface {
     trackSeq: number;
     cacheKey?: string;
     queueIndex?: number;
+    startPositionMs?: number;
+    isRecovery?: boolean;
   }): Promise<void>;
   syncUpcomingTracks(options: { tracks: UpcomingNativeTrack[] }): Promise<void>;
   prepareNext(options: {
@@ -104,6 +116,7 @@ export interface EchoPlayerPluginInterface {
   getAudioCacheStats(): Promise<AudioCacheStats>;
   setAudioCacheMaxMb(options: { maxMb: number }): Promise<AudioCacheStats>;
   isTrackCached(options: { cacheKey: string }): Promise<{ cached: boolean }>;
+  removeCachedTrack(options: { cacheKey: string }): Promise<{ removed: boolean }>;
   clearAudioCache(): Promise<{ cleared: boolean }>;
   getState(): Promise<PlayerStateSnapshot>;
   addListener(eventName: 'timeUpdate', listener: (ev: PlayerTimeEvent) => void): Promise<PluginListenerHandle>;
@@ -113,6 +126,10 @@ export interface EchoPlayerPluginInterface {
   addListener(
     eventName: 'trackAutoAdvanced',
     listener: (ev: TrackAutoAdvancedEvent) => void,
+  ): Promise<PluginListenerHandle>;
+  addListener(
+    eventName: 'playbackRecovery',
+    listener: (ev: PlaybackRecoveryEvent) => void,
   ): Promise<PluginListenerHandle>;
 }
 
@@ -183,11 +200,19 @@ class WebAudioFallback {
     metadata: PlayerTrackMetadata;
     autoPlay?: boolean;
     trackSeq: number;
+    startPositionMs?: number;
   }) {
     this.trackSeq = options.trackSeq;
     if (!this.audio) return;
     this.audio.src = options.url;
     this.audio.load();
+    if (options.startPositionMs && options.startPositionMs > 0) {
+      try {
+        this.audio.currentTime = options.startPositionMs / 1000;
+      } catch {
+        // fallback once metadata loads
+      }
+    }
     this.updateMediaSession(options.metadata);
     if (options.autoPlay !== false) {
       await this.audio.play().catch(() => {});
@@ -399,6 +424,11 @@ export const echoPlayer = {
     const res = await EchoPlayerNative.isTrackCached({ cacheKey }).catch(() => ({ cached: false }));
     return Boolean(res?.cached);
   },
+  async removeCachedTrack(cacheKey: string): Promise<boolean> {
+    if (!cacheKey || !Capacitor.isNativePlatform()) return false;
+    const res = await EchoPlayerNative.removeCachedTrack({ cacheKey }).catch(() => ({ removed: false }));
+    return Boolean(res?.removed);
+  },
   async clearAudioCache(): Promise<boolean> {
     if (Capacitor.isNativePlatform()) {
       const res = await EchoPlayerNative.clearAudioCache().catch(() => ({ cleared: false }));
@@ -441,6 +471,13 @@ export const echoPlayer = {
   async onTrackAutoAdvanced(cb: (ev: TrackAutoAdvancedEvent) => void): Promise<() => void> {
     if (Capacitor.isNativePlatform()) {
       const h = await EchoPlayerNative.addListener('trackAutoAdvanced', cb);
+      return () => void h.remove();
+    }
+    return () => {};
+  },
+  async onPlaybackRecovery(cb: (ev: PlaybackRecoveryEvent) => void): Promise<() => void> {
+    if (Capacitor.isNativePlatform()) {
+      const h = await EchoPlayerNative.addListener('playbackRecovery', cb);
       return () => void h.remove();
     }
     return () => {};

@@ -5,7 +5,7 @@ import { echoSystem } from '@/native/echoSystem';
 
 const UNWANTED_VARIANT_RE = /(伴奏|卡拉ok|karaoke|instrumental|off\s*vocal|纯音乐版|dj版|dj\s*remix|慢摇|喊麦|翻唱|cover)/i;
 const PINNED_STORAGE_KEY = 'unblock.pinned.v2';
-const PINNED_TTL_MS = 20 * 60 * 1000;
+const PINNED_TTL_MS = 8 * 60 * 1000;
 const MOBILE_UA =
   'Mozilla/5.0 (Linux; Android 15; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36';
 
@@ -374,8 +374,11 @@ async function resolveKuwoDirectUrl(
     const url = String(data?.data?.url || '').trim();
     const dur = Number(data?.data?.duration || 0);
     if (!/^https?:\/\//i.test(url)) continue;
-    // Skip short trial snippets (<35s when target song > 75s)
-    if (expectedDurationSec >= 75 && dur > 0 && dur < 35) continue;
+    // Skip 30s/60s VIP trial snippets so playback never cuts off at the chorus!
+    if (expectedDurationSec >= 75 && dur > 0) {
+      if (dur <= 68 && expectedDurationSec - dur >= 25) continue;
+      if (expectedDurationSec >= 90 && expectedDurationSec - dur >= 35 && dur < expectedDurationSec * 0.72) continue;
+    }
     return {
       url,
       quality: Number(data?.data?.bitrate) >= 256 || br.startsWith('320') ? '320' : '128',
@@ -584,7 +587,12 @@ export async function resolveCandidateUrl(
         try {
           const res = await kugouApi.getSongUrl(h, q);
           const urls = extractUrlsFromPayload(res?.body);
-          if (urls.length > 0 && !res?.body?.free_part && !res?.body?.is_try_listen) {
+          const rawLen = Number(res?.body?.timeLength ?? res?.body?.data?.timeLength ?? 0);
+          const actualSec = rawLen > 1000 ? rawLen / 1000 : rawLen;
+          const targetDur = expectedDurationSec || cand.duration || 0;
+          const looksShortTrial =
+            targetDur >= 90 && actualSec > 0 && actualSec <= 75 && targetDur - actualSec >= 30;
+          if (urls.length > 0 && !res?.body?.free_part && !res?.body?.is_try_listen && !looksShortTrial) {
             return { url: urls[0], quality: (q || cand.quality || '128') as AudioQuality };
           }
         } catch {

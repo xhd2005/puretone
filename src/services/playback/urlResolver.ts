@@ -9,6 +9,7 @@ export interface ResolvedStream {
   sourceTag: string;
   isUnblocked: boolean;
   headers?: Record<string, string>;
+  cacheKey?: string;
 }
 
 interface CachedStreamEntry {
@@ -17,8 +18,38 @@ interface CachedStreamEntry {
   cachedAt: number;
 }
 
-const PREFETCH_TTL_MS = 14 * 60 * 1000;
+export const PREFETCH_TTL_MS = 5 * 60 * 1000;
 const resolvedCache = new Map<string, CachedStreamEntry>();
+
+export function classifyAudioSourceBucket(sourceTag?: string, isUnblocked?: boolean): string {
+  const tag = String(sourceTag || '').trim();
+  if (tag === '试听片段' || /试听/i.test(tag)) return 'trial';
+  if (/本地缓存/i.test(tag)) return 'local';
+  if (/酷狗异版|kugou-alt/i.test(tag)) return 'kugou-alt';
+  if (/酷我|kuwo/i.test(tag)) return 'kuwo';
+  if (/joox/i.test(tag)) return 'joox';
+  if (/b站|bilibili/i.test(tag)) return 'bilibili';
+  if (isUnblocked || /解灰/i.test(tag)) return 'unblock';
+  return 'official';
+}
+
+/**
+ * Generates a quality- and source-isolated SimpleCache key so switching quality (128/320/FLAC)
+ * or unblocked sources NEVER collides with previously cached byte spans or lengths.
+ * Trial snippets intentionally return `undefined` so they are never persisted into audio cache.
+ */
+export function buildAudioCacheKey(
+  song: Pick<Song, 'hash' | 'id' | 'title' | 'artist'>,
+  quality: AudioQuality,
+  sourceTag?: string,
+  isUnblocked?: boolean,
+): string | undefined {
+  const bucket = classifyAudioSourceBucket(sourceTag, isUnblocked);
+  if (bucket === 'trial' || bucket === 'local') return undefined;
+  const baseKey = getTrackKey(song);
+  if (!baseKey) return undefined;
+  return `v2:${baseKey}:${quality}:${bucket}`;
+}
 
 export function getCachedResolvedStream(song: Song, quality: AudioQuality): ResolvedStream | null {
   const key = getTrackKey(song);
@@ -61,66 +92,133 @@ function pickQualityHashFromPrivilege(privBody: any, quality: AudioQuality, fall
   return String(matched?.hash || fallbackHash);
 }
 
-function isTrialSnippet(body: any, expectedDurationSec: number): boolean {
-  const timeLen = Number(body?.timeLength ?? body?.data?.timeLength ?? 0);
-  const actualSec = timeLen > 1000 ? timeLen / 1000 : timeLen;
-  if (expectedDurationSec >= 90 && actualSec > 0 && actualSec <= 65 && expectedDurationSec - actualSec >= 30) {
+export function isTrialSnippet(body: any, expectedDurationSec: number, quality: AudioQuality = '128'): boolean {
+  if (
+    body?.is_try_listen === 1 ||
+    body?.free_part === 1 ||
+    body?.data?.is_try_listen === 1 ||
+    body?.data?.free_part === 1 ||
+    body?.data?.is_free_part === 1 ||
+    body?.trans_param?.is_free_part === 1
+  ) {
     return true;
   }
-  return Boolean(body?.is_try_listen === 1 || body?.free_part === 1);
+
+  const firstItem = Array.isArray(body?.data) ? body.data[0] : null;
+  const rawTimeLen = Number(
+    body?.timeLength ??
+      body?.timelength ??
+      body?.data?.timeLength ??
+      body?.data?.timelength ??
+      firstItem?.info?.duration ??
+      firstItem?.timelength ??
+      firstItem?.timeLength ??
+      0,
+  );
+  const actualSec = rawTimeLen > 1000 ? rawTimeLen / 1000 : rawTimeLen;
+  if (expectedDurationSec >= 90 && actualSec > 0 && actualSec <= 75 && expectedDurationSec - actualSec >= 30) {
+    return true;
+  }
+
+  // Secondary check via byte size + bitrate when upstream spoofs/omits timeLength on 60s previews
+  const fileSize = Number(
+    body?.fileSize ??
+      body?.filesize ??
+      body?.data?.fileSize ??
+      body?.data?.filesize ??
+      firstItem?.info?.filesize ??
+      0,
+  );
+  const rawBitrate = Number(body?.bitRate ?? body?.bitrate ?? firstItem?.info?.bitrate ?? 0);
+  const bitrateKbps =
+    rawBitrate >= 64 && rawBitrate <= 3200
+      ? rawBitrate
+      : quality === 'flac'
+        ? 850
+        : quality === '320'
+          ? 320
+          : 128;
+  if (expectedDurationSec >= 90 && fileSize > 0 && bitrateKbps > 0) {
+    const estSec = (fileSize * 8) / (bitrateKbps * 1000);
+    if (estSec <= 72 && estSec < expectedDurationSec * 0.62) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 async function tryResolveLocalCachedStream(
   song: Song,
   preferredQuality: AudioQuality,
 ): Promise<ResolvedStream | null> {
-  const cacheKey = getTrackKey(song);
-  if (!cacheKey) return null;
-  const cached = await echoPlayer.isTrackCached(cacheKey).catch(() => false);
-  if (!cached) return null;
-  return {
-    url: `https://melune.local.cache/${encodeURIComponent(cacheKey)}`,
-    quality: preferredQuality,
-    sourceTag: '本地缓存',
-    isUnblocked: false,
-  };
+  const baseKey = getTrackKey(song);
+  if (!baseKey) return null;
+
+  const qualityOrder: AudioQuality[] = Array.from(
+    new Set<AudioQuality>([preferredQuality, 'flac', '320', '128']),
+  );
+  const bucketOrder = ['official', 'kugou-alt', 'kuwo', 'joox', 'bilibili', 'unblock'];
+
+  for (const q of qualityOrder) {
+    for (const bucket of bucketOrder) {
+      const candidateKey = `v2:${baseKey}:${q}:${bucket}`;
+      const cached = await echoPlayer.isTrackCached(candidateKey).catch(() => false);
+      if (cached) {
+        return {
+          url: `https://melune.local.cache/${encodeURIComponent(candidateKey)}`,
+          quality: q,
+          sourceTag: '本地缓存',
+          isUnblocked: bucket !== 'official',
+          cacheKey: candidateKey,
+        };
+      }
+    }
+  }
+  return null;
 }
 
 export async function resolvePlayableStream(
   song: Song,
   preferredQuality: AudioQuality = '320',
-  options: { enableUnblock?: boolean; bypassCache?: boolean } = {},
+  options: { enableUnblock?: boolean; bypassCache?: boolean; forceUnblock?: boolean } = {},
 ): Promise<ResolvedStream> {
   const enableUnblock = options.enableUnblock !== false;
+  const forceUnblock = Boolean(options.forceUnblock);
+  const bypassCache = Boolean(options.bypassCache || forceUnblock);
 
   // 0a. Fast return from in-memory prefetch cache (instant track switch!)
-  if (!options.bypassCache) {
+  if (!bypassCache) {
     const cached = getCachedResolvedStream(song, preferredQuality);
     if (cached) return cached;
   }
 
   // 0a-offline. When device is strictly offline, immediately serve local Media3 SimpleCache audio!
-  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+  if (!forceUnblock && typeof navigator !== 'undefined' && navigator.onLine === false) {
     const offlineLocal = await tryResolveLocalCachedStream(song, preferredQuality);
     if (offlineLocal) return offlineLocal;
   }
 
-  // 0b. Pinned unblock source always wins
-  if (enableUnblock) {
+  // 0b. Pinned unblock source always wins (unless explicitly forcing fresh unblock fallback below)
+  if (enableUnblock && !forceUnblock) {
     const pinned = await getPinnedSource(song);
     if (pinned) {
       const unblocked = await resolveUnblockedUrl(song, preferredQuality);
       if (unblocked) {
-        const res: ResolvedStream = { ...unblocked, isUnblocked: true };
+        const res: ResolvedStream = {
+          ...unblocked,
+          isUnblocked: true,
+          cacheKey: buildAudioCacheKey(song, unblocked.quality, unblocked.sourceTag, true),
+        };
         setCachedResolvedStream(song, preferredQuality, res);
         return res;
       }
     }
   }
 
-  // 1. Official KuGou catalog resolution (skip multi-attempt waterfall when known copyright-gray)
+  // 1. Official KuGou catalog resolution (skip when copyright-gray or forcing alternate unblock recovery)
   let fallbackTrial: ResolvedStream | null = null;
-  const skipOfficialRetries = Boolean(song.isGray && enableUnblock);
+  const skipOfficialRetries = forceUnblock || Boolean(song.isGray && enableUnblock);
 
   if (song.hash && !skipOfficialRetries) {
     let targetHash =
@@ -155,12 +253,14 @@ export async function resolvePlayableStream(
         const urls = extractUrlsFromPayload(res?.body);
         if (urls.length === 0) continue;
 
-        const trial = isTrialSnippet(res?.body, song.duration);
+        const trial = isTrialSnippet(res?.body, song.duration, attempt.label);
+        const sourceTag = attempt.label === 'flac' ? '无损 FLAC' : attempt.label === '320' ? '高品 320k' : '标准 128k';
         const candidate: ResolvedStream = {
           url: urls[0],
           quality: attempt.label,
-          sourceTag: attempt.label === 'flac' ? '无损 FLAC' : attempt.label === '320' ? '高品 320k' : '标准 128k',
+          sourceTag,
           isUnblocked: false,
+          cacheKey: trial ? undefined : buildAudioCacheKey(song, attempt.label, sourceTag, false),
         };
         if (!trial) {
           setCachedResolvedStream(song, preferredQuality, candidate);
@@ -173,24 +273,30 @@ export async function resolvePlayableStream(
     }
   }
 
-  // 2. Built-in 4-channel gray-song / trial-snippet unblock waterfall
-  if (enableUnblock) {
+  // 2. Built-in 4-channel gray-song / trial-snippet / recovery unblock waterfall
+  if (enableUnblock || forceUnblock) {
     const unblocked = await resolveUnblockedUrl(song, preferredQuality);
     if (unblocked) {
-      const res: ResolvedStream = { ...unblocked, isUnblocked: true };
+      const res: ResolvedStream = {
+        ...unblocked,
+        isUnblocked: true,
+        cacheKey: buildAudioCacheKey(song, unblocked.quality, unblocked.sourceTag, true),
+      };
       setCachedResolvedStream(song, preferredQuality, res);
       return res;
     }
   }
 
   // 3. Offline / weak-network local cache fallback (Media3 SimpleCache up to 2GB+!)
-  const offlineFallback = await tryResolveLocalCachedStream(song, preferredQuality);
-  if (offlineFallback) {
-    return offlineFallback;
+  if (!forceUnblock) {
+    const offlineFallback = await tryResolveLocalCachedStream(song, preferredQuality);
+    if (offlineFallback) {
+      return offlineFallback;
+    }
   }
 
   if (fallbackTrial) {
-    return { ...fallbackTrial, sourceTag: '试听片段' };
+    return { ...fallbackTrial, sourceTag: '试听片段', cacheKey: undefined };
   }
 
   throw new Error('暂无可用音源，点击「换源」试试其他版本');
