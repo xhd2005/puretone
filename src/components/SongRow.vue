@@ -11,7 +11,8 @@ import iconMusic from '@iconify/icons-tabler/music';
 import iconHeart from '@iconify/icons-tabler/heart';
 import iconHeartFilled from '@iconify/icons-tabler/heart-filled';
 import iconPlaylistAdd from '@iconify/icons-tabler/playlist-add';
-import type { Song } from '@/types/music';
+import iconCheck from '@iconify/icons-tabler/check';
+import type { PlaylistActionContext, Song } from '@/types/music';
 import { usePlayerStore } from '@/stores/player';
 import { useUiStore } from '@/stores/ui';
 import { useI18n } from '@/i18n';
@@ -24,10 +25,14 @@ const props = defineProps<{
   index?: number;
   showCover?: boolean;
   highlighted?: boolean;
+  playlistContext?: PlaylistActionContext | null;
+  selectable?: boolean;
+  selected?: boolean;
 }>();
 
 const emit = defineEmits<{
   play: [song: Song];
+  'toggle-select': [song: Song];
 }>();
 
 const player = usePlayerStore();
@@ -69,6 +74,7 @@ function clearLongPress() {
 }
 
 function onTouchStart(e: TouchEvent) {
+  if (props.selectable) return;
   const t = e.touches[0];
   if (!t) return;
   triggeredLongPress = false;
@@ -86,12 +92,13 @@ function onTouchStart(e: TouchEvent) {
     longPressTimer = setTimeout(() => {
       triggeredLongPress = true;
       echoSystem.haptic('heavy');
-      ui.actionSheetSong = props.song;
+      ui.openSongActions(props.song, props.playlistContext ?? null);
     }, 460);
   }
 }
 
 function onTouchMove(e: TouchEvent) {
+  if (props.selectable) return;
   const t = e.touches[0];
   if (!t) return;
   const dx = t.clientX - startX;
@@ -142,6 +149,11 @@ function onTouchEnd() {
 }
 
 function onRowClick() {
+  if (props.selectable) {
+    echoSystem.haptic('selection');
+    emit('toggle-select', props.song);
+    return;
+  }
   if (triggeredLongPress || justSwiped) {
     triggeredLongPress = false;
     justSwiped = false;
@@ -152,6 +164,10 @@ function onRowClick() {
     return;
   }
   emit('play', props.song);
+}
+
+function openActionsMenu() {
+  ui.openSongActions(props.song, props.playlistContext ?? null);
 }
 
 function onSwipePlayNext() {
@@ -205,8 +221,20 @@ onUnmounted(() => {
       @touchmove="onTouchMove"
       @touchend.passive="onTouchEnd"
       @touchcancel.passive="onTouchEnd"
-      @contextmenu.prevent="ui.actionSheetSong = song"
+      @contextmenu.prevent="!selectable && openActionsMenu()"
     >
+      <div
+        v-if="selectable"
+        class="w-5.5 h-5.5 rounded-full flex items-center justify-center shrink-0 transition-colors"
+        :class="
+          selected
+            ? 'am-accent-bg text-white shadow-xs'
+            : 'border-2 border-[var(--text-tertiary)]/60 bg-transparent'
+        "
+      >
+        <Icon v-if="selected" :icon="iconCheck" class="w-3.5 h-3.5" />
+      </div>
+
       <div v-if="showCover !== false" class="song-cover">
         <img v-if="song.coverUrl" :src="song.coverUrl" :alt="song.title" loading="lazy" class="w-full h-full object-cover" />
         <div v-else class="w-full h-full flex items-center justify-center bg-[var(--bg-subtle)] text-[var(--text-tertiary)]">
@@ -248,10 +276,11 @@ onUnmounted(() => {
         </div>
 
         <button
+          v-if="!selectable"
           type="button"
           class="w-10 h-10 -mr-1 rounded-full flex items-center justify-center bg-transparent border-0 text-[var(--text-secondary)] am-tap shrink-0"
           aria-label="歌曲操作"
-          @click.stop="echoSystem.haptic('light'); ui.actionSheetSong = song"
+          @click.stop="openActionsMenu"
         >
           <Icon :icon="iconDots" class="w-5 h-5" />
         </button>

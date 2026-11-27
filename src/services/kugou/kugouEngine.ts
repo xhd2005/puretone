@@ -1,4 +1,5 @@
 import '@/polyfills/setupGlobals';
+import { Buffer } from 'buffer';
 import { echoSystem } from '@/native/echoSystem';
 import type {
   AccountProfile,
@@ -83,6 +84,27 @@ const moduleLoaders: Record<string, () => Promise<{ default?: KugouModuleFn } | 
   '/search/suggest': () => import('@kugou/module/search_suggest.js'),
   '/user/playlist': () => import('@kugou/module/user_playlist.js'),
   '/playlist/detail': () => import('@kugou/module/playlist_detail.js'),
+  '/playlist/add': () => import('@kugou/module/playlist_add.js'),
+  '/playlist/del': async () => {
+    const mod = (await import('@kugou/module/playlist_del.js')) as { default?: KugouModuleFn } | KugouModuleFn;
+    const rawFn = (typeof mod === 'function' ? mod : mod.default) as KugouModuleFn;
+    return {
+      default: (params, useAxios) =>
+        rawFn(params, async (cfg) => {
+          const res = await useAxios(cfg);
+          // axiosShim returns an ArrayBuffer for responseType:'arraybuffer', whereas playlist_del.js
+          // expects a Node Buffer supporting .toString('base64') before AES decryption.
+          if (res?.body instanceof ArrayBuffer) {
+            res.body = Buffer.from(new Uint8Array(res.body)) as any;
+          } else if (ArrayBuffer.isView(res?.body) && !Buffer.isBuffer(res?.body)) {
+            const view = res.body as ArrayBufferView;
+            res.body = Buffer.from(view.buffer, view.byteOffset, view.byteLength) as any;
+          }
+          return res;
+        }),
+    };
+  },
+  '/playlist/update': () => import('@kugou/module/playlist_update.js'),
   '/playlist/track/all/new': () => import('@kugou/module/playlist_track_all_new.js'),
   '/playlist/track/all': () => import('@kugou/module/playlist_track_all.js'),
   '/playlist/tracks/add': () => import('@kugou/module/playlist_tracks_add.js'),
@@ -366,6 +388,62 @@ const AUDIO_EXT_RE = /\.(mp3|flac|m4a|wav|ape|ogg|aac|wma)$/i;
 
 export function stripAudioExtension(raw?: string): string {
   return String(raw || '').trim().replace(AUDIO_EXT_RE, '').trim();
+}
+
+/**
+ * Formats tracks for KuGou `/playlist/tracks/add` (`name|hash|album_id|mixsongid` comma-separated).
+ * `playlist_tracks_add.js` forwards `name` verbatim without URL-decoding, so we must strip
+ * delimiter characters (`,` / `|`) instead of calling `encodeURIComponent`.
+ */
+export function formatPlaylistTrackAddPayload(
+  songs: Array<Pick<Song, 'title' | 'hash' | 'albumId' | 'mixSongId'>>,
+): string {
+  return songs
+    .filter((s) => Boolean(s?.hash))
+    .map((s) => {
+      const safeName =
+        String(s.title || '')
+          .replace(/[,|\r\n]+/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim() || '未知歌曲';
+      const albumId = Number(s.albumId || 0) || 0;
+      const mixSongId = Number(s.mixSongId || 0) || 0;
+      return `${safeName}|${s.hash.trim()}|${albumId}|${mixSongId}`;
+    })
+    .join(',');
+}
+
+/**
+ * Classifies ownership & privacy of a KuGou `/user/playlist` entry so self-created playlists
+ * (editable, accepts track additions/removals) are accurately distinguished from collected
+ * playlists created by other users.
+ */
+export function classifyUserPlaylistOwnership(
+  item: Record<string, any>,
+  activeUserId?: string | number | null,
+): { isFavorite: boolean; isOwner: boolean; isPrivate: boolean } {
+  const isFavorite = String(item?.name || '') === '我喜欢' || Number(item?.listid) === 2;
+  const isPrivate = Number(item?.is_pri ?? 0) === 1;
+  if (isFavorite) {
+    return { isFavorite: true, isOwner: true, isPrivate };
+  }
+  const activeUidNum = Number(activeUserId || 0);
+  const creatorUidNum = Number(item?.list_create_userid ?? 0);
+  const listType = Number(item?.type ?? -1);
+  // Explicit creator mismatch -> collected from another user
+  if (activeUidNum > 0 && creatorUidNum > 0 && creatorUidNum !== activeUidNum) {
+    return { isFavorite: false, isOwner: false, isPrivate };
+  }
+  // KuGou `type === 1` marks collected playlists; `type === 0` or `source === 1` marks self-created
+  if (listType === 1) {
+    return { isFavorite: false, isOwner: false, isPrivate };
+  }
+  const isOwner =
+    (activeUidNum > 0 && creatorUidNum === activeUidNum) ||
+    listType === 0 ||
+    Number(item?.source ?? 0) === 1 ||
+    creatorUidNum === 0;
+  return { isFavorite: false, isOwner, isPrivate };
 }
 
 function normArtistCompare(s: string): string {
@@ -817,6 +895,9 @@ export const kugouApi = {
       trackCount: Number(item.song_count ?? item.songcount ?? 0),
       creator: String(item.nickname ?? ''),
       description: String(item.intro ?? ''),
+      isOwner: false,
+      createUserId: item.suid ? String(item.suid) : item.list_create_userid ? String(item.list_create_userid) : undefined,
+      createListId: item.specialid ? String(item.specialid) : item.list_create_listid ? String(item.list_create_listid) : undefined,
     }));
   },
 
@@ -1305,21 +1386,131 @@ export const kugouApi = {
 
   async getUserPlaylists(): Promise<PlaylistSummary[]> {
     const res = await callKugouRoute('/user/playlist', { page: 1, pagesize: 100 });
+    const totalVer = Number(res?.body?.data?.total_ver ?? 0) || 0;
     const list = res?.body?.data?.info ?? [];
     if (!Array.isArray(list)) return [];
+    const activeUid = activeAuth?.userid || '';
     return list
       .filter((item: any) => item && !item.is_drop && item.name)
-      .map((item: any) => ({
-        id: String(item.listid ?? item.global_collection_id ?? ''),
-        listId: item.listid ? String(item.listid) : undefined,
-        globalCollectionId: String(item.global_collection_id ?? ''),
-        name: String(item.name || '未命名歌单'),
-        coverUrl: fixCoverUrl(item.pic || item.img, 400),
-        trackCount: Number(item.count ?? 0),
-        creator: String(item.list_create_username ?? ''),
-        description: String(item.intro ?? ''),
-        isFavorite: String(item.name) === '我喜欢' || Number(item.listid) === 2,
-      }));
+      .map((item: any) => {
+        const { isFavorite, isOwner, isPrivate } = classifyUserPlaylistOwnership(item, activeUid);
+        return {
+          id: String(item.listid ?? item.global_collection_id ?? ''),
+          listId: item.listid ? String(item.listid) : undefined,
+          globalCollectionId: String(item.global_collection_id ?? ''),
+          name: String(item.name || '未命名歌单'),
+          coverUrl: fixCoverUrl(item.pic || item.img, 400),
+          trackCount: Number(item.count ?? 0),
+          creator: String(item.list_create_username ?? ''),
+          description: String(item.intro ?? ''),
+          isFavorite,
+          isOwner,
+          isPrivate,
+          totalVer,
+          createUserId: item.list_create_userid ? String(item.list_create_userid) : undefined,
+          createListId: item.list_create_listid ? String(item.list_create_listid) : undefined,
+        };
+      });
+  },
+
+  async createPlaylist(
+    name: string,
+    isPrivate = false,
+  ): Promise<{ ok: boolean; listId?: string; globalCollectionId?: string; message?: string }> {
+    const cleanName = name.trim();
+    if (!cleanName) return { ok: false, message: '歌单名称不能为空' };
+    const res = await callKugouRoute('/playlist/add', {
+      name: cleanName,
+      type: 0,
+      source: 1,
+      is_pri: isPrivate ? 1 : 0,
+    });
+    const b = res?.body ?? {};
+    const ok = Number(b.status ?? 0) === 1 || Number(b.error_code ?? b.errcode ?? -1) === 0;
+    const info = b.data?.info ?? b.data ?? {};
+    return {
+      ok,
+      listId: info?.listid ? String(info.listid) : undefined,
+      globalCollectionId: info?.global_collection_id ? String(info.global_collection_id) : undefined,
+      message: String(b.error ?? b.errmsg ?? b.msg ?? '').trim() || undefined,
+    };
+  },
+
+  async collectPlaylist(options: {
+    name: string;
+    globalCollectionId: string;
+    createUserId?: string;
+    createListId?: string;
+  }): Promise<{ ok: boolean; listId?: string; message?: string }> {
+    let createUserId = options.createUserId || '';
+    let createListId = options.createListId || '';
+    let name = options.name.trim() || '收藏歌单';
+
+    // Fallback to /playlist/detail when creator metadata wasn't supplied in route query
+    if ((!createUserId || !createListId) && options.globalCollectionId) {
+      try {
+        const detailRes = await callKugouRoute('/playlist/detail', { ids: options.globalCollectionId });
+        const raw = detailRes?.body?.data;
+        const info = Array.isArray(raw) ? raw[0] : raw;
+        if (info && typeof info === 'object') {
+          if (!createUserId && info.list_create_userid) createUserId = String(info.list_create_userid);
+          if (!createListId && info.list_create_listid) createListId = String(info.list_create_listid);
+          if ((!options.name || options.name === '歌单') && info.name) name = String(info.name);
+        }
+      } catch {
+        // continue with available params
+      }
+    }
+
+    const res = await callKugouRoute('/playlist/add', {
+      name,
+      type: 1,
+      source: 1,
+      list_create_userid: createUserId ? Number(createUserId) : undefined,
+      list_create_listid: createListId ? Number(createListId) : undefined,
+      list_create_gid: options.globalCollectionId || '',
+    });
+    const b = res?.body ?? {};
+    const ok = Number(b.status ?? 0) === 1 || Number(b.error_code ?? b.errcode ?? -1) === 0;
+    const info = b.data?.info ?? b.data ?? {};
+    return {
+      ok,
+      listId: info?.listid ? String(info.listid) : undefined,
+      message: String(b.error ?? b.errmsg ?? b.msg ?? '').trim() || undefined,
+    };
+  },
+
+  async updatePlaylist(options: {
+    listId: string;
+    name?: string;
+    intro?: string;
+    totalVer?: number;
+  }): Promise<{ ok: boolean; message?: string }> {
+    const res = await callKugouRoute('/playlist/update', {
+      listid: Number(options.listId),
+      total_ver: Number(options.totalVer || 0),
+      type: 0,
+      name: options.name?.trim() || undefined,
+      intro: options.intro ?? '',
+    });
+    const b = res?.body ?? {};
+    const ok = Number(b.status ?? 0) === 1 || Number(b.error_code ?? b.errcode ?? -1) === 0;
+    return {
+      ok,
+      message: String(b.error ?? b.errmsg ?? b.msg ?? '').trim() || undefined,
+    };
+  },
+
+  async deletePlaylist(listId: string): Promise<{ ok: boolean; message?: string }> {
+    const res = await callKugouRoute('/playlist/del', { listid: Number(listId) });
+    const b = res?.body ?? {};
+    const ok =
+      res?.status === 200 &&
+      (Number(b.status ?? 0) === 1 || Number(b.error_code ?? b.errcode ?? -1) === 0);
+    return {
+      ok,
+      message: String(b.error ?? b.errmsg ?? b.msg ?? '').trim() || undefined,
+    };
   },
 
   async getPlaylistTracksPaged(options: {
@@ -1423,9 +1614,8 @@ export const kugouApi = {
   },
 
   async addTracksToPlaylist(listid: string, songs: Song[]) {
-    const data = songs
-      .map((s) => `${encodeURIComponent(s.title)}|${s.hash}|${s.albumId || 0}|${s.mixSongId || 0}`)
-      .join(',');
+    const data = formatPlaylistTrackAddPayload(songs);
+    if (!data) return null;
     return callKugouRoute('/playlist/tracks/add', { listid, data });
   },
 

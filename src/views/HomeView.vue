@@ -16,6 +16,7 @@ import {
 import { readPlaylistSnapshot } from '@/services/playback/playlistSnapshotCache';
 import { useAccountsStore } from '@/stores/accounts';
 import { usePlayerStore } from '@/stores/player';
+import { usePlaylistsStore } from '@/stores/playlists';
 import { useUiStore } from '@/stores/ui';
 import { useI18n } from '@/i18n';
 import { useCollapsingTitle } from '@/composables/useCollapsingTitle';
@@ -26,12 +27,13 @@ import PureToneMark from '@/components/PureToneMark.vue';
 const router = useRouter();
 const accounts = useAccountsStore();
 const player = usePlayerStore();
+const playlistsStore = usePlaylistsStore();
 const ui = useUiStore();
 const { t, effectiveLocale } = useI18n();
 const { largeTitleOpacity, compactTitleOpacity, headerGlassActive, onScroll } = useCollapsingTitle();
 
 const dailySongs = ref<Song[]>([]);
-const playlists = ref<PlaylistSummary[]>([]);
+const playlists = computed(() => playlistsStore.playlists);
 const loading = ref(false);
 
 const EN_MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
@@ -57,6 +59,10 @@ function openPlaylist(pl: PlaylistSummary) {
       count: String(pl.trackCount),
       listId: pl.listId || '',
       favorite: pl.isFavorite ? '1' : '0',
+      owner: pl.isOwner === false ? '0' : '1',
+      intro: pl.description || '',
+      createUserId: pl.createUserId || '',
+      createListId: pl.createListId || '',
     },
   });
 }
@@ -64,17 +70,16 @@ function openPlaylist(pl: PlaylistSummary) {
 async function loadHomeData() {
   if (!accounts.isLoggedIn) {
     dailySongs.value = [];
-    playlists.value = [];
+    playlistsStore.reset();
     return;
   }
   loading.value = true;
   try {
     const [daily, pls] = await Promise.all([
       kugouApi.getEverydayRecommend().catch(() => []),
-      kugouApi.getUserPlaylists().catch(() => []),
+      playlistsStore.fetchPlaylists(true).catch(() => []),
     ]);
     dailySongs.value = daily;
-    playlists.value = pls;
 
     void backfillMissingPlaylistCovers(pls);
 

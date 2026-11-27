@@ -546,6 +546,11 @@ function openPoster() {
   ui.commentsSheetSong = null;
   ui.lyricPosterSong = s;
 }
+
+function addToPlaylist() {
+  if (!song.value) return;
+  ui.openAddToPlaylist(song.value);
+}
 </script>
 
 <template>
@@ -873,15 +878,25 @@ function openPoster() {
                 </div>
               </section>
 
-              <!-- Copy Song Meta Button -->
-              <button
-                type="button"
-                class="w-full h-10 rounded-[16px] bg-[var(--bg-card)] text-[13px] font-semibold text-[var(--text-secondary)] border-0 inline-flex items-center justify-center gap-1.5 shadow-xs am-tap"
-                @click="copyMeta"
-              >
-                <Icon :icon="iconCopy" class="w-4 h-4 am-accent-text" />
-                <span>{{ t('song.copyMeta') }}</span>
-              </button>
+              <!-- Add to Playlist & Copy Song Meta Dual Action Row -->
+              <div class="grid grid-cols-2 gap-2.5">
+                <button
+                  type="button"
+                  class="h-10.5 px-3 rounded-[16px] bg-[var(--bg-card)] text-[13px] font-semibold am-accent-text border-0 inline-flex items-center justify-center gap-1.5 shadow-xs am-tap"
+                  @click="addToPlaylist"
+                >
+                  <Icon :icon="iconPlaylistAdd" class="w-4 h-4 shrink-0" />
+                  <span class="truncate">{{ t('song.addToPlaylist') }}</span>
+                </button>
+                <button
+                  type="button"
+                  class="h-10.5 px-3 rounded-[16px] bg-[var(--bg-card)] text-[13px] font-semibold text-[var(--text-secondary)] border-0 inline-flex items-center justify-center gap-1.5 shadow-xs am-tap"
+                  @click="copyMeta"
+                >
+                  <Icon :icon="iconCopy" class="w-4 h-4 am-accent-text shrink-0" />
+                  <span class="truncate">{{ t('song.copyMeta') }}</span>
+                </button>
+              </div>
             </template>
 
             <!-- ==================== TAB B: 4-MODE REAL COMMENTS (FEATURED / TOP / LATEST / HOTWORDS) ==================== -->

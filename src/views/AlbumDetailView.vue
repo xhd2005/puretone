@@ -7,6 +7,7 @@ import iconPlayerPlayFilled from '@iconify/icons-tabler/player-play-filled';
 import iconArrowsShuffle from '@iconify/icons-tabler/arrows-shuffle';
 import iconDisc from '@iconify/icons-tabler/disc';
 import iconChevronRight from '@iconify/icons-tabler/chevron-right';
+import iconPlaylistAdd from '@iconify/icons-tabler/playlist-add';
 import type { AlbumDetail, Song } from '@/types/music';
 import { kugouApi } from '@/services/kugou/kugouEngine';
 import { navigateToArtistRef } from '@/services/playback/artistNavigation';
@@ -109,7 +110,17 @@ watch(albumId, () => void loadAlbum());
         >
           {{ displayTitle }}
         </span>
-        <div class="w-14 shrink-0" />
+        <div class="w-14 flex items-center justify-end shrink-0">
+          <button
+            v-if="songs.length"
+            type="button"
+            class="w-9 h-9 rounded-full bg-transparent border-0 flex items-center justify-center am-accent-text am-tap"
+            :aria-label="t('song.addToPlaylist')"
+            @click="ui.openAddToPlaylist(songs)"
+          >
+            <Icon :icon="iconPlaylistAdd" class="w-5 h-5" />
+          </button>
+        </div>
       </div>
     </header>
 

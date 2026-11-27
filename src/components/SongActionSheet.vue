@@ -16,8 +16,11 @@ import iconMusic from '@iconify/icons-tabler/music';
 import iconUser from '@iconify/icons-tabler/user';
 import iconDisc from '@iconify/icons-tabler/disc';
 import iconMessageCircle from '@iconify/icons-tabler/message-circle';
+import iconPlaylistAdd from '@iconify/icons-tabler/playlist-add';
+import iconTrash from '@iconify/icons-tabler/trash';
 import type { SleepTimerMode } from '@/types/music';
 import { usePlayerStore } from '@/stores/player';
+import { usePlaylistsStore } from '@/stores/playlists';
 import { useUiStore } from '@/stores/ui';
 import { useI18n } from '@/i18n';
 import { useDraggableSheet } from '@/composables/useDraggableSheet';
@@ -26,15 +29,20 @@ import { echoSystem } from '@/native/echoSystem';
 
 const router = useRouter();
 const player = usePlayerStore();
+const playlistsStore = usePlaylistsStore();
 const ui = useUiStore();
 const { t } = useI18n();
 
 const song = computed(() => ui.actionSheetSong);
+const playlistCtx = computed(() => ui.actionSheetContext);
+const canRemoveFromPlaylist = computed(() =>
+  Boolean(playlistCtx.value?.isOwner && playlistCtx.value.listId && song.value?.fileId),
+);
 const isFav = computed(() => Boolean(song.value?.hash && player.favoriteHashes.has(song.value.hash.toLowerCase())));
 
 const dragSheet = useDraggableSheet({
   onDismiss: () => {
-    ui.actionSheetSong = null;
+    ui.closeSongActions();
   },
 });
 
@@ -53,7 +61,36 @@ const sleepOptions = computed<Array<{ id: SleepTimerMode; label: string }>>(() =
 ]);
 
 function close() {
-  ui.actionSheetSong = null;
+  ui.closeSongActions();
+}
+
+function openAddToPlaylist() {
+  if (!song.value) return;
+  const s = song.value;
+  close();
+  ui.openAddToPlaylist(s);
+}
+
+async function removeFromCurrentPlaylist() {
+  const s = song.value;
+  const ctx = playlistCtx.value;
+  if (!s || !ctx?.isOwner || !ctx.listId || !s.fileId) return;
+  echoSystem.haptic('medium');
+  close();
+  try {
+    const removed = await playlistsStore.removeSongsFromPlaylist(
+      { id: ctx.listId, listId: ctx.listId, isFavorite: ctx.isFavorite },
+      [s],
+    );
+    if (removed > 0) {
+      ctx.onTrackRemoved?.(s);
+      ui.showToast(t('playlist.removedToast', { count: removed }));
+    } else {
+      ui.showToast(t('playlist.actionFailed'));
+    }
+  } catch (e: any) {
+    ui.showToast(e?.message || t('playlist.actionFailed'), 3000);
+  }
 }
 
 function playNow() {
@@ -265,8 +302,12 @@ async function copyTitle() {
               </div>
             </div>
 
-            <!-- Discover & Secondary Actions -->
+            <!-- Discover & Playlist Management Actions -->
             <div class="rounded-[20px] bg-[var(--bg-card)] overflow-hidden divide-y divide-[var(--hairline)] shadow-xs">
+              <button type="button" class="sheet-item am-tap" @click="openAddToPlaylist">
+                <span class="truncate font-semibold am-accent-text">{{ t('song.addToPlaylist') }}</span>
+                <Icon :icon="iconPlaylistAdd" class="w-5 h-5 am-accent-text shrink-0" />
+              </button>
               <button type="button" class="sheet-item am-tap" @click="openComments">
                 <span class="truncate">{{ t('song.viewComments') }}</span>
                 <Icon :icon="iconMessageCircle" class="w-5 h-5 text-[var(--text-secondary)] shrink-0" />
@@ -286,6 +327,21 @@ async function copyTitle() {
               <button type="button" class="sheet-item am-tap" @click="copyTitle">
                 <span class="truncate">{{ t('song.copyMeta') }}</span>
                 <Icon :icon="iconCopy" class="w-5 h-5 text-[var(--text-secondary)] shrink-0" />
+              </button>
+            </div>
+
+            <!-- Context-Aware Remove From Current Self-Created Playlist -->
+            <div
+              v-if="canRemoveFromPlaylist"
+              class="rounded-[20px] bg-[var(--bg-card)] overflow-hidden shadow-xs"
+            >
+              <button
+                type="button"
+                class="sheet-item am-tap text-[#ff3b30]"
+                @click="removeFromCurrentPlaylist"
+              >
+                <span class="truncate font-semibold text-[#ff3b30]">{{ t('song.removeFromPlaylist') }}</span>
+                <Icon :icon="iconTrash" class="w-5 h-5 text-[#ff3b30] shrink-0" />
               </button>
             </div>
           </div>

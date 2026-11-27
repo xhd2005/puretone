@@ -17,6 +17,7 @@ import NowPlayingSheet from '@/components/NowPlayingSheet.vue';
 import AccountVipSheet from '@/components/AccountVipSheet.vue';
 import LoginModal from '@/components/LoginModal.vue';
 import SongActionSheet from '@/components/SongActionSheet.vue';
+import AddToPlaylistSheet from '@/components/AddToPlaylistSheet.vue';
 import SongCommentsSheet from '@/components/SongCommentsSheet.vue';
 import ArtistPickerSheet from '@/components/ArtistPickerSheet.vue';
 import UnblockSourceSheet from '@/components/UnblockSourceSheet.vue';
@@ -122,6 +123,7 @@ onMounted(async () => {
   <AccountVipSheet />
   <LoginModal />
   <SongActionSheet />
+  <AddToPlaylistSheet />
   <SongCommentsSheet />
   <ArtistPickerSheet />
   <UnblockSourceSheet />

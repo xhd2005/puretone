@@ -295,7 +295,7 @@ function openAlbum(al: AlbumSummary) {
               v-for="pl in playlists"
               :key="pl.id"
               class="cursor-pointer am-tap min-w-0"
-              @click="router.push({ path: `/playlist/${encodeURIComponent(pl.globalCollectionId || pl.id)}`, query: { name: pl.name, cover: pl.coverUrl, count: String(pl.trackCount) } })"
+              @click="router.push({ path: `/playlist/${encodeURIComponent(pl.globalCollectionId || pl.id)}`, query: { name: pl.name, cover: pl.coverUrl, count: String(pl.trackCount), owner: '0', intro: pl.description || '', createUserId: pl.createUserId || '', createListId: pl.createListId || '' } })"
             >
               <div class="aspect-square rounded-[14px] overflow-hidden shadow-sm">
                 <PlaylistCover

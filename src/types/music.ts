@@ -47,6 +47,21 @@ export interface PlaylistSummary {
   creator?: string;
   description?: string;
   isFavorite?: boolean;
+  /** True when created/owned by the active account (editable, accepts track additions/removals). */
+  isOwner?: boolean;
+  isPrivate?: boolean;
+  totalVer?: number;
+  createUserId?: string;
+  createListId?: string;
+}
+
+export interface PlaylistActionContext {
+  listId: string;
+  globalCollectionId: string;
+  name: string;
+  isOwner: boolean;
+  isFavorite: boolean;
+  onTrackRemoved?: (song: Song) => void;
 }
 
 export interface LyricWord {

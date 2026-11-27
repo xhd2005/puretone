@@ -118,3 +118,8 @@ export async function writePlaylistSnapshot(key: string, songs: Song[], totalCou
   };
   await echoSystem.kvSetJson(SNAPSHOT_PREFIX + key, payload);
 }
+
+export async function deletePlaylistSnapshot(key: string): Promise<void> {
+  if (!key) return;
+  await echoSystem.kvDelete(SNAPSHOT_PREFIX + key);
+}

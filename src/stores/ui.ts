@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import type { SafeAreaInsets } from '@/native/echoSystem';
-import type { Song, SongArtistRef } from '@/types/music';
+import type { PlaylistActionContext, Song, SongArtistRef } from '@/types/music';
 import type { ReleaseUpdateInfo } from '@/services/update/updateService';
 import { echoSystem } from '@/native/echoSystem';
 
@@ -11,6 +11,8 @@ export const useUiStore = defineStore('ui', () => {
   const accountSheetOpen = ref(false);
   const loginModalOpen = ref(false);
   const actionSheetSong = ref<Song | null>(null);
+  const actionSheetContext = ref<PlaylistActionContext | null>(null);
+  const addToPlaylistSongs = ref<Song[] | null>(null);
   const unblockModalSong = ref<Song | null>(null);
   const lyricPosterSong = ref<Song | null>(null);
   const commentsSheetSong = ref<Song | null>(null);
@@ -30,6 +32,7 @@ export const useUiStore = defineStore('ui', () => {
         accountSheetOpen.value ||
         loginModalOpen.value ||
         actionSheetSong.value ||
+        addToPlaylistSongs.value?.length ||
         unblockModalSong.value ||
         lyricPosterSong.value ||
         commentsSheetSong.value ||
@@ -77,8 +80,30 @@ export const useUiStore = defineStore('ui', () => {
     commentsSheetSong.value = song;
   }
 
+  function openSongActions(song: Song, context: PlaylistActionContext | null = null) {
+    echoSystem.haptic('light');
+    actionSheetContext.value = context;
+    actionSheetSong.value = song;
+  }
+
+  function closeSongActions() {
+    actionSheetSong.value = null;
+    actionSheetContext.value = null;
+  }
+
+  function openAddToPlaylist(songOrSongs: Song | Song[]) {
+    const list = Array.isArray(songOrSongs) ? songOrSongs.filter(Boolean) : [songOrSongs];
+    if (!list.length) return;
+    echoSystem.haptic('light');
+    addToPlaylistSongs.value = list;
+  }
+
   function closeTopOverlay(): boolean {
     if (complianceModalOpen.value) {
+      return true;
+    }
+    if (addToPlaylistSongs.value?.length) {
+      addToPlaylistSongs.value = null;
       return true;
     }
     if (artistPickerCandidates.value) {
@@ -102,7 +127,7 @@ export const useUiStore = defineStore('ui', () => {
       return true;
     }
     if (actionSheetSong.value) {
-      actionSheetSong.value = null;
+      closeSongActions();
       return true;
     }
     if (loginModalOpen.value) {
@@ -126,6 +151,8 @@ export const useUiStore = defineStore('ui', () => {
     accountSheetOpen,
     loginModalOpen,
     actionSheetSong,
+    actionSheetContext,
+    addToPlaylistSongs,
     unblockModalSong,
     lyricPosterSong,
     commentsSheetSong,
@@ -140,6 +167,9 @@ export const useUiStore = defineStore('ui', () => {
     showToast,
     openNowPlaying,
     openSongComments,
+    openSongActions,
+    closeSongActions,
+    openAddToPlaylist,
     closeTopOverlay,
   };
 });
