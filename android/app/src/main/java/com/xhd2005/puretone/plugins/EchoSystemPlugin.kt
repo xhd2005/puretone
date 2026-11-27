@@ -346,7 +346,7 @@ class EchoSystemPlugin : Plugin() {
         val safeName = if (rawName.endsWith(".apk", ignoreCase = true)) {
             rawName.replace(Regex("[^a-zA-Z0-9._-]"), "_")
         } else {
-            "PureTone-update.apk"
+            "MELUNE-update.apk"
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !context.packageManager.canRequestPackageInstalls()) {
@@ -379,7 +379,7 @@ class EchoSystemPlugin : Plugin() {
 
                 val req = Request.Builder()
                     .url(url)
-                    .header("User-Agent", "PureTone-Android/2.1")
+                    .header("User-Agent", "MELUNE-Android/2.4")
                     .build()
                 updateHttpClient.newCall(req).execute().use { res ->
                     if (!res.isSuccessful) {
@@ -625,7 +625,7 @@ class EchoSystemPlugin : Plugin() {
             return
         }
         val rawName = call.getString("fileName")?.trim().takeIf { !it.isNullOrBlank() }
-            ?: "PureTone_Poster_${System.currentTimeMillis()}.png"
+            ?: "MELUNE_Poster_${System.currentTimeMillis()}.png"
         val safeName = rawName.replace(Regex("[^a-zA-Z0-9._-]"), "_")
         val mime = if (safeName.endsWith(".jpg", true) || safeName.endsWith(".jpeg", true)) "image/jpeg" else "image/png"
         val saved = saveImageToGallery(bytes, safeName, mime)
@@ -735,7 +735,7 @@ class EchoSystemPlugin : Plugin() {
                 val values = ContentValues().apply {
                     put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
                     put(MediaStore.Images.Media.MIME_TYPE, mimeType)
-                    put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/PureTone")
+                    put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/MELUNE")
                     put(MediaStore.Images.Media.IS_PENDING, 1)
                 }
                 val resolver = context.contentResolver
@@ -747,7 +747,7 @@ class EchoSystemPlugin : Plugin() {
                 true
             } else {
                 @Suppress("DEPRECATION")
-                val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "PureTone")
+                val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "MELUNE")
                 if (!dir.exists()) dir.mkdirs()
                 val file = File(dir, fileName)
                 file.writeBytes(bytes)

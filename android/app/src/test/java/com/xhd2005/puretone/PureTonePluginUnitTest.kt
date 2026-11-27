@@ -70,4 +70,14 @@ class PureTonePluginUnitTest {
         val (r, g, b) = EchoPlaybackService.selectNotificationAccentRgb(brightBlue)
         assertTrue(b > r && b <= 185)
     }
+
+    @Test
+    fun computeTrackFadeFactor_smoothlyTapersWithinWindowAndClampsBounds() {
+        assertEquals(1.0f, EchoPlaybackService.computeTrackFadeFactor(4000L, 3000L), 0.001f)
+        assertEquals(1.0f, EchoPlaybackService.computeTrackFadeFactor(1000L, 0L), 0.001f)
+        val mid = EchoPlaybackService.computeTrackFadeFactor(1500L, 3000L)
+        assertTrue("Midpoint fade should be roughly half volume ($mid)", mid in 0.45f..0.60f)
+        val tail = EchoPlaybackService.computeTrackFadeFactor(0L, 3000L)
+        assertEquals(0.08f, tail, 0.001f)
+    }
 }

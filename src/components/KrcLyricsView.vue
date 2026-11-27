@@ -21,10 +21,19 @@ const settings = useSettingsStore();
 const { t } = useI18n();
 
 const fontSizeClass = computed(() => `krc-size-${settings.lyricFontSize}`);
+const currentTrackOffsetKey = computed(() => {
+  const s = player.currentSong;
+  return s ? (s.hash ? s.hash.toLowerCase() : s.id) : '';
+});
+const lyricOffsetMs = computed(() => settings.getLyricOffset(currentTrackOffsetKey.value));
+
+function getShiftedTimeMs(): number {
+  return Math.max(0, player.getInterpolatedTimeMs() + lyricOffsetMs.value);
+}
 
 const scrollerRef = ref<HTMLElement | null>(null);
 const lineRefs = ref<HTMLElement[]>([]);
-const liveTimeMs = ref(player.getInterpolatedTimeMs());
+const liveTimeMs = ref(getShiftedTimeMs());
 const userScrolling = ref(false);
 let scrollResumeTimer: ReturnType<typeof setTimeout> | null = null;
 let rafId = 0;
@@ -36,7 +45,7 @@ function tick() {
     rafId = 0;
     return;
   }
-  liveTimeMs.value = player.getInterpolatedTimeMs();
+  liveTimeMs.value = getShiftedTimeMs();
   if (player.isPlaying) {
     rafId = requestAnimationFrame(tick);
   } else {
@@ -47,7 +56,7 @@ function tick() {
 function syncLoop() {
   if (rafId) cancelAnimationFrame(rafId);
   rafId = 0;
-  liveTimeMs.value = player.getInterpolatedTimeMs();
+  liveTimeMs.value = getShiftedTimeMs();
   if (props.active && player.isPlaying) {
     rafId = requestAnimationFrame(tick);
   }
@@ -96,7 +105,7 @@ function scrollToActive(smooth = true) {
  */
 function snapToActiveNow() {
   userScrolling.value = false;
-  liveTimeMs.value = player.getInterpolatedTimeMs();
+  liveTimeMs.value = getShiftedTimeMs();
   void nextTick(() => {
     scrollToActive(false);
     requestAnimationFrame(() => scrollToActive(false));
@@ -104,7 +113,7 @@ function snapToActiveNow() {
 }
 
 watch(
-  () => [props.active, player.isPlaying, player.currentTimeMs],
+  () => [props.active, player.isPlaying, player.currentTimeMs, lyricOffsetMs.value],
   () => syncLoop(),
   { immediate: true },
 );

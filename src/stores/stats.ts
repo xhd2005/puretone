@@ -69,7 +69,13 @@ export interface Today24HourSeries {
   peakHour: number;
 }
 
-const WEEKDAY_CN = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+const WEEKDAY_LABELS: Record<'zh-CN' | 'zh-TW' | 'en', string[]> = {
+  'zh-CN': ['周日', '周一', '周二', '周三', '周四', '周五', '周六'],
+  'zh-TW': ['週日', '週一', '週二', '週三', '週四', '週五', '週六'],
+  en: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+};
+
+const MONTH_SHORT_EN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 export function createEmptyHourlyBuckets(): StatBucket[] {
   return Array.from({ length: 24 }, () => ({ seconds: 0, plays: 0 }));
@@ -107,9 +113,12 @@ function pruneDailyBuckets(daily: Record<string, StatBucket>, maxDays = 35): Rec
 export function buildLast7DaysSeries(
   daily: Record<string, StatBucket>,
   referenceDate: Date = new Date(),
+  locale: 'zh-CN' | 'zh-TW' | 'en' = 'zh-CN',
 ): Last7DaysSeries {
   const days: DayChartPoint[] = [];
   const base = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), referenceDate.getDate());
+  const weekdays = WEEKDAY_LABELS[locale] || WEEKDAY_LABELS['zh-CN'];
+  const todayWord = locale === 'en' ? 'Today' : '今日';
   let totalSec = 0;
   let totalPlays = 0;
   let maxMin = 0;
@@ -126,10 +135,15 @@ export function buildLast7DaysSeries(
     totalPlays += plays;
     if (minutes > maxMin) maxMin = minutes;
 
+    const fullLabel =
+      locale === 'en'
+        ? `${MONTH_SHORT_EN[d.getMonth()]} ${d.getDate()} · ${weekdays[d.getDay()]}`
+        : `${d.getMonth() + 1}月${d.getDate()}日 ${weekdays[d.getDay()]}`;
+
     days.push({
       dateKey,
-      shortLabel: offset === 0 ? '今日' : WEEKDAY_CN[d.getDay()],
-      fullLabel: `${d.getMonth() + 1}月${d.getDate()}日 ${WEEKDAY_CN[d.getDay()]}`,
+      shortLabel: offset === 0 ? todayWord : weekdays[d.getDay()],
+      fullLabel,
       minutes,
       seconds,
       plays,

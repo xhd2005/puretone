@@ -14,6 +14,7 @@ import android.graphics.Color
 import android.media.AudioManager
 import android.media.audiofx.BassBoost
 import android.media.audiofx.Equalizer
+import android.media.audiofx.LoudnessEnhancer
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -61,6 +62,7 @@ import okhttp3.Request
 import java.io.File
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
+import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -121,6 +123,8 @@ private class PureToneMediaNotificationProvider(
         n.visibility = Notification.VISIBILITY_PUBLIC
         n.category = Notification.CATEGORY_TRANSPORT
         n.extras.putBoolean(Notification.EXTRA_COLORIZED, true)
+        // Android 16/17 (API 36+) official Live Updates promoted ongoing opt-in (safe no-op on older OS)
+        n.extras.putBoolean("android.requestPromotedOngoing", true)
         return mediaNotification
     }
 
@@ -132,13 +136,16 @@ private class PureToneMediaNotificationProvider(
 private class PureToneAudioEffects {
     private var equalizer: Equalizer? = null
     private var bassBoost: BassBoost? = null
+    private var loudnessEnhancer: LoudnessEnhancer? = null
     private var boundSessionId: Int = C.AUDIO_SESSION_ID_UNSET
     private var currentPreset: String = "flat"
+    private var volumeLevelingEnabled: Boolean = false
 
     fun attachToSession(audioSessionId: Int) {
         if (audioSessionId == C.AUDIO_SESSION_ID_UNSET || audioSessionId == 0) return
         if (boundSessionId == audioSessionId && equalizer != null) {
             applyPreset(currentPreset)
+            applyVolumeLeveling(volumeLevelingEnabled)
             return
         }
         release()
@@ -153,7 +160,25 @@ private class PureToneAudioEffects {
         } catch (_: Exception) {
             bassBoost = null
         }
+        try {
+            loudnessEnhancer = LoudnessEnhancer(audioSessionId)
+        } catch (_: Exception) {
+            loudnessEnhancer = null
+        }
         applyPreset(currentPreset)
+        applyVolumeLeveling(volumeLevelingEnabled)
+    }
+
+    fun applyVolumeLeveling(enabled: Boolean) {
+        volumeLevelingEnabled = enabled
+        val le = loudnessEnhancer ?: return
+        try {
+            // Gentle 2.6 dB ceiling keeps older quiet tracks balanced with modern masters without clipping
+            le.setTargetGain(if (enabled) 260 else 0)
+            le.enabled = enabled
+        } catch (_: Exception) {
+            // OEM DSP restriction — keep playback unaffected
+        }
     }
 
     fun applyPreset(preset: String) {
@@ -214,8 +239,13 @@ private class PureToneAudioEffects {
             bassBoost?.release()
         } catch (_: Exception) {
         }
+        try {
+            loudnessEnhancer?.release()
+        } catch (_: Exception) {
+        }
         equalizer = null
         bassBoost = null
+        loudnessEnhancer = null
         boundSessionId = C.AUDIO_SESSION_ID_UNSET
     }
 }
@@ -257,6 +287,8 @@ class EchoPlaybackService : MediaSessionService() {
     private var isCurrentFavorite: Boolean = false
     private var currentPlayMode: String = "sequence"
     private var targetVolume: Float = 1.0f
+    private var transitionFadeMs: Long = 1500L
+    private var autoFadeActiveForSeq: Int = -1
     private var fadeRunnable: Runnable? = null
     private var retryRunnable: Runnable? = null
     private var retriedCurrentError: Boolean = false
@@ -289,9 +321,28 @@ class EchoPlaybackService : MediaSessionService() {
                 val pos = exoPlayer.currentPosition.coerceAtLeast(0L)
                 val dur = exoPlayer.duration.takeIf { it != C.TIME_UNSET && it > 0L }
                     ?: (currentMetadata?.durationMs ?: 0L)
+                // Smooth single-engine track transition fade-out near track tail when next track is queued
+                val fadeWin = transitionFadeMs
+                if (fadeWin > 0L &&
+                    fadeRunnable == null &&
+                    exoPlayer.repeatMode != Player.REPEAT_MODE_ONE &&
+                    exoPlayer.hasNextMediaItem() &&
+                    dur > fadeWin + 4000L
+                ) {
+                    val remaining = dur - pos
+                    if (remaining in 40L..fadeWin) {
+                        val factor = computeTrackFadeFactor(remaining, fadeWin)
+                        exoPlayer.volume = (targetVolume * factor).coerceIn(0f, 1f)
+                        autoFadeActiveForSeq = currentTrackSeq
+                    } else if (autoFadeActiveForSeq == currentTrackSeq && remaining > fadeWin + 400L) {
+                        // User scrubbed back before fade window — restore volume smoothly
+                        autoFadeActiveForSeq = -1
+                        exoPlayer.volume = targetVolume
+                    }
+                }
                 bridgeListener?.onTimeUpdate(pos, dur, true, currentTrackSeq)
             }
-            mainHandler.postDelayed(this, 250L)
+            mainHandler.postDelayed(this, 160L)
         }
     }
 
@@ -340,7 +391,7 @@ class EchoPlaybackService : MediaSessionService() {
         )
 
         upstreamFactory = OkHttpDataSource.Factory(okHttpClient)
-            .setUserAgent("PureTone-Android/2.3 (Linux; Android 16)")
+            .setUserAgent("MELUNE-Android/2.4 (Linux; Android 16)")
 
         val cacheDataSourceFactory = CacheDataSource.Factory()
             .setCache(getOrCreateAudioCache(applicationContext))
@@ -376,6 +427,7 @@ class EchoPlaybackService : MediaSessionService() {
                 // Native seamless transition (e.g. screen-off pocket playback or Bluetooth next-track!)
                 retriedCurrentError = false
                 cancelRetry()
+                autoFadeActiveForSeq = -1
                 currentTrackSeq += 1
                 val newSeq = currentTrackSeq
                 currentMetadata = matched.metadata
@@ -398,6 +450,15 @@ class EchoPlaybackService : MediaSessionService() {
                         } catch (_: Exception) {
                         }
                     }
+                }
+
+                // Gentle fade-in for the newly entered track when smooth transition is active
+                if (transitionFadeMs > 0L && exoPlayer.playWhenReady) {
+                    val fadeInDur = min(transitionFadeMs, 1600L).coerceAtLeast(240L)
+                    animateVolume((targetVolume * 0.10f).coerceIn(0f, targetVolume), targetVolume, fadeInDur)
+                } else {
+                    cancelFade()
+                    exoPlayer.volume = targetVolume
                 }
 
                 acquireBriefTransitionWakeLock()
@@ -656,10 +717,10 @@ class EchoPlaybackService : MediaSessionService() {
             // for live media capsules and lock-screen promotion on Android 14–17.
             val channel = NotificationChannel(
                 MEDIA_CHANNEL_ID,
-                "PureTone 音乐播控",
+                "弥音 · MELUNE 音乐播控",
                 NotificationManager.IMPORTANCE_DEFAULT,
             ).apply {
-                description = "用于在锁屏界面、通知中心与系统灵动胶囊展示播放曲目与快捷播控"
+                description = "用于在锁屏界面、通知中心与系统实时播控展示播放曲目与快捷控制"
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC
                 setShowBadge(false)
                 setSound(null, null)
@@ -745,12 +806,14 @@ class EchoPlaybackService : MediaSessionService() {
                 queuedTracks.add(entry)
 
                 val item = buildMediaItem(mediaId, url, metadata, null, cacheKey)
+                autoFadeActiveForSeq = -1
                 exoPlayer.volume = if (autoPlay) 0f else targetVolume
                 exoPlayer.setMediaItem(item)
                 exoPlayer.prepare()
                 exoPlayer.playWhenReady = autoPlay
                 if (autoPlay) {
-                    animateVolume(0f, targetVolume, 200L)
+                    val fadeInDur = if (transitionFadeMs > 0L) min(transitionFadeMs, 1200L).coerceAtLeast(220L) else 180L
+                    animateVolume(0f, targetVolume, fadeInDur)
                 }
             } finally {
                 isExplicitLoading = false
@@ -882,11 +945,27 @@ class EchoPlaybackService : MediaSessionService() {
         if (isCurrentFavorite != favorite) {
             isCurrentFavorite = favorite
             refreshCustomNotificationButtons()
+            syncWidgetState()
         }
     }
 
     fun setPlayModeState(mode: String) = mainHandler.post {
         currentPlayMode = mode
+    }
+
+    fun setTransitionFadeMs(fadeMs: Int) = mainHandler.post {
+        transitionFadeMs = fadeMs.toLong().coerceIn(0L, 6000L)
+        if (transitionFadeMs == 0L && autoFadeActiveForSeq == currentTrackSeq && ::exoPlayer.isInitialized) {
+            autoFadeActiveForSeq = -1
+            exoPlayer.volume = targetVolume
+        }
+    }
+
+    fun setVolumeLeveling(enabled: Boolean) = mainHandler.post {
+        if (::exoPlayer.isInitialized) {
+            audioEffects.attachToSession(exoPlayer.audioSessionId)
+        }
+        audioEffects.applyVolumeLeveling(enabled)
     }
 
     /**
@@ -981,15 +1060,26 @@ class EchoPlaybackService : MediaSessionService() {
         mainHandler.post { bridgeListener?.onMediaCommand("previous", null) }
     }
 
+    fun handleWidgetToggleFav() {
+        mainHandler.post {
+            isCurrentFavorite = !isCurrentFavorite
+            refreshCustomNotificationButtons()
+            syncWidgetState()
+            bridgeListener?.onMediaCommand("toggleFavorite", null)
+        }
+    }
+
     private fun syncWidgetState() {
         val meta = currentMetadata
         val playing = if (::exoPlayer.isInitialized) exoPlayer.isPlaying else false
         PureToneWidgetProvider.updateAll(
             context = this,
             title = meta?.title ?: getString(R.string.app_name),
-            artist = meta?.artist ?: "轻触开始聆听",
+            artist = meta?.artist ?: getString(R.string.widget_idle_subtitle),
             isPlaying = playing,
             artwork = currentArtworkBitmap,
+            accentColor = currentAccentColor,
+            isFavorite = isCurrentFavorite,
         )
     }
 
@@ -1095,7 +1185,7 @@ class EchoPlaybackService : MediaSessionService() {
         const val MAX_AUDIO_CACHE_BYTES = 300L * 1024L * 1024L
         const val ACTION_TOGGLE_FAVORITE = "com.xhd2005.puretone.ACTION_TOGGLE_FAVORITE"
         const val ACTION_CYCLE_PLAY_MODE = "com.xhd2005.puretone.ACTION_CYCLE_PLAY_MODE"
-        private const val DEFAULT_NOTIFICATION_ACCENT = 0xFF8A1C32.toInt()
+        private const val DEFAULT_NOTIFICATION_ACCENT = 0xFF1A2D70.toInt()
 
         val CMD_TOGGLE_FAVORITE by lazy { SessionCommand(ACTION_TOGGLE_FAVORITE, Bundle.EMPTY) }
         val CMD_CYCLE_PLAY_MODE by lazy { SessionCommand(ACTION_CYCLE_PLAY_MODE, Bundle.EMPTY) }
@@ -1111,6 +1201,18 @@ class EchoPlaybackService : MediaSessionService() {
 
         fun isActivelyPlaying(): Boolean {
             return activeService?.isCurrentlyActive() == true
+        }
+
+        /**
+         * Cosine-eased fade-out multiplier for smooth single-engine track transition.
+         * Returns 1.0 outside the fade window and smoothly tapers toward 0.08 as remainingMs -> 0.
+         */
+        fun computeTrackFadeFactor(remainingMs: Long, fadeDurationMs: Long): Float {
+            if (fadeDurationMs <= 0L || remainingMs >= fadeDurationMs) return 1.0f
+            if (remainingMs <= 0L) return 0.08f
+            val ratio = (remainingMs.toFloat() / fadeDurationMs.toFloat()).coerceIn(0f, 1f)
+            val eased = (0.5f - 0.5f * cos(ratio * Math.PI).toFloat()).coerceIn(0f, 1f)
+            return (0.08f + 0.92f * eased).coerceIn(0.08f, 1.0f)
         }
 
         /**

@@ -1,9 +1,9 @@
 import type { CoverPalette } from '@/types/music';
 
 export const DEFAULT_APPLE_PALETTE: CoverPalette = {
-  accentLight: '#FA243C',
-  accentDark: '#FF375F',
-  fluidColors: ['#5A1428', '#2A1038', '#141B38', '#3E1220'],
+  accentLight: '#3456BE',
+  accentDark: '#6B96FF',
+  fluidColors: ['#28469E', '#1A2D70', '#0B1336', '#16255C'],
 };
 
 interface Rgb {

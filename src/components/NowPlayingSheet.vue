@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue';
+import { useRouter } from 'vue-router';
 import { Icon } from '@iconify/vue';
 import iconPlayerPlayFilled from '@iconify/icons-tabler/player-play-filled';
 import iconPlayerPauseFilled from '@iconify/icons-tabler/player-pause-filled';
@@ -9,6 +10,8 @@ import iconHeart from '@iconify/icons-tabler/heart';
 import iconHeartFilled from '@iconify/icons-tabler/heart-filled';
 import iconDots from '@iconify/icons-tabler/dots';
 import iconMessageQuote from '@iconify/icons-tabler/blockquote';
+import iconMessageCircle from '@iconify/icons-tabler/message-circle';
+import iconChevronRight from '@iconify/icons-tabler/chevron-right';
 import iconPlaylist from '@iconify/icons-tabler/playlist';
 import iconArrowsShuffle from '@iconify/icons-tabler/arrows-shuffle';
 import iconRepeat from '@iconify/icons-tabler/repeat';
@@ -21,6 +24,9 @@ import iconMoon from '@iconify/icons-tabler/moon';
 import iconPhoto from '@iconify/icons-tabler/photo';
 import iconPlayerTrackNext from '@iconify/icons-tabler/player-track-next';
 import iconTrash from '@iconify/icons-tabler/trash';
+import type { SongClimaxRange } from '@/types/music';
+import { formatCompactCount, kugouApi } from '@/services/kugou/kugouEngine';
+import { openArtistProfileFromSong } from '@/services/playback/artistNavigation';
 import { usePlayerStore } from '@/stores/player';
 import { useSettingsStore } from '@/stores/settings';
 import { useUiStore } from '@/stores/ui';
@@ -29,10 +35,99 @@ import { echoSystem } from '@/native/echoSystem';
 import FluidCoverBackground from './FluidCoverBackground.vue';
 import KrcLyricsView from './KrcLyricsView.vue';
 
+const router = useRouter();
 const player = usePlayerStore();
 const settings = useSettingsStore();
 const ui = useUiStore();
-const { t } = useI18n();
+const { t, effectiveLocale } = useI18n();
+
+// Track extras: Comment Count badge & Chorus Climax marker
+const commentCount = ref(0);
+const climaxRange = ref<SongClimaxRange | null>(null);
+const showLyricOffsetBar = ref(false);
+
+const currentTrackOffsetKey = computed(() => {
+  const s = player.currentSong;
+  return s ? (s.hash ? s.hash.toLowerCase() : s.id) : '';
+});
+
+const currentLyricOffsetMs = computed(() => settings.getLyricOffset(currentTrackOffsetKey.value));
+const lyricOffsetLabel = computed(() => {
+  const sec = currentLyricOffsetMs.value / 1000;
+  if (sec === 0) return '0.0s';
+  return `${sec > 0 ? '+' : ''}${sec.toFixed(1)}s`;
+});
+
+let extrasSeq = 0;
+watch(
+  () => [player.currentSong?.hash, player.currentSong?.mixSongId, ui.nowPlayingOpen],
+  async ([hash, mixId, open]) => {
+    if (!open || !player.currentSong) return;
+    const seq = ++extrasSeq;
+    commentCount.value = 0;
+    climaxRange.value = null;
+    const s = player.currentSong;
+    const durMs = player.durationMs || (s.duration ? s.duration * 1000 : 0);
+    const [cnt, clx] = await Promise.all([
+      kugouApi.getSongCommentCount({ hash: String(hash || ''), mixSongId: Number(mixId || 0) || undefined }).catch(() => 0),
+      hash ? kugouApi.getSongClimax(String(hash), durMs).catch(() => null) : Promise.resolve(null),
+    ]);
+    if (seq !== extrasSeq) return;
+    commentCount.value = cnt;
+    climaxRange.value = clx;
+  },
+  { immediate: true },
+);
+
+const climaxBarStyle = computed(() => {
+  const clx = climaxRange.value;
+  const dur = player.durationMs;
+  if (!clx || dur <= 0) return null;
+  const startPct = Math.max(0, Math.min(98, (clx.startMs / dur) * 100));
+  const endPct = Math.max(startPct + 2, Math.min(100, (clx.endMs / dur) * 100));
+  return {
+    left: `${startPct.toFixed(2)}%`,
+    width: `${(endPct - startPct).toFixed(2)}%`,
+  };
+});
+
+const showChorusJump = computed(() => {
+  const clx = climaxRange.value;
+  if (!clx || !player.durationMs) return false;
+  return player.currentTimeMs < clx.startMs - 2000;
+});
+
+function jumpToChorus() {
+  const clx = climaxRange.value;
+  if (!clx) return;
+  echoSystem.haptic('medium');
+  void player.seek(clx.startMs);
+}
+
+function nudgeLyricOffset(deltaMs: number) {
+  const key = currentTrackOffsetKey.value;
+  if (!key) return;
+  echoSystem.haptic('selection');
+  settings.adjustLyricOffset(key, deltaMs);
+}
+
+function resetLyricOffset() {
+  const key = currentTrackOffsetKey.value;
+  if (!key) return;
+  echoSystem.haptic('light');
+  settings.resetLyricOffset(key);
+  ui.showToast(t('np.lyricOffsetReset'));
+}
+
+async function openCurrentArtist() {
+  const s = player.currentSong;
+  if (!s) return;
+  echoSystem.haptic('light');
+  await openArtistProfileFromSong(s, router, ui, {
+    resolving: t('artist.resolving'),
+    notFound: t('artist.notFound'),
+  });
+}
 
 // Pointer-captured Scrubber state (works smoothly on BOTH Cover & Lyrics views!)
 const scrubbing = ref(false);
@@ -418,8 +513,17 @@ function handleClearQueue() {
             <button
               v-if="ui.nowPlayingMode === 'lyrics'"
               type="button"
+              class="lg-fluid-btn h-9 px-2.5 rounded-full text-[11px] font-semibold text-white/90 tabular-nums am-tap"
+              :class="{ '!bg-white/30 !text-white': showLyricOffsetBar || currentLyricOffsetMs !== 0 }"
+              @click="showLyricOffsetBar = !showLyricOffsetBar; echoSystem.haptic('selection')"
+            >
+              {{ currentLyricOffsetMs !== 0 ? lyricOffsetLabel : t('np.lyricOffset') }}
+            </button>
+            <button
+              v-if="ui.nowPlayingMode === 'lyrics'"
+              type="button"
               class="np-circle-btn lg-fluid-btn am-tap"
-              aria-label="生成歌词海报"
+              :aria-label="t('song.poster')"
               @click="ui.lyricPosterSong = player.currentSong"
             >
               <Icon :icon="iconPhoto" class="w-5 h-5" />
@@ -429,7 +533,7 @@ function handleClearQueue() {
               type="button"
               class="np-circle-btn lg-fluid-btn am-tap"
               :class="{ '!bg-white/30 !text-white': settings.showTranslation }"
-              aria-label="切换双语翻译"
+              aria-label="Toggle translation"
               @click="settings.showTranslation = !settings.showTranslation; echoSystem.haptic('selection')"
             >
               <Icon :icon="iconLanguage" class="w-5 h-5" />
@@ -437,12 +541,40 @@ function handleClearQueue() {
             <button
               type="button"
               class="np-circle-btn lg-fluid-btn am-tap"
-              aria-label="更多操作"
+              aria-label="More options"
               @click="ui.actionSheetSong = player.currentSong"
             >
               <Icon :icon="iconDots" class="w-5 h-5" />
             </button>
           </div>
+        </div>
+
+        <!-- Inline Lyrics Timeline Offset Adjuster (±0.5s, per-track persisted!) -->
+        <div
+          v-if="ui.nowPlayingMode === 'lyrics' && showLyricOffsetBar"
+          class="px-6 pb-2 flex items-center justify-center gap-2 shrink-0"
+        >
+          <button
+            type="button"
+            class="lg-fluid-btn h-7 px-3 rounded-full text-[11.5px] font-semibold text-white tabular-nums am-tap"
+            @click="nudgeLyricOffset(-500)"
+          >
+            -0.5s
+          </button>
+          <button
+            type="button"
+            class="lg-fluid-btn h-7 px-3.5 rounded-full text-[11.5px] font-bold text-white/95 tabular-nums am-tap"
+            @click="resetLyricOffset"
+          >
+            {{ t('np.lyricOffset') }} {{ lyricOffsetLabel }}
+          </button>
+          <button
+            type="button"
+            class="lg-fluid-btn h-7 px-3 rounded-full text-[11.5px] font-semibold text-white tabular-nums am-tap"
+            @click="nudgeLyricOffset(500)"
+          >
+            +0.5s
+          </button>
         </div>
 
         <!-- MODE 1: AUTHENTIC APPLE MUSIC + LIQUID GLASS COVER MODE -->
@@ -501,9 +633,14 @@ function handleClearQueue() {
               <h1 class="text-[22px] font-bold text-white truncate tracking-tight leading-snug">
                 {{ player.currentSong.title }}
               </h1>
-              <p class="text-[17px] text-white/65 truncate mt-0.5">
-                {{ player.currentSong.artist }}
-              </p>
+              <button
+                type="button"
+                class="mt-0.5 max-w-full inline-flex items-center gap-0.5 bg-transparent border-0 p-0 text-[16px] text-white/70 active:text-white transition-colors text-left"
+                @click.stop="openCurrentArtist"
+              >
+                <span class="truncate">{{ player.currentSong.artist }}</span>
+                <Icon :icon="iconChevronRight" class="w-4 h-4 opacity-60 shrink-0" />
+              </button>
             </div>
             <div class="flex items-center gap-2 shrink-0">
               <button
@@ -625,20 +762,37 @@ function handleClearQueue() {
               @pointercancel="finishScrub($event, false)"
             >
               <div class="scrub-track" :class="{ 'is-scrubbing': scrubbing }">
+                <!-- Subtle Luminous Chorus / Climax Segment Marker -->
+                <div
+                  v-if="climaxBarStyle"
+                  class="scrub-climax"
+                  :style="climaxBarStyle"
+                />
                 <div class="scrub-fill" :style="{ width: `${progressRatio * 100}%` }" />
               </div>
             </div>
             <div
-              class="flex items-center justify-between text-[11px] font-medium tabular-nums mt-0.5 transition-colors"
+              class="flex items-center justify-between text-[11px] font-medium tabular-nums mt-0.5 transition-colors gap-2"
               :class="scrubbing ? 'text-white' : 'text-white/58'"
             >
               <span>{{ fmtTime(displayElapsedMs) }}</span>
-              <span
-                v-if="player.sourceTag"
-                class="px-2 py-0.5 rounded-[6px] bg-white/14 text-white/88 text-[10px] font-semibold tracking-wide"
-              >
-                {{ player.sourceTag }}
-              </span>
+              <div class="flex items-center gap-1.5 min-w-0">
+                <button
+                  v-if="showChorusJump"
+                  type="button"
+                  class="px-2 py-0.5 rounded-[6px] bg-white/18 text-white/95 text-[10px] font-semibold tracking-wide border-0 inline-flex items-center gap-0.5 am-tap shrink-0"
+                  @click.stop="jumpToChorus"
+                >
+                  <Icon :icon="iconSparkles" class="w-2.5 h-2.5" />
+                  <span>{{ t('np.chorusJump') }}</span>
+                </button>
+                <span
+                  v-else-if="player.sourceTag"
+                  class="px-2 py-0.5 rounded-[6px] bg-white/14 text-white/88 text-[10px] font-semibold tracking-wide truncate"
+                >
+                  {{ player.sourceTag }}
+                </span>
+              </div>
               <span>-{{ fmtTime(displayRemainingMs) }}</span>
             </div>
           </div>
@@ -664,13 +818,13 @@ function handleClearQueue() {
             </button>
           </div>
 
-          <!-- Bottom 3 Liquid Glass Utility Icons -->
+          <!-- Bottom 4 Balanced Liquid Glass Utility Icons (Lyrics / Comments / Sources / Queue) -->
           <div class="np-footer-bar">
             <button
               type="button"
               class="np-tool-btn am-tap"
               :class="{ 'is-on': ui.nowPlayingMode === 'lyrics' }"
-              aria-label="逐字歌词"
+              aria-label="Lyrics"
               @click="toggleMode('lyrics')"
             >
               <Icon :icon="iconMessageQuote" class="w-6 h-6" />
@@ -678,8 +832,23 @@ function handleClearQueue() {
 
             <button
               type="button"
+              class="np-tool-btn relative am-tap"
+              :aria-label="t('np.comments')"
+              @click="ui.openSongComments(player.currentSong, 'comments')"
+            >
+              <Icon :icon="iconMessageCircle" class="w-6 h-6" />
+              <span
+                v-if="commentCount > 0"
+                class="np-cmt-badge tabular-nums"
+              >
+                {{ formatCompactCount(commentCount, effectiveLocale) }}
+              </span>
+            </button>
+
+            <button
+              type="button"
               class="np-tool-btn am-tap"
-              aria-label="换源与解灰"
+              :aria-label="t('song.unblock')"
               @click="ui.unblockModalSong = player.currentSong"
             >
               <Icon :icon="iconSparkles" class="w-6 h-6" />
@@ -689,7 +858,7 @@ function handleClearQueue() {
               type="button"
               class="np-tool-btn am-tap"
               :class="{ 'is-on': ui.nowPlayingMode === 'queue' }"
-              aria-label="待播清单"
+              :aria-label="t('np.upNext')"
               @click="toggleMode('queue')"
             >
               <Icon :icon="iconPlaylist" class="w-6 h-6" />
@@ -878,11 +1047,21 @@ function handleClearQueue() {
 }
 
 .scrub-track {
+  position: relative;
   height: 5px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.25);
   overflow: hidden;
   transition: height 180ms var(--spring-ease), box-shadow 180ms ease;
+}
+
+.scrub-climax {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: linear-gradient(90deg, rgba(166, 204, 255, 0.32), rgba(255, 255, 255, 0.56), rgba(166, 204, 255, 0.32));
+  border-radius: 999px;
+  pointer-events: none;
 }
 
 .scrub-track.is-scrubbing {
@@ -891,9 +1070,29 @@ function handleClearQueue() {
 }
 
 .scrub-fill {
+  position: relative;
+  z-index: 1;
   height: 100%;
   background: rgba(255, 255, 255, 0.94);
   border-radius: 999px;
+}
+
+.np-cmt-badge {
+  position: absolute;
+  top: 1px;
+  right: -2px;
+  min-width: 18px;
+  height: 14px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.24);
+  backdrop-filter: blur(8px);
+  color: #ffffff;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
+  pointer-events: none;
 }
 
 .np-transport {

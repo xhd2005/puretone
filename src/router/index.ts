@@ -43,6 +43,18 @@ const router = createRouter({
       component: () => import('@/views/RecentPlaysView.vue'),
       meta: { tab: 'library', depth: 1, title: 'Recent' },
     },
+    {
+      path: '/artist/:id',
+      name: 'artist',
+      component: () => import('@/views/ArtistDetailView.vue'),
+      meta: { tab: 'search', depth: 1, title: 'Artist' },
+    },
+    {
+      path: '/album/:id',
+      name: 'album',
+      component: () => import('@/views/AlbumDetailView.vue'),
+      meta: { tab: 'search', depth: 2, title: 'Album' },
+    },
   ],
 });
 

@@ -5,8 +5,14 @@ import iconX from '@iconify/icons-tabler/x';
 import iconDownload from '@iconify/icons-tabler/download';
 import iconShare from '@iconify/icons-tabler/share';
 import iconCheck from '@iconify/icons-tabler/check';
-import iconMusic from '@iconify/icons-tabler/music';
+import iconLanguage from '@iconify/icons-tabler/language';
+import iconCalendar from '@iconify/icons-tabler/calendar';
 import type { LyricLine } from '@/types/music';
+import {
+  renderLyricPosterToDataUrl,
+  type PosterLyricItem,
+  type PosterThemeId,
+} from '@/services/share/lyricPosterRenderer';
 import { usePlayerStore } from '@/stores/player';
 import { useUiStore } from '@/stores/ui';
 import { useI18n } from '@/i18n';
@@ -14,11 +20,9 @@ import { useDraggableSheet } from '@/composables/useDraggableSheet';
 import { fetchLyricsForSong } from '@/services/playback/krcParser';
 import { echoSystem } from '@/native/echoSystem';
 
-type PosterTheme = 'fluid' | 'paper' | 'vinyl';
-
 const player = usePlayerStore();
 const ui = useUiStore();
-const { t } = useI18n();
+const { t, effectiveLocale } = useI18n();
 
 const scrollRef = ref<HTMLElement | null>(null);
 const loading = ref(false);
@@ -26,29 +30,43 @@ const saving = ref(false);
 const sharing = ref(false);
 const lines = ref<LyricLine[]>([]);
 const selectedIndices = ref<number[]>([]);
-const theme = ref<PosterTheme>('fluid');
+const theme = ref<PosterThemeId>('glass');
+const includeTranslation = ref(true);
+const showDateStamp = ref(true);
+const previewDataUrl = ref('');
 
 const song = computed(() => ui.lyricPosterSong);
+const hasAnyTranslation = computed(() => lines.value.some((l) => Boolean(l.translation?.trim())));
 
 const dragSheet = useDraggableSheet({
+  detents: [0.76, 0.94],
+  initialDetentIndex: 1,
   scrollElRef: scrollRef,
   onDismiss: () => {
     ui.lyricPosterSong = null;
   },
 });
 
-const themes = computed<Array<{ id: PosterTheme; label: string }>>(() => [
-  { id: 'fluid', label: t('poster.themeFluid') },
-  { id: 'paper', label: t('poster.themePaper') },
+const themes = computed<Array<{ id: PosterThemeId; label: string }>>(() => [
+  { id: 'glass', label: t('poster.themeGlass') },
   { id: 'vinyl', label: t('poster.themeVinyl') },
+  { id: 'polaroid', label: t('poster.themePolaroid') },
+  { id: 'cinema', label: t('poster.themeCinema') },
+  { id: 'melune', label: t('poster.themeMelune') },
 ]);
 
-const selectedLines = computed(() =>
+const selectedItems = computed<PosterLyricItem[]>(() =>
   selectedIndices.value
     .slice()
     .sort((a, b) => a - b)
-    .map((idx) => lines.value[idx]?.text?.trim() || '')
-    .filter(Boolean),
+    .map((idx) => {
+      const item = lines.value[idx];
+      return {
+        text: item?.text?.trim() || '',
+        translation: item?.translation?.trim() || undefined,
+      };
+    })
+    .filter((i) => Boolean(i.text)),
 );
 
 function pickDefaultLines(all: LyricLine[]) {
@@ -73,12 +91,52 @@ function pickDefaultLines(all: LyricLine[]) {
   selectedIndices.value = picks;
 }
 
+let previewSeq = 0;
+let previewTimer: ReturnType<typeof setTimeout> | null = null;
+
+function buildRenderConfig(scale: number) {
+  const s = song.value!;
+  return {
+    title: s.title,
+    artist: s.artist,
+    album: s.album,
+    coverUrl: s.coverUrl,
+    lines: selectedItems.value,
+    theme: theme.value,
+    fluidColors: player.palette.fluidColors,
+    showTranslation: includeTranslation.value && hasAnyTranslation.value,
+    showDateStamp: showDateStamp.value,
+    locale: effectiveLocale.value,
+    brandName: t('app.fullName'),
+    brandSlogan: t('app.slogan'),
+    scale,
+  };
+}
+
+function schedulePreviewRender() {
+  if (previewTimer) clearTimeout(previewTimer);
+  if (!song.value) return;
+  previewTimer = setTimeout(async () => {
+    if (!song.value) return;
+    const seq = ++previewSeq;
+    try {
+      const url = await renderLyricPosterToDataUrl(buildRenderConfig(0.46));
+      if (seq === previewSeq) {
+        previewDataUrl.value = url;
+      }
+    } catch {
+      // ignore preview error
+    }
+  }, 60);
+}
+
 watch(
   () => ui.lyricPosterSong,
   async (s) => {
     if (!s) return;
     dragSheet.reset();
     echoSystem.haptic('light');
+    previewDataUrl.value = '';
     const isCurrent = Boolean(
       player.currentSong &&
         s.hash === player.currentSong.hash &&
@@ -87,11 +145,13 @@ watch(
     if (isCurrent) {
       lines.value = player.lyrics.lines.filter((l) => l.text.trim().length > 0);
       pickDefaultLines(lines.value);
+      schedulePreviewRender();
       return;
     }
     loading.value = true;
     lines.value = [];
     selectedIndices.value = [];
+    schedulePreviewRender();
     try {
       const parsed = await fetchLyricsForSong(s);
       lines.value = parsed.lines.filter((l) => l.text.trim().length > 0);
@@ -100,8 +160,17 @@ watch(
       lines.value = [];
     } finally {
       loading.value = false;
+      schedulePreviewRender();
     }
   },
+);
+
+watch(
+  () => [theme.value, selectedItems.value, includeTranslation.value, showDateStamp.value, effectiveLocale.value],
+  () => {
+    if (song.value) schedulePreviewRender();
+  },
+  { deep: true },
 );
 
 function toggleLine(idx: number) {
@@ -117,223 +186,16 @@ function toggleLine(idx: number) {
   }
 }
 
-function loadCorsImage(url: string): Promise<HTMLImageElement | null> {
-  if (!url) return Promise.resolve(null);
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    const timer = setTimeout(() => resolve(null), 3500);
-    img.onload = () => {
-      clearTimeout(timer);
-      resolve(img);
-    };
-    img.onerror = () => {
-      clearTimeout(timer);
-      resolve(null);
-    };
-    img.src = url.replace('/240/', '/480/');
-  });
-}
-
-function drawRoundedRect(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-  r: number,
-) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
-  ctx.closePath();
-}
-
-function wrapTextLines(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
-  const result: string[] = [];
-  let line = '';
-  for (const ch of text) {
-    const test = line + ch;
-    if (ctx.measureText(test).width > maxWidth && line) {
-      result.push(line);
-      line = ch;
-    } else {
-      line = test;
-    }
-  }
-  if (line) result.push(line);
-  return result;
-}
-
-async function renderPosterDataUrl(): Promise<string> {
-  const s = song.value;
-  if (!s) throw new Error('No song');
-
-  const W = 1080;
-  const H = 1440;
-  const canvas = document.createElement('canvas');
-  canvas.width = W;
-  canvas.height = H;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('Canvas unavailable');
-
-  const isLight = theme.value === 'paper';
-  const fluid = player.palette.fluidColors;
-
-  // 1. Background fill
-  if (theme.value === 'fluid') {
-    const grad = ctx.createLinearGradient(0, 0, W, H);
-    grad.addColorStop(0, fluid[0] || '#5a1428');
-    grad.addColorStop(0.5, fluid[1] || '#2a1038');
-    grad.addColorStop(1, fluid[2] || '#12182e');
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, W, H);
-
-    const orb = ctx.createRadialGradient(W * 0.8, H * 0.16, 40, W * 0.8, H * 0.16, 620);
-    orb.addColorStop(0, 'rgba(255, 255, 255, 0.16)');
-    orb.addColorStop(1, 'rgba(255, 255, 255, 0)');
-    ctx.fillStyle = orb;
-    ctx.fillRect(0, 0, W, H);
-  } else if (theme.value === 'paper') {
-    const grad = ctx.createLinearGradient(0, 0, 0, H);
-    grad.addColorStop(0, '#fcfcfd');
-    grad.addColorStop(1, '#f1f3f8');
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, W, H);
-  } else {
-    const grad = ctx.createLinearGradient(0, 0, W, H);
-    grad.addColorStop(0, '#16161b');
-    grad.addColorStop(1, '#070709');
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, W, H);
-
-    const glow = ctx.createRadialGradient(W * 0.5, 360, 40, W * 0.5, 360, 520);
-    glow.addColorStop(0, 'rgba(250, 35, 59, 0.24)');
-    glow.addColorStop(1, 'rgba(250, 35, 59, 0)');
-    ctx.fillStyle = glow;
-    ctx.fillRect(0, 0, W, H);
-  }
-
-  // 2. Centered Album Artwork Card
-  const artSize = 460;
-  const artX = (W - artSize) / 2;
-  const artY = 128;
-
-  ctx.save();
-  ctx.shadowColor = isLight ? 'rgba(15, 23, 42, 0.18)' : 'rgba(0, 0, 0, 0.52)';
-  ctx.shadowBlur = 64;
-  ctx.shadowOffsetY = 24;
-  drawRoundedRect(ctx, artX, artY, artSize, artSize, 42);
-  ctx.fillStyle = isLight ? '#e8eaf0' : '#222228';
-  ctx.fill();
-  ctx.restore();
-
-  const coverImg = await loadCorsImage(s.coverUrl);
-  ctx.save();
-  drawRoundedRect(ctx, artX, artY, artSize, artSize, 42);
-  ctx.clip();
-  if (coverImg) {
-    ctx.drawImage(coverImg, artX, artY, artSize, artSize);
-  } else {
-    const fallGrad = ctx.createLinearGradient(artX, artY, artX, artY + artSize);
-    fallGrad.addColorStop(0, '#ff526e');
-    fallGrad.addColorStop(1, '#dc122e');
-    ctx.fillStyle = fallGrad;
-    ctx.fillRect(artX, artY, artSize, artSize);
-    ctx.fillStyle = 'rgba(255,255,255,0.92)';
-    ctx.font = '700 180px -apple-system, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('♪', W / 2, artY + artSize / 2 + 12);
-  }
-  ctx.restore();
-
-  // 3. Selected Lyrics Block
-  const quoteLines = selectedLines.value.length ? selectedLines.value : [s.title];
-  ctx.fillStyle = isLight ? '#111116' : '#ffffff';
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'top';
-  ctx.font = '700 50px -apple-system, "PingFang SC", "Noto Sans SC", sans-serif';
-
-  const padX = 104;
-  const maxTextW = W - padX * 2;
-  let cursorY = 678;
-
-  // Decorative quotation mark
-  ctx.save();
-  ctx.fillStyle = isLight ? 'rgba(250, 35, 59, 0.35)' : 'rgba(255, 255, 255, 0.25)';
-  ctx.font = '700 96px Georgia, serif';
-  ctx.fillText('“', padX - 8, cursorY - 56);
-  ctx.restore();
-
-  ctx.fillStyle = isLight ? '#111116' : 'rgba(255, 255, 255, 0.96)';
-  ctx.font = '700 46px -apple-system, "PingFang SC", "Noto Sans SC", sans-serif';
-
-  for (const rawLine of quoteLines) {
-    const wrapped = wrapTextLines(ctx, rawLine, maxTextW);
-    for (const wLine of wrapped) {
-      if (cursorY > 1160) break;
-      ctx.fillText(wLine, padX, cursorY);
-      cursorY += 68;
-    }
-    cursorY += 16;
-  }
-
-  // 4. Footer Divider, Track Meta & PureTone Watermark
-  const footerY = 1236;
-  ctx.strokeStyle = isLight ? 'rgba(15, 23, 42, 0.10)' : 'rgba(255, 255, 255, 0.16)';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(padX, footerY);
-  ctx.lineTo(W - padX, footerY);
-  ctx.stroke();
-
-  ctx.fillStyle = isLight ? '#111116' : '#ffffff';
-  ctx.font = '700 36px -apple-system, "PingFang SC", "Noto Sans SC", sans-serif';
-  ctx.fillText(s.title.slice(0, 22), padX, footerY + 34);
-
-  ctx.fillStyle = isLight ? '#63636a' : 'rgba(255, 255, 255, 0.68)';
-  ctx.font = '500 28px -apple-system, "PingFang SC", "Noto Sans SC", sans-serif';
-  ctx.fillText(s.artist.slice(0, 26), padX, footerY + 86);
-
-  // Right watermark badge
-  const badgeX = W - padX - 66;
-  const badgeY = footerY + 42;
-  ctx.save();
-  drawRoundedRect(ctx, badgeX, badgeY, 66, 66, 16);
-  const bg = ctx.createLinearGradient(badgeX, badgeY, badgeX, badgeY + 66);
-  bg.addColorStop(0, '#ff526e');
-  bg.addColorStop(1, '#dc122e');
-  ctx.fillStyle = bg;
-  ctx.fill();
-  ctx.fillStyle = '#ffffff';
-  ctx.font = '700 38px -apple-system, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('♪', badgeX + 33, badgeY + 35);
-  ctx.restore();
-
-  ctx.textAlign = 'right';
-  ctx.fillStyle = isLight ? '#63636a' : 'rgba(255, 255, 255, 0.72)';
-  ctx.font = '600 24px -apple-system, "PingFang SC", sans-serif';
-  ctx.fillText('纯音 · PureTone', badgeX - 18, badgeY + 18);
-
-  return canvas.toDataURL('image/png');
-}
-
 async function handleSavePoster() {
   if (saving.value || !song.value) return;
   saving.value = true;
   echoSystem.haptic('medium');
   try {
-    const dataUrl = await renderPosterDataUrl();
-    const ok = await echoSystem.saveImageToGallery(dataUrl, `PureTone_${Date.now()}.png`);
-    ui.showToast(ok ? '歌词海报已保存至系统相册 Pictures/PureTone' : '保存海报失败，请检查权限');
+    const dataUrl = await renderLyricPosterToDataUrl(buildRenderConfig(1));
+    const ok = await echoSystem.saveImageToGallery(dataUrl, `MELUNE_${Date.now()}.png`);
+    ui.showToast(ok ? t('poster.savedToast') : t('poster.saveFailed'));
   } catch {
-    ui.showToast('生成海报失败，请重试');
+    ui.showToast(t('poster.saveFailed'));
   } finally {
     saving.value = false;
   }
@@ -344,37 +206,17 @@ async function handleSharePoster() {
   sharing.value = true;
   echoSystem.haptic('light');
   try {
-    const dataUrl = await renderPosterDataUrl();
-    const res = await echoSystem.shareImage(dataUrl, `${song.value.title} - 歌词海报`);
+    const dataUrl = await renderLyricPosterToDataUrl(buildRenderConfig(1));
+    const res = await echoSystem.shareImage(dataUrl, `${song.value.title} · MELUNE`);
     if (!res.launched && res.message) {
       ui.showToast(res.message);
     }
   } catch {
-    ui.showToast('调起系统分享失败');
+    ui.showToast(t('poster.saveFailed'));
   } finally {
     sharing.value = false;
   }
 }
-
-const previewCardStyle = computed(() => {
-  if (theme.value === 'paper') {
-    return {
-      background: 'linear-gradient(180deg, #fcfcfd 0%, #f1f3f8 100%)',
-      color: '#111116',
-    };
-  }
-  if (theme.value === 'vinyl') {
-    return {
-      background: 'radial-gradient(circle at 50% 25%, rgba(250,35,59,0.22), transparent 58%), linear-gradient(145deg, #16161b 0%, #070709 100%)',
-      color: '#ffffff',
-    };
-  }
-  const f = player.palette.fluidColors;
-  return {
-    background: `linear-gradient(145deg, ${f[0] || '#5a1428'} 0%, ${f[1] || '#2a1038'} 55%, ${f[2] || '#12182e'} 100%)`,
-    color: '#ffffff',
-  };
-});
 </script>
 
 <template>
@@ -386,7 +228,7 @@ const previewCardStyle = computed(() => {
     >
       <div class="lg-sheet-slide" @click.stop>
         <div
-          class="lg-sheet-panel rounded-t-[28px] max-h-[90vh] flex flex-col overflow-hidden"
+          class="lg-sheet-panel rounded-t-[28px] flex flex-col overflow-hidden"
           :style="dragSheet.sheetStyle.value"
         >
           <!-- Draggable Header -->
@@ -401,13 +243,13 @@ const previewCardStyle = computed(() => {
               <div class="w-11 h-1.5 rounded-full bg-[var(--text-tertiary)]/55" />
             </div>
             <div class="flex items-center justify-between px-5 pt-1 pb-3 am-hairline-b">
-              <div>
-                <h2 class="text-[18px] font-bold tracking-tight text-[var(--text-primary)]">{{ t('poster.title') }}</h2>
-                <p class="text-[11px] text-[var(--text-secondary)]">{{ t('poster.sub') }}</p>
+              <div class="min-w-0 pr-2">
+                <h2 class="text-[18px] font-bold tracking-tight text-[var(--text-primary)] truncate">{{ t('poster.title') }}</h2>
+                <p class="text-[11px] text-[var(--text-secondary)] truncate">{{ t('poster.sub') }}</p>
               </div>
               <button
                 type="button"
-                class="w-8 h-8 rounded-full bg-[var(--bg-subtle)] border-0 flex items-center justify-center text-[var(--text-primary)] am-tap"
+                class="w-8 h-8 rounded-full bg-[var(--bg-subtle)] border-0 flex items-center justify-center text-[var(--text-primary)] am-tap shrink-0"
                 @click="ui.lyricPosterSong = null"
               >
                 <Icon :icon="iconX" class="w-4 h-4" />
@@ -418,62 +260,71 @@ const previewCardStyle = computed(() => {
           <!-- Content -->
           <div
             ref="scrollRef"
-            class="flex-1 am-scroll px-5 pt-4 pb-4 space-y-4"
+            class="flex-1 am-scroll px-5 pt-3.5 pb-4 space-y-3.5"
             @touchstart.passive="dragSheet.onBodyTouchStart"
             @touchmove="dragSheet.onBodyTouchMove"
             @touchend.passive="dragSheet.onBodyTouchEnd"
             @touchcancel.passive="dragSheet.onBodyTouchEnd"
           >
-            <!-- Theme Selector -->
-            <div class="grid grid-cols-3 gap-1.5 p-1 rounded-2xl bg-[var(--bg-subtle)]">
+            <!-- 5 Curated Editorial Templates (zero-overflow equal 5-column segmented selector!) -->
+            <div class="pt-seg-group grid-cols-5">
               <button
-                v-for="t in themes"
-                :key="t.id"
+                v-for="item in themes"
+                :key="item.id"
                 type="button"
-                class="h-8 rounded-xl text-[12px] font-semibold border-0 transition-all"
+                class="pt-seg-btn"
                 :class="
-                  theme === t.id
+                  theme === item.id
                     ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-xs'
                     : 'bg-transparent text-[var(--text-secondary)]'
                 "
-                @click="echoSystem.haptic('selection'); theme = t.id"
+                @click="echoSystem.haptic('selection'); theme = item.id"
               >
-                {{ t.label }}
+                {{ item.label }}
               </button>
             </div>
 
-            <!-- Live Poster Preview -->
-            <div
-              class="mx-auto w-full max-w-[260px] rounded-[22px] p-5 shadow-xl flex flex-col justify-between min-h-[330px]"
-              :style="previewCardStyle"
-            >
-              <div class="w-28 h-28 mx-auto rounded-[14px] overflow-hidden shadow-lg bg-white/10">
-                <img v-if="song.coverUrl" :src="song.coverUrl" class="w-full h-full object-cover" alt="" />
-                <div v-else class="w-full h-full flex items-center justify-center opacity-50">
-                  <Icon :icon="iconMusic" class="w-10 h-10" />
-                </div>
-              </div>
+            <!-- 100% WYSIWYG Canvas Live Preview -->
+            <div class="mx-auto w-full max-w-[266px] aspect-[1080/1520] rounded-[22px] overflow-hidden shadow-2xl bg-[#0b1336] flex items-center justify-center">
+              <img
+                v-if="previewDataUrl"
+                :src="previewDataUrl"
+                alt="Lyric Poster Preview"
+                class="w-full h-full object-cover block"
+              />
+              <div v-else class="text-[12px] text-white/60">{{ t('common.loading') }}</div>
+            </div>
 
-              <div class="my-4 space-y-1.5 text-left">
-                <p
-                  v-for="(txt, idx) in selectedLines.length ? selectedLines : [song.title]"
-                  :key="idx"
-                  class="text-[14px] font-bold leading-snug m-0"
-                >
-                  {{ txt }}
-                </p>
-              </div>
-
-              <div
-                class="pt-3 flex items-center justify-between gap-2 text-[11px]"
-                :style="{ borderTop: theme === 'paper' ? '0.5px solid rgba(15,23,42,0.12)' : '0.5px solid rgba(255,255,255,0.18)' }"
+            <!-- Studio Quick Toggles: Bilingual Translation & Date Stamp -->
+            <div class="flex items-center justify-center gap-2">
+              <button
+                v-if="hasAnyTranslation"
+                type="button"
+                class="px-3 h-8 rounded-full text-[12px] font-semibold border-0 inline-flex items-center gap-1.5 transition-colors am-tap"
+                :class="
+                  includeTranslation
+                    ? 'bg-[var(--accent)]/16 am-accent-text'
+                    : 'bg-[var(--bg-subtle)] text-[var(--text-secondary)]'
+                "
+                @click="echoSystem.haptic('selection'); includeTranslation = !includeTranslation"
               >
-                <div class="min-w-0">
-                  <div class="font-bold truncate">{{ song.title }}</div>
-                  <div class="opacity-65 truncate">{{ song.artist }}</div>
-                </div>
-                <span class="text-[10px] font-semibold opacity-70 shrink-0">纯音 · PureTone</span>
-              </div>
+                <Icon :icon="iconLanguage" class="w-3.5 h-3.5" />
+                <span>{{ t('poster.optTranslation') }}</span>
+              </button>
+
+              <button
+                type="button"
+                class="px-3 h-8 rounded-full text-[12px] font-semibold border-0 inline-flex items-center gap-1.5 transition-colors am-tap"
+                :class="
+                  showDateStamp
+                    ? 'bg-[var(--accent)]/16 am-accent-text'
+                    : 'bg-[var(--bg-subtle)] text-[var(--text-secondary)]'
+                "
+                @click="echoSystem.haptic('selection'); showDateStamp = !showDateStamp"
+              >
+                <Icon :icon="iconCalendar" class="w-3.5 h-3.5" />
+                <span>{{ t('poster.optDate') }}</span>
+              </button>
             </div>
 
             <!-- Lyric Line Picker -->
@@ -488,7 +339,7 @@ const previewCardStyle = computed(() => {
               <div v-else-if="!lines.length" class="py-4 text-center text-[12px] text-[var(--text-secondary)]">
                 {{ t('poster.noLyrics') }}
               </div>
-              <div v-else class="space-y-1.5 max-h-[180px] am-scroll pr-1">
+              <div v-else class="space-y-1.5 max-h-[175px] am-scroll pr-1">
                 <button
                   v-for="(line, idx) in lines"
                   :key="`${line.startMs}-${idx}`"
@@ -520,8 +371,8 @@ const previewCardStyle = computed(() => {
               :disabled="saving"
               @click="handleSavePoster"
             >
-              <Icon :icon="iconDownload" class="w-4.5 h-4.5" />
-              <span>{{ saving ? t('poster.saving') : t('poster.save') }}</span>
+              <Icon :icon="iconDownload" class="w-4.5 h-4.5 shrink-0" />
+              <span class="truncate">{{ saving ? t('poster.saving') : t('poster.save') }}</span>
             </button>
             <button
               type="button"
@@ -529,8 +380,8 @@ const previewCardStyle = computed(() => {
               :disabled="sharing"
               @click="handleSharePoster"
             >
-              <Icon :icon="iconShare" class="w-4.5 h-4.5 am-accent-text" />
-              <span>{{ sharing ? t('poster.sharing') : t('poster.share') }}</span>
+              <Icon :icon="iconShare" class="w-4.5 h-4.5 am-accent-text shrink-0" />
+              <span class="truncate">{{ sharing ? t('poster.sharing') : t('poster.share') }}</span>
             </button>
           </div>
         </div>

@@ -1,6 +1,22 @@
 import '@/polyfills/setupGlobals';
 import { echoSystem } from '@/native/echoSystem';
-import type { AccountProfile, PlaylistSummary, Song } from '@/types/music';
+import type {
+  AccountProfile,
+  AlbumDetail,
+  AlbumSummary,
+  ArtistDetail,
+  ArtistSummary,
+  CommentClassifyTag,
+  CommentHotwordTag,
+  HotSearchItem,
+  HotSearchTab,
+  PlaylistSummary,
+  Song,
+  SongArtistRef,
+  SongClimaxRange,
+  SongComment,
+  SongCommentsPage,
+} from '@/types/music';
 
 // Static lazy registry of ONLY the ~38 KuGouMusicApi modules needed by EchoMusic Mobile
 type KugouModuleFn = (params: Record<string, unknown>, useAxios: (cfg: Record<string, unknown>) => Promise<KugouApiResponse>) => Promise<KugouApiResponse>;
@@ -74,6 +90,21 @@ const moduleLoaders: Record<string, () => Promise<{ default?: KugouModuleFn } | 
   '/song/url/new': () => import('@kugou/module/song_url_new.js'),
   '/search/lyric': () => import('@kugou/module/search_lyric.js'),
   '/lyric': () => import('@kugou/module/lyric.js'),
+  '/comment/music': () => import('@kugou/module/comment_music.js'),
+  '/comment/music/classify': () => import('@kugou/module/comment_music_classify.js'),
+  '/comment/music/hotword': () => import('@kugou/module/comment_music_hotword.js'),
+  '/comment/floor': () => import('@kugou/module/comment_floor.js'),
+  '/comment/count': () => import('@kugou/module/comment_count.js'),
+  '/comment/music/send': () => import('@kugou/module/comment_music_send.js'),
+  '/comment/floor/send': () => import('@kugou/module/comment_floor_send.js'),
+  '/artist/detail': () => import('@kugou/module/artist_detail.js'),
+  '/artist/audios': () => import('@kugou/module/artist_audios.js'),
+  '/artist/albums': () => import('@kugou/module/artist_albums.js'),
+  '/artist/follow': () => import('@kugou/module/artist_follow.js'),
+  '/artist/unfollow': () => import('@kugou/module/artist_unfollow.js'),
+  '/album/detail': () => import('@kugou/module/album_detail.js'),
+  '/album/songs': () => import('@kugou/module/album_songs.js'),
+  '/song/climax': () => import('@kugou/module/song_climax.js'),
 };
 
 const moduleCache = new Map<string, KugouModuleFn>();
@@ -349,8 +380,52 @@ export function cleanSongTitleAndArtist(
   };
 }
 
+export function extractSongArtistRefs(raw: Record<string, any>, fallbackArtistText = ''): SongArtistRef[] {
+  const out: SongArtistRef[] = [];
+  const seen = new Set<string>();
+  const pushRef = (idRaw: unknown, nameRaw: unknown) => {
+    const name = stripAudioExtension(String(nameRaw || '')).trim();
+    const idStr = String(idRaw ?? '').trim();
+    const id = idStr && idStr !== '0' && idStr !== 'null' && idStr !== 'undefined' ? idStr : '';
+    if (!name) return;
+    const key = `${id || 'n'}:${name.toLowerCase()}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ id, name });
+  };
+
+  const lists = [raw.singerinfo, raw.Singers, raw.authors, raw.base?.authors];
+  for (const arr of lists) {
+    if (Array.isArray(arr) && arr.length > 0) {
+      for (const item of arr) {
+        if (!item || typeof item !== 'object') continue;
+        pushRef(item.id ?? item.author_id ?? item.singerid ?? item.SingerID, item.name ?? item.author_name ?? item.singername);
+      }
+      if (out.length > 0) return out;
+    }
+  }
+
+  const singleId = raw.author_id ?? raw.singerid ?? raw.SingerId ?? raw.base?.author_id;
+  const names = fallbackArtistText
+    .split(/\s*(?:\/|、|&|,|，|\bfeat\.?\b|\bft\.?\b)\s*/i)
+    .map((s) => s.trim())
+    .filter((s) => s && s !== '未知歌手');
+
+  if (names.length === 1) {
+    pushRef(singleId, names[0]);
+  } else if (names.length > 1) {
+    const idList = String(singleId ?? '')
+      .split(/[,，/]/)
+      .map((s) => s.trim());
+    names.forEach((n, idx) => pushRef(idList[idx] ?? '', n));
+  }
+  return out;
+}
+
 export function normalizeSong(raw: Record<string, any>): Song {
-  const hash128 = String(raw.hash ?? raw.FileHash ?? raw.filehash ?? raw.audio_info?.hash ?? '').trim();
+  const hash128 = String(
+    raw.hash ?? raw.FileHash ?? raw.filehash ?? raw.audio_info?.hash ?? raw.audio_info?.hash_128 ?? '',
+  ).trim();
   const hash320 = String(
     raw.hash_320 ?? raw.HQFileHash ?? raw['320hash'] ?? raw.HQ?.Hash ?? raw.audio_info?.hash_320 ?? '',
   ).trim();
@@ -359,9 +434,12 @@ export function normalizeSong(raw: Record<string, any>): Song {
   ).trim();
 
   const hash = hash128 || hash320 || hashFlac;
-  const rawName = String(raw.songname ?? raw.SongName ?? raw.ori_audio_name ?? raw.name ?? raw.filename ?? '');
+  const rawName = String(
+    raw.songname ?? raw.SongName ?? raw.ori_audio_name ?? raw.audio_name ?? raw.base?.audio_name ?? raw.name ?? raw.filename ?? '',
+  );
   const rawArtist = String(
     raw.author_name ??
+      raw.base?.author_name ??
       raw.singername ??
       raw.SingerName ??
       (Array.isArray(raw.singerinfo)
@@ -369,12 +447,22 @@ export function normalizeSong(raw: Record<string, any>): Song {
         : '') ??
       (Array.isArray(raw.Singers)
         ? raw.Singers.map((s: any) => s?.name).filter(Boolean).join(' / ')
+        : '') ??
+      (Array.isArray(raw.authors)
+        ? raw.authors.map((s: any) => s?.author_name ?? s?.name).filter(Boolean).join(' / ')
         : ''),
   );
   const { title, artist } = cleanSongTitleAndArtist(rawName, rawArtist);
+  const artists = extractSongArtistRefs(raw, artist);
 
   const rawDur = Number(
-    raw.time_length ?? raw.timelength ?? raw.duration ?? raw.Duration ?? raw.audio_info?.duration ?? 0,
+    raw.time_length ??
+      raw.timelength ??
+      raw.duration ??
+      raw.Duration ??
+      raw.audio_info?.duration ??
+      raw.audio_info?.timelength ??
+      0,
   );
   const duration = rawDur > 10000 ? Math.round(rawDur / 1000) : Math.round(rawDur || 0);
 
@@ -382,17 +470,23 @@ export function normalizeSong(raw: Record<string, any>): Song {
     raw.sizable_cover ??
     raw.trans_param?.union_cover ??
     raw.album_sizable_cover ??
+    raw.album_info?.sizable_cover ??
     raw.cover ??
     raw.img ??
     raw.Image ??
     '';
 
-  const mixSongId = Number(raw.mixsongid ?? raw.mixSongId ?? raw.album_audio_id ?? raw.MixSongID ?? 0) || undefined;
+  const mixSongId =
+    Number(raw.mixsongid ?? raw.mixSongId ?? raw.album_audio_id ?? raw.MixSongID ?? raw.base?.album_audio_id ?? 0) ||
+    undefined;
   const fileId = Number(raw.fileid ?? raw.fileId ?? 0) || undefined;
   const addedAt = Number(raw.addtime ?? raw.add_time ?? raw.create_time ?? 0) || undefined;
-  const privilege = Number(raw.privilege ?? raw.Privilege ?? raw.pay_type ?? 0);
+  const privilege = Number(raw.privilege ?? raw.Privilege ?? raw.pay_type ?? raw.copyright?.privilege ?? 0);
   const isVip = privilege === 10 || privilege === 8 || Number(raw.pay_type_320 ?? 0) === 3;
   const isGray = privilege === 5 || Number(raw.fail_process ?? 0) === 12;
+
+  const albumIdRaw = raw.album_id ?? raw.AlbumID ?? raw.album_info?.album_id ?? raw.base?.album_id;
+  const albumId = albumIdRaw && String(albumIdRaw) !== '0' ? String(albumIdRaw) : undefined;
 
   return {
     id: String(mixSongId || hash || `${artist}-${title}`),
@@ -402,16 +496,129 @@ export function normalizeSong(raw: Record<string, any>): Song {
     mixSongId,
     fileId,
     addedAt,
-    albumId: raw.album_id ? String(raw.album_id) : raw.AlbumID ? String(raw.AlbumID) : undefined,
+    albumId,
     title: title || '未知歌曲',
     artist: artist || '未知歌手',
-    album: String(raw.album_name ?? raw.AlbumName ?? raw.remark ?? '').trim(),
+    artists: artists.length ? artists : undefined,
+    album: String(raw.album_name ?? raw.AlbumName ?? raw.album_info?.album_name ?? raw.remark ?? '').trim(),
     duration,
     coverUrl: fixCoverUrl(coverRaw, 480),
     isVip,
     isGray,
     privilege,
   };
+}
+
+export function formatCompactCount(count: number, locale: 'zh-CN' | 'zh-TW' | 'en' = 'zh-CN'): string {
+  const n = Math.max(0, Math.floor(Number(count) || 0));
+  if (locale === 'en') {
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
+    if (n >= 1_000) return `${(n / 1_000).toFixed(1).replace(/\.0$/, '')}K`;
+    return String(n);
+  }
+  const unitW = locale === 'zh-TW' ? '萬' : '万';
+  const unitY = locale === 'zh-TW' ? '億' : '亿';
+  if (n >= 100_000_000) return `${(n / 100_000_000).toFixed(1).replace(/\.0$/, '')}${unitY}`;
+  if (n >= 10_000) return `${(n / 10_000).toFixed(1).replace(/\.0$/, '')}${unitW}`;
+  return String(n);
+}
+
+export function parseHotSearchTabs(body: Record<string, any> | null | undefined, fallbackTitle = '热搜榜'): HotSearchTab[] {
+  const data = body?.data ?? body ?? {};
+  const rawList = data.list ?? data.info ?? [];
+  if (!Array.isArray(rawList) || !rawList.length) return [];
+
+  const tabs: HotSearchTab[] = [];
+  const flatItems: HotSearchItem[] = [];
+
+  for (const group of rawList) {
+    if (!group || typeof group !== 'object') continue;
+    if (Array.isArray(group.keywords) && group.keywords.length > 0) {
+      const seen = new Set<string>();
+      const items: HotSearchItem[] = [];
+      for (const k of group.keywords) {
+        const kw = String(k?.keyword ?? k?.title ?? '').trim();
+        if (!kw || seen.has(kw)) continue;
+        seen.add(kw);
+        const reason = String(k?.reason ?? k?.desc ?? k?.subtitle ?? '').trim() || undefined;
+        const rawIcon = Number(k?.icon ?? 0);
+        const tag =
+          String(k?.tag ?? '').trim() ||
+          (rawIcon === 1 ? 'NEW' : rawIcon === 2 || rawIcon === 3 ? 'HOT' : undefined);
+        items.push({ keyword: kw, reason, tag, rank: items.length + 1 });
+        if (items.length >= 20) break;
+      }
+      if (items.length) {
+        tabs.push({
+          title: String(group.name ?? group.title ?? group.tab_name ?? fallbackTitle).trim() || fallbackTitle,
+          items,
+        });
+      }
+    } else if (typeof group.keyword === 'string' && group.keyword.trim()) {
+      flatItems.push({
+        keyword: group.keyword.trim(),
+        reason: String(group.reason ?? '').trim() || undefined,
+        rank: flatItems.length + 1,
+      });
+    }
+  }
+
+  if (!tabs.length && flatItems.length) {
+    tabs.push({ title: fallbackTitle, items: flatItems.slice(0, 20) });
+  }
+  return tabs;
+}
+
+export function normalizeCommentItem(raw: Record<string, any>, fallbackSpecialId = ''): SongComment {
+  const likeObj = raw.like && typeof raw.like === 'object' ? raw.like : null;
+  const likeCount = Number(likeObj?.likenum ?? likeObj?.count ?? raw.like_num ?? raw.likenum ?? raw.praise_num ?? 0) || 0;
+  const replyCount = Number(raw.reply_num ?? raw.replynum ?? raw.reply_count ?? 0) || 0;
+  const userName = String(raw.user_name ?? raw.username ?? raw.nickname ?? '匿名乐迷').trim() || '匿名乐迷';
+  const rawAvatar = String(raw.user_pic ?? raw.userpic ?? raw.avatar ?? '').trim();
+  const vipRaw = raw.vip_type ?? raw.vipType ?? raw.vip?.vip_type ?? 0;
+  const isVip = Number(vipRaw) > 0 || Boolean(raw.is_vip);
+  const addTime = String(raw.addtime ?? raw.add_time ?? raw.create_time ?? '').trim();
+  const location = String(raw.location ?? raw.ip_location ?? '').trim() || undefined;
+  const content = String(raw.content ?? '').trim();
+  const id = String(raw.id ?? raw.cid ?? raw.comment_id ?? `${userName}-${addTime}`);
+  const tid = String(raw.tid ?? raw.id ?? id);
+  const specialId = String(raw.special_id ?? raw.childrenid ?? fallbackSpecialId ?? '').trim() || undefined;
+  const replyToUser = String(raw.puser ?? raw.reply_user_name ?? '').trim() || undefined;
+
+  return {
+    id,
+    tid,
+    specialId,
+    userId: raw.user_id ? String(raw.user_id) : undefined,
+    userName,
+    userAvatar: fixCoverUrl(rawAvatar, 120),
+    isVip,
+    content,
+    addTime,
+    location,
+    likeCount,
+    replyCount,
+    replyToUser,
+  };
+}
+
+export function normalizeClimaxRange(body: Record<string, any> | null | undefined, durationMs = 0): SongClimaxRange | null {
+  const rawList = Array.isArray(body?.data) ? body.data : Array.isArray(body) ? body : body?.data ? [body.data] : [];
+  for (const item of rawList) {
+    if (!item || typeof item !== 'object') continue;
+    const rawStart = Number(item.start_time ?? item.startTime ?? item.climax_start ?? 0);
+    const rawLen = Number(item.timelength ?? item.time_length ?? item.duration ?? 0);
+    if (!Number.isFinite(rawStart) || rawStart <= 0) continue;
+    // KuGou climax endpoint typically returns ms (e.g. 54200, 32000), fallback if seconds
+    const startMs = rawStart < 1000 && durationMs > 10000 ? rawStart * 1000 : rawStart;
+    const lenMs = rawLen > 0 ? (rawLen < 600 && durationMs > 10000 ? rawLen * 1000 : rawLen) : 28000;
+    const clampedStart = durationMs > 0 ? Math.min(startMs, Math.max(0, durationMs - 5000)) : startMs;
+    const clampedEnd = durationMs > 0 ? Math.min(durationMs, clampedStart + lenMs) : clampedStart + lenMs;
+    if (clampedEnd > clampedStart + 1000) {
+      return { startMs: Math.round(clampedStart), endMs: Math.round(clampedEnd) };
+    }
+  }
+  return null;
 }
 
 // ---- High-level Typed KuGou API ----
@@ -537,20 +744,358 @@ export const kugouApi = {
     }));
   },
 
-  async getHotSearch(): Promise<string[]> {
+  async getHotSearchTabs(): Promise<HotSearchTab[]> {
     const res = await callKugouRoute('/search/hot');
-    const list = res?.body?.data?.list ?? res?.body?.data?.info ?? [];
+    return parseHotSearchTabs(res?.body);
+  },
+
+  async getHotSearch(): Promise<string[]> {
+    const tabs = await this.getHotSearchTabs();
+    const keywords = tabs.flatMap((t) => t.items.map((i) => i.keyword));
+    return Array.from(new Set(keywords)).slice(0, 16);
+  },
+
+  async searchArtists(keywords: string, page = 1, pagesize = 20): Promise<ArtistSummary[]> {
+    const res = await callKugouRoute('/search', { keywords, page, pagesize, type: 'author' });
+    const list = res?.body?.data?.lists ?? res?.body?.data?.info ?? [];
     if (!Array.isArray(list)) return [];
-    const keywords: string[] = [];
-    for (const item of list) {
-      if (typeof item?.keyword === 'string') keywords.push(item.keyword);
-      else if (Array.isArray(item?.keywords)) {
-        for (const k of item.keywords) {
-          if (k?.keyword) keywords.push(String(k.keyword));
-        }
+    return list
+      .map((item: any) => ({
+        id: String(item.AuthorId ?? item.author_id ?? item.singerid ?? item.id ?? '').trim(),
+        name: String(item.AuthorName ?? item.author_name ?? item.singername ?? item.name ?? '').trim(),
+        avatar: fixCoverUrl(item.Avatar ?? item.sizable_avatar ?? item.imgurl ?? item.pic ?? '', 300),
+        songCount: Number(item.AudioCount ?? item.song_count ?? item.songcount ?? 0) || 0,
+        albumCount: Number(item.AlbumCount ?? item.album_count ?? item.albumcount ?? 0) || 0,
+        fansCount: Number(item.FansNum ?? item.fansnums ?? item.fans_count ?? 0) || 0,
+        isFollow: Number(item.IsFollow ?? item.is_follow ?? 0) === 1,
+      }))
+      .filter((a: ArtistSummary) => Boolean(a.id && a.name));
+  },
+
+  async searchAlbums(keywords: string, page = 1, pagesize = 20): Promise<AlbumSummary[]> {
+    const res = await callKugouRoute('/search', { keywords, page, pagesize, type: 'album' });
+    const list = res?.body?.data?.lists ?? res?.body?.data?.info ?? [];
+    if (!Array.isArray(list)) return [];
+    return list
+      .map((item: any) => ({
+        id: String(item.albumid ?? item.album_id ?? item.id ?? '').trim(),
+        name: String(item.albumname ?? item.album_name ?? item.name ?? '').trim(),
+        artist: String(item.singer ?? item.author_name ?? item.singername ?? '').trim(),
+        artistId: item.singerid || item.author_id ? String(item.singerid ?? item.author_id) : undefined,
+        coverUrl: fixCoverUrl(item.img ?? item.sizable_cover ?? item.pic ?? '', 400),
+        publishDate: String(item.publish_time ?? item.publish_date ?? '').slice(0, 10) || undefined,
+        songCount: Number(item.songcount ?? item.song_count ?? 0) || undefined,
+        language: String(item.language ?? '').trim() || undefined,
+        intro: String(item.intro ?? '').trim() || undefined,
+      }))
+      .filter((a: AlbumSummary) => Boolean(a.id && a.name));
+  },
+
+  async resolveArtistByName(name: string): Promise<ArtistSummary | null> {
+    const clean = name.trim();
+    if (!clean || clean === '未知歌手') return null;
+    const list = await this.searchArtists(clean, 1, 8).catch(() => []);
+    if (!list.length) return null;
+    const exact = list.find((a) => a.name.toLowerCase() === clean.toLowerCase());
+    return exact || list[0];
+  },
+
+  async getArtistDetail(authorId: string): Promise<ArtistDetail | null> {
+    const res = await callKugouRoute('/artist/detail', { id: authorId });
+    const rawData = res?.body?.data;
+    const d = Array.isArray(rawData) ? rawData[0] : rawData;
+    if (!d || typeof d !== 'object') return null;
+    const rawIntro = String(d.intro ?? d.short_intro ?? '').trim();
+    const rawLong = String(d.long_intro ?? d.intro ?? '').trim();
+    return {
+      id: String(d.author_id ?? authorId),
+      name: String(d.author_name ?? d.singername ?? '').trim() || '未知歌手',
+      avatar: fixCoverUrl(d.sizable_avatar ?? d.avatar ?? d.imgurl ?? '', 480),
+      songCount: Number(d.song_count ?? d.audio_count ?? 0) || 0,
+      albumCount: Number(d.album_count ?? 0) || 0,
+      mvCount: Number(d.mv_count ?? d.video_count ?? 0) || 0,
+      fansCount: Number(d.fansnums ?? d.fans_count ?? 0) || 0,
+      birthday: String(d.birthday ?? '').trim() || undefined,
+      intro: rawIntro || rawLong,
+      longIntro: rawLong || rawIntro,
+      isFollow: Number(d.is_follow ?? d.follow_status ?? 0) === 1,
+    };
+  },
+
+  async getArtistSongs(
+    authorId: string,
+    sort: 'hot' | 'new' = 'hot',
+    page = 1,
+    pagesize = 30,
+  ): Promise<{ songs: Song[]; total: number; hasMore: boolean }> {
+    const res = await callKugouRoute('/artist/audios', { id: authorId, sort, page, pagesize });
+    const data = res?.body?.data;
+    const list = Array.isArray(data) ? data : data?.songs ?? data?.list ?? data?.info ?? [];
+    const total = Number(res?.body?.total ?? data?.total ?? 0) || 0;
+    const songs = Array.isArray(list) ? list.map(normalizeSong) : [];
+    const hasMore = total > 0 ? page * pagesize < total && songs.length > 0 : songs.length >= pagesize;
+    return { songs, total, hasMore };
+  },
+
+  async getArtistAlbums(
+    authorId: string,
+    page = 1,
+    pagesize = 24,
+  ): Promise<{ albums: AlbumSummary[]; total: number; hasMore: boolean }> {
+    const res = await callKugouRoute('/artist/albums', { id: authorId, sort: 'new', page, pagesize });
+    const data = res?.body?.data;
+    const list = Array.isArray(data) ? data : data?.albums ?? data?.list ?? [];
+    const total = Number(res?.body?.total ?? data?.total ?? 0) || 0;
+    const albums: AlbumSummary[] = Array.isArray(list)
+      ? list
+          .map((item: any) => ({
+            id: String(item.album_id ?? item.albumid ?? item.id ?? '').trim(),
+            name: String(item.album_name ?? item.albumname ?? item.name ?? '').trim(),
+            artist: String(item.author_name ?? item.singername ?? '').trim(),
+            artistId: authorId,
+            coverUrl: fixCoverUrl(item.sizable_cover ?? item.img ?? item.pic ?? '', 400),
+            publishDate: String(item.publish_date ?? item.publish_time ?? '').slice(0, 10) || undefined,
+            songCount: Number(item.song_count ?? item.audio_count ?? 0) || undefined,
+            language: String(item.language ?? '').trim() || undefined,
+            intro: String(item.intro ?? '').trim() || undefined,
+          }))
+          .filter((a: AlbumSummary) => Boolean(a.id && a.name))
+      : [];
+    const hasMore = total > 0 ? page * pagesize < total && albums.length > 0 : albums.length >= pagesize;
+    return { albums, total, hasMore };
+  },
+
+  async setArtistFollow(authorId: string, follow: boolean): Promise<boolean> {
+    const res = await callKugouRoute(follow ? '/artist/follow' : '/artist/unfollow', { id: authorId });
+    const status = Number(res?.body?.status ?? 0);
+    const err = Number(res?.body?.error_code ?? res?.body?.errcode ?? 0);
+    return status === 1 || err === 0;
+  },
+
+  async getAlbumDetail(albumId: string): Promise<AlbumDetail | null> {
+    const [metaRes, songsRes] = await Promise.all([
+      callKugouRoute('/album/detail', { id: albumId }).catch(() => null),
+      callKugouRoute('/album/songs', { id: albumId, page: 1, pagesize: 100 }).catch(() => null),
+    ]);
+    const rawMeta = metaRes?.body?.data;
+    const meta = Array.isArray(rawMeta) ? rawMeta[0] : rawMeta;
+    const songsData = songsRes?.body?.data;
+    const rawSongs = Array.isArray(songsData) ? songsData : songsData?.songs ?? songsData?.list ?? [];
+    const songs = Array.isArray(rawSongs) ? rawSongs.map(normalizeSong) : [];
+    if (!meta && !songs.length) return null;
+
+    const firstAuthor = Array.isArray(meta?.authors) ? meta.authors[0] : null;
+    return {
+      id: String(meta?.album_id ?? albumId),
+      name: String(meta?.album_name ?? songs[0]?.album ?? '未知专辑').trim(),
+      artist: String(meta?.author_name ?? firstAuthor?.author_name ?? songs[0]?.artist ?? '未知歌手').trim(),
+      artistId: firstAuthor?.author_id ? String(firstAuthor.author_id) : undefined,
+      coverUrl: fixCoverUrl(meta?.sizable_cover ?? songs[0]?.coverUrl ?? '', 480),
+      publishDate: String(meta?.publish_date ?? '').slice(0, 10) || undefined,
+      songCount: songs.length,
+      language: String(meta?.language ?? '').trim() || undefined,
+      intro: String(meta?.intro ?? '').trim() || undefined,
+      songs,
+    };
+  },
+
+  async getSongCommentCount(song: { hash?: string; mixSongId?: number }): Promise<number> {
+    if (song.hash) {
+      try {
+        const res = await callKugouRoute('/comment/count', { hash: song.hash });
+        const body = res?.body ?? {};
+        const direct = Number(body[song.hash] ?? body[song.hash.toLowerCase()] ?? body[song.hash.toUpperCase()] ?? body?.data?.[song.hash] ?? body?.count ?? 0);
+        if (direct > 0) return direct;
+      } catch {
+        // fallback below
       }
     }
-    return Array.from(new Set(keywords)).slice(0, 16);
+    if (song.mixSongId) {
+      try {
+        const res = await callKugouRoute('/comment/music', { mixsongid: song.mixSongId, page: 1, pagesize: 1 });
+        return Number(res?.body?.count ?? res?.body?.data?.count ?? 0) || 0;
+      } catch {
+        return 0;
+      }
+    }
+    return 0;
+  },
+
+  async getSongComments(mixSongId: number, page = 1, pagesize = 25): Promise<SongCommentsPage> {
+    const res = await callKugouRoute('/comment/music', {
+      mixsongid: mixSongId,
+      page,
+      pagesize,
+      show_classify: 1,
+      show_hotword_list: 1,
+    });
+    const b = res?.body?.data && Array.isArray(res?.body?.data?.list) ? res.body.data : res?.body ?? {};
+    const specialId = String(b.special_id ?? b.childrenid ?? '').trim() || undefined;
+    const hotList: any[] = page === 1 && Array.isArray(b.weightList) ? b.weightList : [];
+    const mainList: any[] = Array.isArray(b.list) ? b.list : [];
+    const seen = new Set<string>();
+    const comments: SongComment[] = [];
+    for (const raw of [...hotList, ...mainList]) {
+      if (!raw || typeof raw !== 'object') continue;
+      const item = normalizeCommentItem(raw, specialId || '');
+      if (seen.has(item.id)) continue;
+      seen.add(item.id);
+      comments.push(item);
+    }
+    const classifies: CommentClassifyTag[] = Array.isArray(b.classify_list)
+      ? b.classify_list
+          .map((c: any) => ({
+            id: String(c.type_id ?? c.id ?? '').trim(),
+            name: String(c.type_name ?? c.name ?? '').trim(),
+            count: Number(c.count ?? c.num ?? 0) || undefined,
+          }))
+          .filter((c: CommentClassifyTag) => Boolean(c.id && c.name))
+      : [];
+    const hotwords: CommentHotwordTag[] = Array.isArray(b.hot_word_list)
+      ? b.hot_word_list
+          .map((w: any) => ({
+            word: String(typeof w === 'string' ? w : w?.word ?? w?.hot_word ?? w?.name ?? '').trim(),
+            count: Number(w?.count ?? w?.num ?? 0) || undefined,
+          }))
+          .filter((w: CommentHotwordTag) => Boolean(w.word))
+      : [];
+    const total = Number(b.count ?? comments.length) || 0;
+    return {
+      comments,
+      total,
+      hasMore: mainList.length >= pagesize && page * pagesize < Math.max(total, page * pagesize + 1),
+      specialId,
+      classifies,
+      hotwords,
+    };
+  },
+
+  async getSongCommentsByClassify(
+    mixSongId: number,
+    typeId: string,
+    sort: 1 | 2 = 1,
+    page = 1,
+    pagesize = 25,
+  ): Promise<SongCommentsPage> {
+    const res = await callKugouRoute('/comment/music/classify', {
+      mixsongid: mixSongId,
+      type_id: typeId,
+      sort,
+      page,
+      pagesize,
+    });
+    const b = res?.body?.data && Array.isArray(res?.body?.data?.list) ? res.body.data : res?.body ?? {};
+    const specialId = String(b.special_id ?? b.childrenid ?? '').trim() || undefined;
+    const mainList: any[] = Array.isArray(b.list) ? b.list : [];
+    const comments = mainList.map((raw) => normalizeCommentItem(raw, specialId || ''));
+    const total = Number(b.count ?? comments.length) || 0;
+    return {
+      comments,
+      total,
+      hasMore: mainList.length >= pagesize,
+      specialId,
+      classifies: [],
+      hotwords: [],
+    };
+  },
+
+  async getSongCommentsByHotword(
+    mixSongId: number,
+    hotWord: string,
+    page = 1,
+    pagesize = 25,
+  ): Promise<SongCommentsPage> {
+    const res = await callKugouRoute('/comment/music/hotword', {
+      mixsongid: mixSongId,
+      hot_word: hotWord,
+      page,
+      pagesize,
+    });
+    const b = res?.body?.data && Array.isArray(res?.body?.data?.list) ? res.body.data : res?.body ?? {};
+    const specialId = String(b.special_id ?? b.childrenid ?? '').trim() || undefined;
+    const mainList: any[] = Array.isArray(b.list) ? b.list : [];
+    const comments = mainList.map((raw) => normalizeCommentItem(raw, specialId || ''));
+    const total = Number(b.count ?? comments.length) || 0;
+    return {
+      comments,
+      total,
+      hasMore: mainList.length >= pagesize,
+      specialId,
+      classifies: [],
+      hotwords: [],
+    };
+  },
+
+  async getCommentFloorReplies(
+    options: { specialId: string; tid: string; mixSongId?: number; page?: number; pagesize?: number },
+  ): Promise<{ replies: SongComment[]; hasMore: boolean }> {
+    const page = options.page || 1;
+    const pagesize = options.pagesize || 20;
+    const res = await callKugouRoute('/comment/floor', {
+      special_id: options.specialId,
+      tid: options.tid,
+      mixsongid: options.mixSongId,
+      page,
+      pagesize,
+    });
+    const b = res?.body?.data && Array.isArray(res?.body?.data?.list) ? res.body.data : res?.body ?? {};
+    const list: any[] = Array.isArray(b.list) ? b.list : [];
+    const replies = list.map((raw) => normalizeCommentItem(raw, options.specialId));
+    return { replies, hasMore: list.length >= pagesize };
+  },
+
+  async sendSongComment(options: {
+    mixSongId?: number;
+    specialId?: string;
+    songName?: string;
+    content: string;
+  }): Promise<{ ok: boolean; message?: string }> {
+    const res = await callKugouRoute('/comment/music/send', {
+      mixsongid: options.mixSongId,
+      special_id: options.specialId,
+      name: options.songName,
+      content: options.content.trim(),
+    });
+    const b = res?.body ?? {};
+    const ok = Number(b.status ?? 0) === 1 || Number(b.err_code ?? b.error_code ?? -1) === 0;
+    return {
+      ok,
+      message: String(b.msg ?? b.error ?? b.errmsg ?? '').trim() || undefined,
+    };
+  },
+
+  async sendFloorReply(options: {
+    specialId: string;
+    tid: string;
+    songName?: string;
+    content: string;
+    replyUserName?: string;
+    replyContent?: string;
+  }): Promise<{ ok: boolean; message?: string }> {
+    const res = await callKugouRoute('/comment/floor/send', {
+      special_id: options.specialId,
+      tid: options.tid,
+      name: options.songName,
+      content: options.content.trim(),
+      reply_user_name: options.replyUserName,
+      reply_content: options.replyContent,
+    });
+    const b = res?.body ?? {};
+    const ok = Number(b.status ?? 0) === 1 || Number(b.err_code ?? b.error_code ?? -1) === 0;
+    return {
+      ok,
+      message: String(b.msg ?? b.error ?? b.errmsg ?? '').trim() || undefined,
+    };
+  },
+
+  async getSongClimax(hash: string, durationMs = 0): Promise<SongClimaxRange | null> {
+    if (!hash) return null;
+    try {
+      const res = await callKugouRoute('/song/climax', { hash });
+      return normalizeClimaxRange(res?.body, durationMs);
+    } catch {
+      return null;
+    }
   },
 
   async getSearchSuggest(keywords: string): Promise<string[]> {

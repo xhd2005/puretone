@@ -2,7 +2,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
   appId: 'com.xhd2005.puretone',
-  appName: 'PureTone',
+  appName: 'MELUNE',
   webDir: 'dist',
   server: {
     androidScheme: 'https',
@@ -10,7 +10,7 @@ const config: CapacitorConfig = {
   },
   android: {
     allowMixedContent: true,
-    backgroundColor: '#000000',
+    backgroundColor: '#0B1336',
     webContentsDebuggingEnabled: true,
   },
 };

@@ -1,17 +1,45 @@
 <script lang="ts">
 export const COMPLIANCE_ACCEPTED_KEY = 'compliance.accepted.v1';
+
+export interface ComplianceAcceptanceRecord {
+  accepted?: boolean;
+  acceptedVersion?: string;
+  version?: string;
+  acceptedAt?: number;
+}
+
+/**
+ * Requires explicit user re-confirmation on first install AND after EVERY app version upgrade.
+ */
+export function shouldShowComplianceDisclaimer(
+  record: ComplianceAcceptanceRecord | null | undefined,
+  currentVersion: string,
+): boolean {
+  const cleanCurrent = String(currentVersion || '').trim().replace(/^v/i, '');
+  if (!record || !record.accepted) return true;
+  const acceptedVer = String(record.acceptedVersion || record.version || '')
+    .trim()
+    .replace(/^v/i, '');
+  if (!acceptedVer) return true;
+  return acceptedVer !== cleanCurrent;
+}
 </script>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useUiStore } from '@/stores/ui';
 import { useI18n } from '@/i18n';
 import { echoSystem } from '@/native/echoSystem';
-import { APP_REPO_URL } from '@/services/update/updateService';
+import { APP_REPO_URL, FALLBACK_APP_VERSION, getCurrentAppVersion } from '@/services/update/updateService';
 import PureToneMark from './PureToneMark.vue';
 
 const ui = useUiStore();
 const { t } = useI18n();
+const currentVersion = ref(FALLBACK_APP_VERSION);
+
+onMounted(async () => {
+  currentVersion.value = await getCurrentAppVersion();
+});
 
 const clauses = computed(() => [
   { title: t('compliance.c1.title'), body: t('compliance.c1.body') },
@@ -25,11 +53,13 @@ const clauses = computed(() => [
 
 async function acceptAndClose() {
   echoSystem.haptic('success');
+  const ver = currentVersion.value || (await getCurrentAppVersion());
   await echoSystem.kvSetJson(COMPLIANCE_ACCEPTED_KEY, {
     accepted: true,
-    version: '2.3.0',
+    acceptedVersion: ver,
+    version: ver,
     acceptedAt: Date.now(),
-  });
+  } satisfies ComplianceAcceptanceRecord);
   ui.complianceModalOpen = false;
 }
 
@@ -50,13 +80,13 @@ async function openRepo() {
         @click.stop
       >
         <div class="flex items-center gap-3">
-          <PureToneMark :size="44" />
-          <div class="min-w-0">
-            <h2 class="text-[18px] font-bold tracking-tight text-[var(--text-primary)]">
+          <PureToneMark :size="46" />
+          <div class="min-w-0 flex-1">
+            <h2 class="text-[17px] font-bold tracking-tight text-[var(--text-primary)] leading-snug">
               {{ t('compliance.title') }}
             </h2>
-            <p class="text-[12px] text-[var(--text-secondary)] mt-0.5">
-              {{ t('compliance.subtitle') }}
+            <p class="text-[11.5px] text-[var(--text-secondary)] mt-0.5 leading-snug">
+              {{ t('compliance.subtitle', { ver: currentVersion }) }}
             </p>
           </div>
         </div>

@@ -1,6 +1,9 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">纯音</string>
-    <string name="title_activity_main">纯音</string>
-    <string name="widget_description">纯音 4×2 桌面播控卡片</string>
+    <string name="app_name">弥音</string>
+    <string name="title_activity_main">弥音</string>
+    <string name="widget_description">弥音 4×2 动态桌面播控卡片</string>
+    <string name="widget_idle_subtitle">轻触开启音乐记忆</string>
+    <string name="widget_playing_badge">正在播放</string>
+    <string name="widget_paused_badge">已暂停</string>
 </resources>

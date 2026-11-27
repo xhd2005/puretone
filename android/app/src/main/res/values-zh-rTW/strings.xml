@@ -1,6 +1,9 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">純音</string>
-    <string name="title_activity_main">純音</string>
-    <string name="widget_description">純音 PureTone 桌面音樂播控卡片</string>
+    <string name="app_name">彌音</string>
+    <string name="title_activity_main">彌音</string>
+    <string name="widget_description">彌音 4×2 動態桌面播控卡片</string>
+    <string name="widget_idle_subtitle">輕觸開啟音樂記憶</string>
+    <string name="widget_playing_badge">正在播放</string>
+    <string name="widget_paused_badge">已暫停</string>
 </resources>

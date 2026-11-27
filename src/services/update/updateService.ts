@@ -5,7 +5,7 @@ export const APP_REPO = 'xhd2005/puretone';
 export const APP_REPO_URL = `https://github.com/${APP_REPO}`;
 export const APP_RELEASES_URL = `${APP_REPO_URL}/releases`;
 export const APP_AUTHOR = 'xhd2005';
-export const FALLBACK_APP_VERSION = '2.3.0';
+export const FALLBACK_APP_VERSION = '2.4.0';
 
 const LAST_CHECK_KEY = 'update.lastCheckAt.v1';
 const SKIPPED_VERSION_KEY = 'update.skippedVersion.v1';
@@ -54,11 +54,11 @@ export function pickReleaseApkAsset(
   if (!apks.length) return null;
   const preferred =
     apks.find((a) => /release/i.test(String(a.name || ''))) ||
-    apks.find((a) => /puretone/i.test(String(a.name || ''))) ||
+    apks.find((a) => /melune|puretone/i.test(String(a.name || ''))) ||
     apks[0];
   return {
     url: String(preferred.browser_download_url || ''),
-    fileName: String(preferred.name || 'PureTone-update.apk'),
+    fileName: String(preferred.name || 'MELUNE-update.apk'),
     sizeBytes: Number(preferred.size || 0),
   };
 }
@@ -95,7 +95,7 @@ export async function checkForAppUpdate(options: { silent?: boolean; currentVers
     url: `https://api.github.com/repos/${APP_REPO}/releases/latest`,
     headers: {
       Accept: 'application/vnd.github+json',
-      'User-Agent': `PureTone-Android/${currentVersion}`,
+      'User-Agent': `MELUNE-Android/${currentVersion}`,
     },
     connectTimeoutMs: 6000,
     readTimeoutMs: 8000,
@@ -106,7 +106,7 @@ export async function checkForAppUpdate(options: { silent?: boolean; currentVers
       latestVersion: currentVersion,
       currentVersion,
       hasUpdate: false,
-      title: `PureTone v${currentVersion}`,
+      title: `MELUNE v${currentVersion}`,
       releaseNotes: '当前已是最新版本。',
       publishedAt: '',
       htmlUrl: APP_RELEASES_URL,
@@ -137,12 +137,12 @@ export async function checkForAppUpdate(options: { silent?: boolean; currentVers
     latestVersion,
     currentVersion,
     hasUpdate,
-    title: String(data?.name || `PureTone v${latestVersion}`),
+    title: String(data?.name || `MELUNE v${latestVersion}`),
     releaseNotes: String(data?.body || '包含常规体验优化与问题修复。').trim(),
     publishedAt: String(data?.published_at || '').slice(0, 10),
     htmlUrl: String(data?.html_url || APP_RELEASES_URL),
     apkUrl: apk?.url || '',
-    apkFileName: apk?.fileName || `PureTone-v${latestVersion}.apk`,
+    apkFileName: apk?.fileName || `MELUNE-v${latestVersion}.apk`,
     apkSizeBytes: apk?.sizeBytes || 0,
   };
 }

@@ -20,6 +20,14 @@ export function resolveEffectiveLocale(pref: AppLocale, systemLang?: string): Ef
   return 'en';
 }
 
+export function applyLocaleToDocument(locale: EffectiveLocale): void {
+  if (typeof document === 'undefined') return;
+  const html = document.documentElement;
+  const langTag = locale === 'zh-TW' ? 'zh-Hant' : locale === 'en' ? 'en' : 'zh-Hans';
+  html.setAttribute('lang', langTag);
+  html.setAttribute('data-locale', locale);
+}
+
 export function translateKey(
   locale: EffectiveLocale,
   key: I18nKey,

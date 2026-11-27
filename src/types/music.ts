@@ -6,6 +6,11 @@ export type SleepTimerMode = 'off' | '15' | '30' | '60' | 'track';
 
 export type PlaylistSortMode = 'default' | 'newest' | 'oldest' | 'title' | 'artist';
 
+export interface SongArtistRef {
+  id: string;
+  name: string;
+}
+
 export interface Song {
   id: string;
   hash: string;
@@ -17,6 +22,7 @@ export interface Song {
   albumId?: string;
   title: string;
   artist: string;
+  artists?: SongArtistRef[];
   album: string;
   duration: number; // seconds
   coverUrl: string;
@@ -168,4 +174,90 @@ export interface CoverPalette {
   accentLight: string;
   accentDark: string;
   fluidColors: [string, string, string, string];
+}
+
+export interface HotSearchItem {
+  keyword: string;
+  reason?: string;
+  tag?: string;
+  rank: number;
+}
+
+export interface HotSearchTab {
+  title: string;
+  items: HotSearchItem[];
+}
+
+export interface SongComment {
+  id: string;
+  tid: string;
+  specialId?: string;
+  userId?: string;
+  userName: string;
+  userAvatar: string;
+  isVip: boolean;
+  content: string;
+  addTime: string;
+  location?: string;
+  likeCount: number;
+  replyCount: number;
+  replyToUser?: string;
+}
+
+export interface CommentClassifyTag {
+  id: string;
+  name: string;
+  count?: number;
+}
+
+export interface CommentHotwordTag {
+  word: string;
+  count?: number;
+}
+
+export interface SongCommentsPage {
+  comments: SongComment[];
+  total: number;
+  hasMore: boolean;
+  specialId?: string;
+  classifies: CommentClassifyTag[];
+  hotwords: CommentHotwordTag[];
+}
+
+export interface ArtistSummary {
+  id: string;
+  name: string;
+  avatar: string;
+  songCount: number;
+  albumCount: number;
+  fansCount: number;
+  isFollow?: boolean;
+}
+
+export interface ArtistDetail extends ArtistSummary {
+  mvCount: number;
+  birthday?: string;
+  intro: string;
+  longIntro: string;
+}
+
+export interface AlbumSummary {
+  id: string;
+  name: string;
+  artist: string;
+  artistId?: string;
+  coverUrl: string;
+  publishDate?: string;
+  songCount?: number;
+  language?: string;
+  intro?: string;
+}
+
+export interface AlbumDetail extends AlbumSummary {
+  songs: Song[];
+}
+
+export interface SongClimaxRange {
+  startMs: number;
+  endMs: number;
 }

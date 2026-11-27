@@ -63,7 +63,7 @@ jobs:
         run: |
           if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
             echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > app/release.keystore
-            echo "Permanent PureTone signing keystore ready."
+            echo "Permanent MELUNE signing keystore ready."
           elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
             echo "::error::ANDROID_KEYSTORE_BASE64 secret is missing on a release tag build! Refusing to publish an ephemeral-key APK."
             exit 1
@@ -83,7 +83,7 @@ jobs:
           if [ -f app/release.keystore ] && [ -n "$ANDROID_KEYSTORE_PASSWORD" ]; then
             ./gradlew :app:assembleRelease
             VER="${{ github.ref_name }}"
-            cp app/build/outputs/apk/release/app-release.apk "app/build/outputs/apk/release/PureTone-${VER}-release.apk"
+            cp app/build/outputs/apk/release/app-release.apk "app/build/outputs/apk/release/MELUNE-${VER}-release.apk"
           fi
 
       - name: Verify APK Signing Certificate Fingerprint
@@ -100,15 +100,15 @@ jobs:
       - name: Upload Release APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: PureTone-Release-APK
-          path: android/app/build/outputs/apk/release/PureTone-*-release.apk
+          name: MELUNE-Release-APK
+          path: android/app/build/outputs/apk/release/MELUNE-*-release.apk
           if-no-files-found: ignore
           retention-days: 30
 
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: PureTone-Debug-APK
+          name: MELUNE-Debug-APK
           path: android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 30
 
@@ -118,4 +118,4 @@ jobs:
         with:
           generate_release_notes: true
           files: |
-            android/app/build/outputs/apk/release/PureTone-*-release.apk
+            android/app/build/outputs/apk/release/MELUNE-*-release.apk

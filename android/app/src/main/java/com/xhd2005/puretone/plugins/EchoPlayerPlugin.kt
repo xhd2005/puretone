@@ -287,6 +287,24 @@ class EchoPlayerPlugin : Plugin(), PlayerBridgeListener {
     }
 
     @PluginMethod
+    fun setTransitionFadeMs(call: PluginCall) {
+        val fadeMs = call.getInt("fadeMs") ?: 1500
+        ensureServiceBound { svc ->
+            svc.setTransitionFadeMs(fadeMs)
+            call.resolve()
+        }
+    }
+
+    @PluginMethod
+    fun setVolumeLeveling(call: PluginCall) {
+        val enabled = call.getBoolean("enabled", false) ?: false
+        ensureServiceBound { svc ->
+            svc.setVolumeLeveling(enabled)
+            call.resolve()
+        }
+    }
+
+    @PluginMethod
     fun updateMetadata(call: PluginCall) {
         val metadata = parseMetadata(call.data)
         EchoPlaybackService.activeService?.updateMetadata(metadata)

@@ -1,8 +1,11 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">PureTone</string>
-    <string name="title_activity_main">PureTone</string>
+    <string name="app_name">MELUNE</string>
+    <string name="title_activity_main">MELUNE</string>
     <string name="package_name">com.xhd2005.puretone</string>
     <string name="custom_url_scheme">com.xhd2005.puretone</string>
-    <string name="widget_description">PureTone Music Player Widget</string>
+    <string name="widget_description">MELUNE 4×2 Music Player Widget</string>
+    <string name="widget_idle_subtitle">Tap to start listening</string>
+    <string name="widget_playing_badge">PLAYING</string>
+    <string name="widget_paused_badge">PAUSED</string>
 </resources>

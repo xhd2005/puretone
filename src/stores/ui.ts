@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import type { SafeAreaInsets } from '@/native/echoSystem';
-import type { Song } from '@/types/music';
+import type { Song, SongArtistRef } from '@/types/music';
 import type { ReleaseUpdateInfo } from '@/services/update/updateService';
 import { echoSystem } from '@/native/echoSystem';
 
@@ -13,6 +13,9 @@ export const useUiStore = defineStore('ui', () => {
   const actionSheetSong = ref<Song | null>(null);
   const unblockModalSong = ref<Song | null>(null);
   const lyricPosterSong = ref<Song | null>(null);
+  const commentsSheetSong = ref<Song | null>(null);
+  const commentsSheetTab = ref<'details' | 'comments'>('comments');
+  const artistPickerCandidates = ref<SongArtistRef[] | null>(null);
   const updateReleaseInfo = ref<ReleaseUpdateInfo | null>(null);
   const complianceModalOpen = ref(false);
 
@@ -29,6 +32,8 @@ export const useUiStore = defineStore('ui', () => {
         actionSheetSong.value ||
         unblockModalSong.value ||
         lyricPosterSong.value ||
+        commentsSheetSong.value ||
+        artistPickerCandidates.value ||
         updateReleaseInfo.value ||
         complianceModalOpen.value,
     ),
@@ -66,8 +71,18 @@ export const useUiStore = defineStore('ui', () => {
     nowPlayingOpen.value = true;
   }
 
+  function openSongComments(song: Song, tab: 'details' | 'comments' = 'comments') {
+    echoSystem.haptic('light');
+    commentsSheetTab.value = tab;
+    commentsSheetSong.value = song;
+  }
+
   function closeTopOverlay(): boolean {
     if (complianceModalOpen.value) {
+      return true;
+    }
+    if (artistPickerCandidates.value) {
+      artistPickerCandidates.value = null;
       return true;
     }
     if (updateReleaseInfo.value) {
@@ -76,6 +91,10 @@ export const useUiStore = defineStore('ui', () => {
     }
     if (lyricPosterSong.value) {
       lyricPosterSong.value = null;
+      return true;
+    }
+    if (commentsSheetSong.value) {
+      commentsSheetSong.value = null;
       return true;
     }
     if (unblockModalSong.value) {
@@ -109,6 +128,9 @@ export const useUiStore = defineStore('ui', () => {
     actionSheetSong,
     unblockModalSong,
     lyricPosterSong,
+    commentsSheetSong,
+    commentsSheetTab,
+    artistPickerCandidates,
     updateReleaseInfo,
     complianceModalOpen,
     hasModalOverlay,
@@ -117,6 +139,7 @@ export const useUiStore = defineStore('ui', () => {
     initSystemInsets,
     showToast,
     openNowPlaying,
+    openSongComments,
     closeTopOverlay,
   };
 });

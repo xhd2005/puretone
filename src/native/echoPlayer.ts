@@ -97,6 +97,8 @@ export interface EchoPlayerPluginInterface {
   setPlayModeState(options: { mode: string }): Promise<void>;
   setLiveLyric(options: { line: string }): Promise<void>;
   setEqPreset(options: { preset: EqPresetId }): Promise<void>;
+  setTransitionFadeMs(options: { fadeMs: number }): Promise<void>;
+  setVolumeLeveling(options: { enabled: boolean }): Promise<void>;
   updateMetadata(options: PlayerTrackMetadata): Promise<void>;
   getAudioCacheStats(): Promise<AudioCacheStats>;
   clearAudioCache(): Promise<{ cleared: boolean }>;
@@ -356,6 +358,12 @@ export const echoPlayer = {
   },
   async setEqPreset(preset: EqPresetId) {
     if (Capacitor.isNativePlatform()) return EchoPlayerNative.setEqPreset({ preset }).catch(() => {});
+  },
+  async setTransitionFadeMs(fadeMs: number) {
+    if (Capacitor.isNativePlatform()) return EchoPlayerNative.setTransitionFadeMs({ fadeMs }).catch(() => {});
+  },
+  async setVolumeLeveling(enabled: boolean) {
+    if (Capacitor.isNativePlatform()) return EchoPlayerNative.setVolumeLeveling({ enabled }).catch(() => {});
   },
   async updateMetadata(metadata: PlayerTrackMetadata) {
     if (Capacitor.isNativePlatform()) return EchoPlayerNative.updateMetadata(metadata);

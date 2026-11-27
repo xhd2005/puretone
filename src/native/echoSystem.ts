@@ -150,7 +150,7 @@ export const echoSystem = {
     if (Capacitor.isNativePlatform()) {
       return EchoSystemNative.getLaunchFlags();
     }
-    return { autoClaim: false, openNowPlaying: false, versionName: '2.3.0', versionCode: 6 };
+    return { autoClaim: false, openNowPlaying: false, versionName: '2.4.0', versionCode: 7 };
   },
 
   async checkNotificationPermission(): Promise<{ granted: boolean; systemEnabled: boolean; runtimeGranted: boolean }> {
@@ -271,7 +271,7 @@ export const echoSystem = {
     if (typeof document !== 'undefined') {
       const a = document.createElement('a');
       a.href = base64Image;
-      a.download = fileName || `PureTone_Poster_${Date.now()}.png`;
+      a.download = fileName || `MELUNE_Poster_${Date.now()}.png`;
       a.click();
       return true;
     }

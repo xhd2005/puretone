@@ -27,14 +27,21 @@ const router = useRouter();
 const accounts = useAccountsStore();
 const player = usePlayerStore();
 const ui = useUiStore();
-const { t } = useI18n();
+const { t, effectiveLocale } = useI18n();
 const { largeTitleOpacity, compactTitleOpacity, headerGlassActive, onScroll } = useCollapsingTitle();
 
 const dailySongs = ref<Song[]>([]);
 const playlists = ref<PlaylistSummary[]>([]);
 const loading = ref(false);
 
-const todayLabel = `${new Date().getMonth() + 1}月${new Date().getDate()}日`;
+const EN_MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+const todayLabel = computed(() => {
+  const now = new Date();
+  if (effectiveLocale.value === 'en') {
+    return `${EN_MONTHS[now.getMonth()]} ${now.getDate()}`;
+  }
+  return `${now.getMonth() + 1}月${now.getDate()}日`;
+});
 
 const dailyHeroCover = computed(() => dailySongs.value[0]?.coverUrl || '');
 const fmHeroCover = computed(
@@ -162,12 +169,12 @@ watch(() => accounts.activeAccount?.userid, () => void loadHomeData());
             <img v-if="dailyHeroCover" :src="dailyHeroCover" alt="" class="poster-bg-img" />
             <div class="poster-scrim scrim-daily" />
             <div class="poster-body">
-              <div class="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest text-white/85">
-                <Icon :icon="iconSparkles" class="w-3 h-3" />
-                <span>{{ todayLabel }}</span>
+              <div class="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-white/85 whitespace-nowrap">
+                <Icon :icon="iconSparkles" class="w-3 h-3 shrink-0" />
+                <span class="truncate">{{ todayLabel }}</span>
               </div>
               <div class="mt-auto">
-                <div class="text-[19px] font-bold text-white tracking-tight leading-tight">{{ t('home.dailyCurated') }}</div>
+                <div class="text-[18px] font-bold text-white tracking-tight leading-tight truncate">{{ t('home.dailyCurated') }}</div>
                 <div class="flex items-center justify-between gap-2 mt-1.5">
                   <span class="text-[12px] text-white/75 truncate">
                     {{ dailySongs.length ? t('common.songsCount', { count: dailySongs.length }) : t('home.dailySubtitle') }}
@@ -195,12 +202,12 @@ watch(() => accounts.activeAccount?.userid, () => void loadHomeData());
             <img v-if="fmHeroCover" :src="fmHeroCover" alt="" class="poster-bg-img" />
             <div class="poster-scrim scrim-fm" />
             <div class="poster-body">
-              <div class="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest text-white/85">
-                <Icon :icon="iconRadio" class="w-3 h-3" />
-                <span>{{ t('home.fmLabel') }}</span>
+              <div class="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-white/85 whitespace-nowrap">
+                <Icon :icon="iconRadio" class="w-3 h-3 shrink-0" />
+                <span class="truncate">{{ t('home.fmLabel') }}</span>
               </div>
               <div class="mt-auto">
-                <div class="text-[19px] font-bold text-white tracking-tight leading-tight">{{ t('home.fmTitle') }}</div>
+                <div class="text-[18px] font-bold text-white tracking-tight leading-tight truncate">{{ t('home.fmTitle') }}</div>
                 <div class="flex items-center justify-between gap-2 mt-1.5">
                   <span class="text-[12px] text-white/75 truncate">{{ t('home.fmSubtitle') }}</span>
                   <div class="poster-play-btn lg-fluid-btn shrink-0">

@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="288dp"
+    android:height="288dp"
+    android:viewportWidth="288"
+    android:viewportHeight="288">
+
+    <!-- Android 12-17 Splash Safe-Zone Centered Moonlit Badge (112dp inside 192dp circle) -->
+    <group
+        android:translateX="90"
+        android:translateY="90">
+        <!-- Soft Moonlit Indigo Squircle Medallion -->
+        <path android:pathData="M26,0 L82,0 A26,26 0 0,1 108,26 L108,82 A26,26 0 0,1 82,108 L26,108 A26,26 0 0,1 0,82 L0,26 A26,26 0 0,1 26,0 Z">
+            <aapt:attr name="android:fillColor">
+                <gradient
+                    android:type="linear"
+                    android:startX="19"
+                    android:startY="0"
+                    android:endX="89"
+                    android:endY="108">
+                    <item android:color="#FF3456BE" android:offset="0.0" />
+                    <item android:color="#FF1A2D70" android:offset="0.48" />
+                    <item android:color="#FF0E1844" android:offset="1.0" />
+                </gradient>
+            </aapt:attr>
+        </path>
+
+        <!-- Soft Overhead Lunar Glow -->
+        <path android:pathData="M26,0 L82,0 A26,26 0 0,1 108,26 L108,82 A26,26 0 0,1 82,108 L26,108 A26,26 0 0,1 0,82 L0,26 A26,26 0 0,1 26,0 Z">
+            <aapt:attr name="android:fillColor">
+                <gradient
+                    android:type="radial"
+                    android:centerX="37"
+                    android:centerY="16"
+                    android:gradientRadius="65">
+                    <item android:color="#58A6CCFF" android:offset="0.0" />
+                    <item android:color="#006A95F7" android:offset="1.0" />
+                </gradient>
+            </aapt:attr>
+        </path>
+
+        <!-- Sculpted Pure-White Crescent-Note Emblem -->
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M53.16,54.41 L53.16,30.16 C53.16,26.58 56.11,24.05 59.70,24.79 C67.93,26.47 75.31,31.01 79.32,37.44 C81.00,40.18 80.05,43.77 77.21,45.14 C74.78,46.30 71.93,45.46 70.35,43.35 C67.61,39.66 64.34,37.44 61.17,36.49 L61.17,67.92 A15.40,15.40 0 1,1 30.39,67.36 A11.18,11.18 0 1,0 44.55,52.57 A15.40,15.40 0 0,1 53.16,54.41 Z" />
+    </group>
+</vector>

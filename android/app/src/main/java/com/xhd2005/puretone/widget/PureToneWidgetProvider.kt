@@ -8,20 +8,35 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.LinearGradient
+import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
+import android.graphics.Shader
 import android.widget.RemoteViews
 import com.xhd2005.puretone.MainActivity
 import com.xhd2005.puretone.R
 import com.xhd2005.puretone.player.EchoPlaybackService
+import kotlin.math.roundToInt
 
 class PureToneWidgetProvider : AppWidgetProvider() {
 
     override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray) {
+        val fallbackTitle = lastTitle.ifBlank { context.getString(R.string.app_name) }
+        val fallbackArtist = lastArtist.ifBlank { context.getString(R.string.widget_idle_subtitle) }
         for (id in appWidgetIds) {
             appWidgetManager.updateAppWidget(
                 id,
-                buildRemoteViews(context, lastTitle, lastArtist, lastIsPlaying, lastArtwork),
+                buildRemoteViews(
+                    context,
+                    fallbackTitle,
+                    fallbackArtist,
+                    lastIsPlaying,
+                    lastIsFavorite,
+                    lastAccentColor,
+                    lastArtwork,
+                ),
             )
         }
     }
@@ -53,6 +68,14 @@ class PureToneWidgetProvider : AppWidgetProvider() {
                     launchMainApp(context, openNowPlaying = true)
                 }
             }
+            ACTION_FAV -> {
+                val svc = EchoPlaybackService.activeService
+                if (svc != null) {
+                    svc.handleWidgetToggleFav()
+                } else {
+                    launchMainApp(context, openNowPlaying = true)
+                }
+            }
         }
     }
 
@@ -72,15 +95,24 @@ class PureToneWidgetProvider : AppWidgetProvider() {
         const val ACTION_TOGGLE = "com.xhd2005.puretone.widget.ACTION_TOGGLE"
         const val ACTION_NEXT = "com.xhd2005.puretone.widget.ACTION_NEXT"
         const val ACTION_PREV = "com.xhd2005.puretone.widget.ACTION_PREV"
+        const val ACTION_FAV = "com.xhd2005.puretone.widget.ACTION_FAV"
+
+        private const val DEFAULT_ACCENT = 0xFF1A2D70.toInt()
 
         @Volatile
-        private var lastTitle: String = "PureTone"
+        private var lastTitle: String = ""
 
         @Volatile
-        private var lastArtist: String = "轻触开始聆听"
+        private var lastArtist: String = ""
 
         @Volatile
         private var lastIsPlaying: Boolean = false
+
+        @Volatile
+        private var lastIsFavorite: Boolean = false
+
+        @Volatile
+        private var lastAccentColor: Int = DEFAULT_ACCENT
 
         @Volatile
         private var lastArtwork: Bitmap? = null
@@ -91,17 +123,29 @@ class PureToneWidgetProvider : AppWidgetProvider() {
             artist: String,
             isPlaying: Boolean,
             artwork: Bitmap?,
+            accentColor: Int = DEFAULT_ACCENT,
+            isFavorite: Boolean = false,
         ) {
             lastTitle = title.ifBlank { context.getString(R.string.app_name) }
-            lastArtist = artist.ifBlank { "轻触开始聆听" }
+            lastArtist = artist.ifBlank { context.getString(R.string.widget_idle_subtitle) }
             lastIsPlaying = isPlaying
-            lastArtwork = artwork?.let { createRoundedCoverBitmap(it, 200, 28f) }
+            lastIsFavorite = isFavorite
+            lastAccentColor = accentColor
+            lastArtwork = artwork?.let { createRoundedCoverBitmap(it, 220, 32f) }
 
             try {
                 val mgr = AppWidgetManager.getInstance(context)
                 val ids = mgr.getAppWidgetIds(ComponentName(context, PureToneWidgetProvider::class.java))
                 if (ids.isEmpty()) return
-                val views = buildRemoteViews(context, lastTitle, lastArtist, lastIsPlaying, lastArtwork)
+                val views = buildRemoteViews(
+                    context,
+                    lastTitle,
+                    lastArtist,
+                    lastIsPlaying,
+                    lastIsFavorite,
+                    lastAccentColor,
+                    lastArtwork,
+                )
                 for (id in ids) {
                     mgr.updateAppWidget(id, views)
                 }
@@ -115,15 +159,32 @@ class PureToneWidgetProvider : AppWidgetProvider() {
             title: String,
             artist: String,
             isPlaying: Boolean,
+            isFavorite: Boolean,
+            accentColor: Int,
             artwork: Bitmap?,
         ): RemoteViews {
             val views = RemoteViews(context.packageName, R.layout.widget_puretone_player)
+            val appName = context.getString(R.string.app_name)
+            val statusBadge = if (isPlaying) {
+                "$appName · ${context.getString(R.string.widget_playing_badge)}"
+            } else {
+                "$appName · ${context.getString(R.string.widget_paused_badge)}"
+            }
+            views.setTextViewText(R.id.widget_status, statusBadge)
             views.setTextViewText(R.id.widget_title, title)
             views.setTextViewText(R.id.widget_artist, artist)
             views.setImageViewResource(
                 R.id.widget_btn_play,
                 if (isPlaying) R.drawable.ic_widget_pause else R.drawable.ic_widget_play,
             )
+            views.setImageViewResource(
+                R.id.widget_btn_fav,
+                if (isFavorite) R.drawable.ic_widget_heart_filled else R.drawable.ic_widget_heart,
+            )
+
+            createLiquidBackdropBitmap(accentColor)?.let { bgBmp ->
+                views.setImageViewBitmap(R.id.widget_backdrop, bgBmp)
+            }
 
             if (artwork != null && !artwork.isRecycled) {
                 views.setImageViewBitmap(R.id.widget_cover, artwork)
@@ -147,6 +208,7 @@ class PureToneWidgetProvider : AppWidgetProvider() {
             views.setOnClickPendingIntent(R.id.widget_btn_prev, broadcastAction(context, ACTION_PREV, 1002))
             views.setOnClickPendingIntent(R.id.widget_btn_play, broadcastAction(context, ACTION_TOGGLE, 1003))
             views.setOnClickPendingIntent(R.id.widget_btn_next, broadcastAction(context, ACTION_NEXT, 1004))
+            views.setOnClickPendingIntent(R.id.widget_btn_fav, broadcastAction(context, ACTION_FAV, 1005))
 
             return views
         }
@@ -161,6 +223,57 @@ class PureToneWidgetProvider : AppWidgetProvider() {
                 intent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )
+        }
+
+        private fun createLiquidBackdropBitmap(accentColor: Int): Bitmap? {
+            return try {
+                val w = 480
+                val h = 216
+                val radius = 44f
+                val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                val canvas = Canvas(out)
+                val rect = RectF(0f, 0f, w.toFloat(), h.toFloat())
+
+                val r = Color.red(accentColor)
+                val g = Color.green(accentColor)
+                val b = Color.blue(accentColor)
+                val topColor = Color.argb(
+                    244,
+                    (r * 0.72f + 16f).roundToInt().coerceIn(14, 155),
+                    (g * 0.72f + 20f).roundToInt().coerceIn(18, 155),
+                    (b * 0.72f + 34f).roundToInt().coerceIn(28, 180),
+                )
+                val bottomColor = Color.argb(
+                    250,
+                    (r * 0.24f + 8f).roundToInt().coerceIn(8, 52),
+                    (g * 0.24f + 10f).roundToInt().coerceIn(10, 56),
+                    (b * 0.28f + 22f).roundToInt().coerceIn(18, 78),
+                )
+
+                val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    shader = LinearGradient(
+                        0f,
+                        0f,
+                        w.toFloat(),
+                        h.toFloat(),
+                        topColor,
+                        bottomColor,
+                        Shader.TileMode.CLAMP,
+                    )
+                }
+                canvas.drawRoundRect(rect, radius, radius, fillPaint)
+
+                // Subtle Liquid Glass specular rim stroke
+                val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE
+                    strokeWidth = 2.5f
+                    color = Color.argb(46, 255, 255, 255)
+                }
+                canvas.drawRoundRect(RectF(1.5f, 1.5f, w - 1.5f, h - 1.5f), radius - 1f, radius - 1f, strokePaint)
+                out
+            } catch (_: Exception) {
+                null
+            }
         }
 
         private fun createRoundedCoverBitmap(src: Bitmap, sizePx: Int, radiusPx: Float): Bitmap? {

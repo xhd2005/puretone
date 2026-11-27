@@ -4,7 +4,7 @@ import { Icon } from '@iconify/vue';
 import iconChartBar from '@iconify/icons-tabler/chart-bar';
 import iconPlayerPlayFilled from '@iconify/icons-tabler/player-play-filled';
 import iconMusic from '@iconify/icons-tabler/music';
-import { useStatsStore } from '@/stores/stats';
+import { buildLast7DaysSeries, useStatsStore } from '@/stores/stats';
 import { usePlayerStore } from '@/stores/player';
 import { useUiStore } from '@/stores/ui';
 import { useI18n } from '@/i18n';
@@ -13,13 +13,13 @@ import { echoSystem } from '@/native/echoSystem';
 const stats = useStatsStore();
 const player = usePlayerStore();
 const ui = useUiStore();
-const { t } = useI18n();
+const { t, effectiveLocale } = useI18n();
 
 const mode = ref<'7d' | '24h'>('7d');
 const selectedDayIdx = ref<number>(6);
 const selectedHourIdx = ref<number>(-1);
 
-const weekSeries = computed(() => stats.last7DaysSeries);
+const weekSeries = computed(() => buildLast7DaysSeries(stats.daily, new Date(), effectiveLocale.value));
 const hourSeries = computed(() => stats.today24HourSeries);
 
 watch(mode, (next) => {
@@ -38,11 +38,22 @@ const activeHour = computed(() => {
 });
 
 function formatMinutesPretty(mins: number): string {
-  if (mins < 60) return `${mins} 分钟`;
+  if (mins < 60) return t('stats.durMin', { m: mins });
   const h = Math.floor(mins / 60);
   const m = mins % 60;
-  return m > 0 ? `${h} 小时 ${m} 分` : `${h} 小时`;
+  return m > 0 ? t('stats.durHourMin', { h, m }) : t('stats.durHour', { h });
 }
+
+const totalDurationLocalized = computed(() => {
+  const mins = Math.floor(stats.totalSeconds / 60);
+  if (mins < 60) return t('profile.durM', { m: mins });
+  const hours = Math.floor(mins / 60);
+  const remMin = mins % 60;
+  if (hours < 24) return t('profile.durHM', { h: hours, m: remMin });
+  const days = Math.floor(hours / 24);
+  const remHr = hours % 24;
+  return t('profile.durDH', { d: days, h: remHr });
+});
 
 const avgLineBottomPct = computed(() => {
   const s = weekSeries.value;
@@ -145,13 +156,13 @@ function playTopStatSong(key: string) {
 
     <!-- MODE 1: 7-Day Vertical Bar Chart with Dashed Daily Average Reference Line -->
     <div v-if="mode === '7d'" class="pt-2">
-      <div class="relative h-[132px] pr-9">
+      <div class="relative h-[132px] pr-11">
         <!-- Dashed Y-axis gridlines -->
         <div class="absolute inset-x-0 top-0 border-t border-dashed border-[var(--hairline)] flex justify-end">
-          <span class="text-[10px] text-[var(--text-tertiary)] tabular-nums -mt-2 pl-1">{{ weekSeries.maxMinutes }}分</span>
+          <span class="text-[10px] text-[var(--text-tertiary)] tabular-nums -mt-2 pl-1 whitespace-nowrap">{{ weekSeries.maxMinutes }}{{ t('stats.minShort') }}</span>
         </div>
         <div class="absolute inset-x-0 top-1/2 border-t border-dashed border-[var(--hairline)] flex justify-end">
-          <span class="text-[10px] text-[var(--text-tertiary)] tabular-nums -mt-2 pl-1">{{ Math.round(weekSeries.maxMinutes / 2) }}分</span>
+          <span class="text-[10px] text-[var(--text-tertiary)] tabular-nums -mt-2 pl-1 whitespace-nowrap">{{ Math.round(weekSeries.maxMinutes / 2) }}{{ t('stats.minShort') }}</span>
         </div>
         <div class="absolute inset-x-0 bottom-0 border-t border-[var(--hairline)]" />
 
@@ -162,7 +173,7 @@ function playTopStatSong(key: string) {
           :style="{ bottom: `${avgLineBottomPct}%` }"
         >
           <div class="flex-1 border-t border-dashed border-[#34c759]/80" />
-          <span class="text-[10px] font-semibold text-[#2fb350] pl-1 shrink-0">{{ t('stats.avgLine') }}</span>
+          <span class="text-[10px] font-semibold text-[#2fb350] pl-1 shrink-0 whitespace-nowrap">{{ t('stats.avgLine') }}</span>
         </div>
 
         <!-- 7 Interactive Bars -->
@@ -172,7 +183,7 @@ function playTopStatSong(key: string) {
             :key="day.dateKey"
             type="button"
             class="h-full flex flex-col justify-end items-center bg-transparent border-0 p-0 cursor-pointer group"
-            :aria-label="`${day.fullLabel} ${day.minutes}分钟`"
+            :aria-label="`${day.fullLabel} ${day.minutes}${t('stats.minShort')}`"
             @click="selectDay(idx)"
           >
             <div class="w-full max-w-[26px] h-full flex items-end justify-center">
@@ -195,12 +206,12 @@ function playTopStatSong(key: string) {
       </div>
 
       <!-- X-Axis Weekday Labels -->
-      <div class="grid grid-cols-7 gap-2 pr-9 mt-1.5 text-center">
+      <div class="grid grid-cols-7 gap-2 pr-11 mt-1.5 text-center">
         <button
           v-for="(day, idx) in weekSeries.days"
           :key="day.dateKey"
           type="button"
-          class="text-[11px] bg-transparent border-0 p-0 tabular-nums"
+          class="text-[10.5px] bg-transparent border-0 p-0 tabular-nums truncate"
           :class="selectedDayIdx === idx ? 'am-accent-text font-bold' : 'text-[var(--text-secondary)] font-medium'"
           @click="selectDay(idx)"
         >
@@ -211,12 +222,12 @@ function playTopStatSong(key: string) {
 
     <!-- MODE 2: Today 24-Hour Activity Bar Chart -->
     <div v-else class="pt-2">
-      <div class="relative h-[132px] pr-9">
+      <div class="relative h-[132px] pr-11">
         <div class="absolute inset-x-0 top-0 border-t border-dashed border-[var(--hairline)] flex justify-end">
-          <span class="text-[10px] text-[var(--text-tertiary)] tabular-nums -mt-2 pl-1">{{ hourSeries.maxMinutes }}分</span>
+          <span class="text-[10px] text-[var(--text-tertiary)] tabular-nums -mt-2 pl-1 whitespace-nowrap">{{ hourSeries.maxMinutes }}{{ t('stats.minShort') }}</span>
         </div>
         <div class="absolute inset-x-0 top-1/2 border-t border-dashed border-[var(--hairline)] flex justify-end">
-          <span class="text-[10px] text-[var(--text-tertiary)] tabular-nums -mt-2 pl-1">{{ Math.round(hourSeries.maxMinutes / 2) }}分</span>
+          <span class="text-[10px] text-[var(--text-tertiary)] tabular-nums -mt-2 pl-1 whitespace-nowrap">{{ Math.round(hourSeries.maxMinutes / 2) }}{{ t('stats.minShort') }}</span>
         </div>
         <div class="absolute inset-x-0 bottom-0 border-t border-[var(--hairline)]" />
 
@@ -226,7 +237,7 @@ function playTopStatSong(key: string) {
             :key="item.hour"
             type="button"
             class="h-full flex items-end justify-center bg-transparent border-0 p-0 cursor-pointer"
-            :aria-label="`${item.label} ${item.minutes}分钟`"
+            :aria-label="`${item.label} ${item.minutes}${t('stats.minShort')}`"
             @click="selectHour(item.hour)"
           >
             <div
@@ -241,32 +252,32 @@ function playTopStatSong(key: string) {
       </div>
 
       <!-- 24h Time Axis Ticks -->
-      <div class="flex items-center justify-between pr-9 mt-1.5 text-[10px] text-[var(--text-tertiary)] tabular-nums">
-        <span>0时</span>
-        <span>6时</span>
-        <span>12时</span>
-        <span>18时</span>
-        <span>23时</span>
+      <div class="flex items-center justify-between pr-11 mt-1.5 text-[10px] text-[var(--text-tertiary)] tabular-nums">
+        <span>0{{ t('stats.hourShort') }}</span>
+        <span>6{{ t('stats.hourShort') }}</span>
+        <span>12{{ t('stats.hourShort') }}</span>
+        <span>18{{ t('stats.hourShort') }}</span>
+        <span>23{{ t('stats.hourShort') }}</span>
       </div>
     </div>
 
     <!-- Compact Summary Strip -->
     <div class="grid grid-cols-3 gap-2 pt-1 text-center">
-      <div class="rounded-2xl bg-[var(--bg-subtle)]/55 py-2.5 px-2">
-        <div class="text-[15px] font-bold text-[var(--text-primary)] tabular-nums">{{ stats.todayPlays }} {{ t('stats.songUnit') }}</div>
-        <div class="text-[11px] text-[var(--text-secondary)] mt-0.5">{{ t('stats.todayPlays') }}</div>
+      <div class="rounded-2xl bg-[var(--bg-subtle)]/55 py-2.5 px-1.5 min-w-0">
+        <div class="text-[14px] font-bold text-[var(--text-primary)] tabular-nums truncate">{{ stats.todayPlays }} {{ t('stats.songUnit') }}</div>
+        <div class="text-[10.5px] text-[var(--text-secondary)] mt-0.5 truncate">{{ t('stats.todayPlays') }}</div>
       </div>
-      <div class="rounded-2xl bg-[var(--bg-subtle)]/55 py-2.5 px-2">
-        <div class="text-[15px] font-bold text-[var(--text-primary)] tabular-nums truncate">
-          {{ stats.totalDurationLabel }}
+      <div class="rounded-2xl bg-[var(--bg-subtle)]/55 py-2.5 px-1.5 min-w-0">
+        <div class="text-[14px] font-bold text-[var(--text-primary)] tabular-nums truncate">
+          {{ totalDurationLocalized }}
         </div>
-        <div class="text-[11px] text-[var(--text-secondary)] mt-0.5">{{ t('stats.totalPlaysSub', { count: stats.totalPlays }) }}</div>
+        <div class="text-[10.5px] text-[var(--text-secondary)] mt-0.5 truncate">{{ t('stats.totalPlaysSub', { count: stats.totalPlays }) }}</div>
       </div>
-      <div class="rounded-2xl bg-[var(--bg-subtle)]/55 py-2.5 px-2">
-        <div class="text-[15px] font-bold text-[var(--text-primary)] truncate">
+      <div class="rounded-2xl bg-[var(--bg-subtle)]/55 py-2.5 px-1.5 min-w-0">
+        <div class="text-[14px] font-bold text-[var(--text-primary)] truncate">
           {{ stats.topArtist?.name || '--' }}
         </div>
-        <div class="text-[11px] text-[var(--text-secondary)] mt-0.5">{{ t('stats.topArtist') }}</div>
+        <div class="text-[10.5px] text-[var(--text-secondary)] mt-0.5 truncate">{{ t('stats.topArtist') }}</div>
       </div>
     </div>
 

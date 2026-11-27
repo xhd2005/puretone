@@ -21,6 +21,8 @@ import iconFileExport from '@iconify/icons-tabler/file-export';
 import iconFileImport from '@iconify/icons-tabler/file-import';
 import iconLanguage from '@iconify/icons-tabler/language';
 import iconMessageQuote from '@iconify/icons-tabler/blockquote';
+import iconWaveSine from '@iconify/icons-tabler/wave-sine';
+import iconVolume from '@iconify/icons-tabler/volume';
 import type { AudioQuality } from '@/types/music';
 import type { EqPresetId } from '@/native/echoPlayer';
 import { useAccountsStore } from '@/stores/accounts';
@@ -31,6 +33,7 @@ import {
   type AppearanceMode,
   type AppLocale,
   type LyricFontSize,
+  type TrackTransitionFadeMs,
 } from '@/stores/settings';
 import { usePlayerStore } from '@/stores/player';
 import { useStatsStore } from '@/stores/stats';
@@ -58,7 +61,7 @@ const settings = useSettingsStore();
 const player = usePlayerStore();
 const stats = useStatsStore();
 const ui = useUiStore();
-const { t } = useI18n();
+const { t, effectiveLocale } = useI18n();
 
 const scrollRef = ref<HTMLElement | null>(null);
 const activeTab = ref<ProfileSectionTab>('profile');
@@ -142,7 +145,16 @@ const lyricSizeOptions = computed<Array<{ id: LyricFontSize; label: string }>>((
   { id: 'xlarge', label: t('settings.lyricSize.xlarge') },
 ]);
 
-const weekLabels = ['一', '二', '三', '四', '五', '六', '日'];
+const transitionOptions = computed<Array<{ id: TrackTransitionFadeMs; label: string }>>(() => [
+  { id: 0, label: t('settings.transitionOff') },
+  { id: 1500, label: t('settings.transition15') },
+  { id: 3000, label: t('settings.transition30') },
+  { id: 5000, label: t('settings.transition50') },
+]);
+
+const weekLabels = computed(() =>
+  effectiveLocale.value === 'en' ? ['M', 'T', 'W', 'T', 'F', 'S', 'S'] : ['一', '二', '三', '四', '五', '六', '日'],
+);
 
 const activeAcc = computed(() => accounts.activeAccount);
 
@@ -182,8 +194,8 @@ const musicAgeLabel = computed(() => {
     months += 12;
   }
   if (years < 0) return '--';
-  if (years > 0) return `${years}y ${months}m`;
-  return `${months}m ${days}d`;
+  if (years > 0) return t('profile.ageYM', { y: years, m: months });
+  return t('profile.ageMD', { m: months, d: days });
 });
 
 const kugouListenDurationLabel = computed(() => {
@@ -192,9 +204,9 @@ const kugouListenDurationLabel = computed(() => {
   const days = Math.floor(mins / 1440);
   const hours = Math.floor((mins % 1440) / 60);
   const remMin = Math.floor(mins % 60);
-  if (days > 0) return `${days}d ${hours}h`;
-  if (hours > 0) return `${hours}h ${remMin}m`;
-  return `${remMin}m`;
+  if (days > 0) return t('profile.durDH', { d: days, h: hours });
+  if (hours > 0) return t('profile.durHM', { h: hours, m: remMin });
+  return t('profile.durM', { m: remMin });
 });
 
 function formatTierRelative(endTime?: string, active?: boolean): string {
@@ -304,7 +316,7 @@ async function handleExportBackup() {
   try {
     const json = await exportLocalBackupJson(stats.exportSnapshot(), settings.exportSnapshot());
     await echoSystem.copyToClipboard(json);
-    ui.showToast('JSON backup copied (token-free)');
+    ui.showToast(t('settings.backupCopied'));
   } catch {
     ui.showToast('Backup failed');
   }
@@ -346,7 +358,7 @@ async function handleCheckUpdate() {
     if (res && res.hasUpdate) {
       ui.updateReleaseInfo = res;
     } else {
-      ui.showToast(`v${appVersion.value} is up to date`);
+      ui.showToast(t('settings.upToDate', { ver: appVersion.value }));
     }
   } catch (e: any) {
     ui.showToast(e?.message || 'Update check failed');
@@ -661,22 +673,22 @@ async function openAuthorProfile() {
                   <div class="grid gap-2.5" :class="accounts.accounts.length > 1 ? 'grid-cols-2' : 'grid-cols-1'">
                     <button
                       type="button"
-                      class="h-11 rounded-[14px] am-accent-bg text-white text-[15px] font-semibold border-0 flex items-center justify-center gap-1.5 am-tap shadow-xs"
+                      class="h-11 px-2.5 rounded-[14px] am-accent-bg text-white text-[13.5px] font-semibold border-0 flex items-center justify-center gap-1.5 am-tap shadow-xs min-w-0"
                       :disabled="vip.isClaiming || vip.isBatchClaiming"
                       @click="handleClaimNow"
                     >
-                      <Icon v-if="vip.isClaiming" :icon="iconRefresh" class="w-4 h-4 animate-spin" />
-                      <span>{{ vip.isClaiming ? t('vip.claiming') : vip.claimedToday ? t('vip.claimedSync') : t('vip.claimBtn') }}</span>
+                      <Icon v-if="vip.isClaiming" :icon="iconRefresh" class="w-4 h-4 animate-spin shrink-0" />
+                      <span class="truncate">{{ vip.isClaiming ? t('vip.claiming') : vip.claimedToday ? t('vip.claimedSync') : t('vip.claimBtn') }}</span>
                     </button>
 
                     <button
                       v-if="accounts.accounts.length > 1"
                       type="button"
-                      class="h-11 rounded-[14px] bg-[var(--bg-subtle)] text-[var(--text-primary)] text-[15px] font-semibold border-0 flex items-center justify-center gap-1.5 am-tap"
+                      class="h-11 px-2.5 rounded-[14px] bg-[var(--bg-subtle)] text-[var(--text-primary)] text-[13.5px] font-semibold border-0 flex items-center justify-center gap-1.5 am-tap min-w-0"
                       :disabled="vip.isClaiming || vip.isBatchClaiming"
                       @click="vip.claimAllAccounts(false)"
                     >
-                      <span>{{ vip.isBatchClaiming ? vip.batchProgressText || '…' : t('vip.batchClaim', { count: accounts.accounts.length }) }}</span>
+                      <span class="truncate">{{ vip.isBatchClaiming ? vip.batchProgressText || '…' : t('vip.batchClaim', { count: accounts.accounts.length }) }}</span>
                     </button>
                   </div>
 
@@ -700,7 +712,7 @@ async function openAuthorProfile() {
 
                     <div v-if="showCalendar" class="mt-3">
                       <div class="grid grid-cols-7 gap-1 text-center text-[11px] text-[var(--text-tertiary)] mb-1.5">
-                        <span v-for="w in weekLabels" :key="w">{{ w }}</span>
+                        <span v-for="(w, wi) in weekLabels" :key="wi">{{ w }}</span>
                       </div>
                       <div class="grid grid-cols-7 gap-1.5">
                         <div
@@ -766,24 +778,24 @@ async function openAuthorProfile() {
 
             <!-- ==================== TAB 3: 偏好设置 ==================== -->
             <template v-else>
-              <!-- Group A: Playback, EQ, Language & Appearance -->
+              <!-- Group A: Playback, Transitions, EQ, Language & Appearance (Uniform 2-Row Zero-Overflow!) -->
               <section class="space-y-2">
                 <div class="text-[12px] font-semibold uppercase tracking-wide text-[var(--text-secondary)] px-2">
                   {{ t('settings.groupPlayback') }}
                 </div>
                 <div class="rounded-[22px] bg-[var(--bg-card)] overflow-hidden divide-y divide-[var(--hairline)] shadow-xs">
                   <!-- Language Selector (Auto / 简体 / 繁體 / EN) -->
-                  <div class="px-4 py-3 flex items-center justify-between gap-2">
-                    <div class="flex items-center gap-1.5 text-[15px] text-[var(--text-primary)]">
+                  <div class="px-4 py-3 space-y-2">
+                    <div class="flex items-center gap-1.5 text-[14.5px] font-medium text-[var(--text-primary)]">
                       <Icon :icon="iconLanguage" class="w-4 h-4 am-accent-text shrink-0" />
-                      <span>{{ t('settings.language') }}</span>
+                      <span class="truncate">{{ t('settings.language') }}</span>
                     </div>
-                    <div class="flex p-0.5 rounded-xl bg-[var(--bg-subtle)]">
+                    <div class="pt-seg-group grid-cols-4">
                       <button
                         v-for="lang in langOptions"
                         :key="lang.id"
                         type="button"
-                        class="px-2 h-7 rounded-[8px] text-[11.5px] font-semibold border-0 transition-all"
+                        class="pt-seg-btn"
                         :class="
                           settings.locale === lang.id
                             ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-xs'
@@ -796,9 +808,10 @@ async function openAuthorProfile() {
                     </div>
                   </div>
 
-                  <div class="px-4 py-3 flex items-center justify-between gap-2">
-                    <span class="text-[15px] text-[var(--text-primary)]">{{ t('settings.quality') }}</span>
-                    <div class="flex p-0.5 rounded-xl bg-[var(--bg-subtle)]">
+                  <!-- Audio Quality -->
+                  <div class="px-4 py-3 space-y-2">
+                    <div class="text-[14.5px] font-medium text-[var(--text-primary)]">{{ t('settings.quality') }}</div>
+                    <div class="pt-seg-group grid-cols-3">
                       <button
                         v-for="q in [
                           { id: '128', label: t('settings.quality128') },
@@ -807,7 +820,7 @@ async function openAuthorProfile() {
                         ]"
                         :key="q.id"
                         type="button"
-                        class="px-2.5 h-7 rounded-[8px] text-[12px] font-semibold border-0 transition-all"
+                        class="pt-seg-btn"
                         :class="
                           settings.quality === q.id
                             ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-xs'
@@ -820,20 +833,60 @@ async function openAuthorProfile() {
                     </div>
                   </div>
 
+                  <!-- Smooth Track Transition Fade -->
                   <div class="px-4 py-3 space-y-2">
-                    <div class="flex items-center justify-between">
-                      <div class="flex items-center gap-1.5 text-[15px] text-[var(--text-primary)]">
-                        <Icon :icon="iconAdjustments" class="w-4 h-4 am-accent-text" />
-                        <span>{{ t('settings.eqTitle') }}</span>
+                    <div class="flex items-center justify-between gap-2">
+                      <div class="flex items-center gap-1.5 text-[14.5px] font-medium text-[var(--text-primary)] min-w-0">
+                        <Icon :icon="iconWaveSine" class="w-4 h-4 am-accent-text shrink-0" />
+                        <span class="truncate">{{ t('settings.transitionTitle') }}</span>
                       </div>
-                      <span class="text-[11px] text-[var(--text-secondary)]">{{ t('settings.eqSub') }}</span>
+                      <span class="text-[11px] text-[var(--text-secondary)] shrink-0 truncate">{{ t('settings.transitionSub') }}</span>
                     </div>
-                    <div class="grid grid-cols-5 gap-1 p-0.5 rounded-xl bg-[var(--bg-subtle)]">
+                    <div class="pt-seg-group grid-cols-4">
+                      <button
+                        v-for="tr in transitionOptions"
+                        :key="tr.id"
+                        type="button"
+                        class="pt-seg-btn tabular-nums"
+                        :class="
+                          settings.transitionFadeMs === tr.id
+                            ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-xs'
+                            : 'bg-transparent text-[var(--text-secondary)]'
+                        "
+                        @click="echoSystem.haptic('selection'); settings.transitionFadeMs = tr.id"
+                      >
+                        {{ tr.label }}
+                      </button>
+                    </div>
+                  </div>
+
+                  <!-- Volume Leveling -->
+                  <label class="px-4 py-3 flex items-center justify-between gap-3 cursor-pointer">
+                    <div class="flex items-center gap-2 min-w-0">
+                      <Icon :icon="iconVolume" class="w-4 h-4 am-accent-text shrink-0" />
+                      <div class="min-w-0">
+                        <div class="text-[14.5px] text-[var(--text-primary)] leading-snug">{{ t('settings.volumeLeveling') }}</div>
+                        <div class="text-[11px] text-[var(--text-secondary)] leading-snug mt-0.5">{{ t('settings.volumeLevelingSub') }}</div>
+                      </div>
+                    </div>
+                    <input v-model="settings.volumeLeveling" type="checkbox" class="ios-switch" />
+                  </label>
+
+                  <!-- Subtractive Zero-Clip EQ -->
+                  <div class="px-4 py-3 space-y-2">
+                    <div class="flex items-center justify-between gap-2">
+                      <div class="flex items-center gap-1.5 text-[14.5px] font-medium text-[var(--text-primary)] min-w-0">
+                        <Icon :icon="iconAdjustments" class="w-4 h-4 am-accent-text shrink-0" />
+                        <span class="truncate">{{ t('settings.eqTitle') }}</span>
+                      </div>
+                      <span class="text-[11px] text-[var(--text-secondary)] shrink-0 truncate">{{ t('settings.eqSub') }}</span>
+                    </div>
+                    <div class="pt-seg-group grid-cols-5">
                       <button
                         v-for="eq in eqOptions"
                         :key="eq.id"
                         type="button"
-                        class="h-7 rounded-[8px] text-[12px] font-semibold border-0 transition-all"
+                        class="pt-seg-btn"
                         :class="
                           settings.eqPreset === eq.id
                             ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-xs'
@@ -846,9 +899,10 @@ async function openAuthorProfile() {
                     </div>
                   </div>
 
-                  <div class="px-4 py-3 flex items-center justify-between gap-2">
-                    <span class="text-[15px] text-[var(--text-primary)]">{{ t('settings.appearance') }}</span>
-                    <div class="flex p-0.5 rounded-xl bg-[var(--bg-subtle)]">
+                  <!-- Appearance Mode -->
+                  <div class="px-4 py-3 space-y-2">
+                    <div class="text-[14.5px] font-medium text-[var(--text-primary)]">{{ t('settings.appearance') }}</div>
+                    <div class="pt-seg-group grid-cols-3">
                       <button
                         v-for="ap in [
                           { id: 'system', label: t('settings.ap.system') },
@@ -857,7 +911,7 @@ async function openAuthorProfile() {
                         ]"
                         :key="ap.id"
                         type="button"
-                        class="px-2.5 h-7 rounded-[8px] text-[12px] font-semibold border-0 transition-all"
+                        class="pt-seg-btn"
                         :class="
                           settings.appearance === ap.id
                             ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-xs'
@@ -870,12 +924,13 @@ async function openAuthorProfile() {
                     </div>
                   </div>
 
-                  <div class="px-4 py-3 flex items-center justify-between gap-2">
-                    <div class="flex items-center gap-1.5 text-[15px] text-[var(--text-primary)]">
-                      <Icon :icon="iconPalette" class="w-4 h-4 am-accent-text" />
-                      <span>{{ t('settings.accent') }}</span>
+                  <!-- Theme Accent Color -->
+                  <div class="px-4 py-3 space-y-2">
+                    <div class="flex items-center gap-1.5 text-[14.5px] font-medium text-[var(--text-primary)]">
+                      <Icon :icon="iconPalette" class="w-4 h-4 am-accent-text shrink-0" />
+                      <span class="truncate">{{ t('settings.accent') }}</span>
                     </div>
-                    <div class="flex p-0.5 rounded-xl bg-[var(--bg-subtle)]">
+                    <div class="pt-seg-group grid-cols-2">
                       <button
                         v-for="ac in [
                           { id: 'dynamic', label: t('settings.ac.dynamic') },
@@ -883,7 +938,7 @@ async function openAuthorProfile() {
                         ]"
                         :key="ac.id"
                         type="button"
-                        class="px-2.5 h-7 rounded-[8px] text-[12px] font-semibold border-0 transition-all"
+                        class="pt-seg-btn"
                         :class="
                           settings.accentMode === ac.id
                             ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-xs'
@@ -897,17 +952,17 @@ async function openAuthorProfile() {
                   </div>
 
                   <!-- Lyrics Font Size 3-Step Selector -->
-                  <div class="px-4 py-3 flex items-center justify-between gap-2">
-                    <div class="flex items-center gap-1.5 text-[15px] text-[var(--text-primary)]">
+                  <div class="px-4 py-3 space-y-2">
+                    <div class="flex items-center gap-1.5 text-[14.5px] font-medium text-[var(--text-primary)]">
                       <Icon :icon="iconMessageQuote" class="w-4 h-4 am-accent-text shrink-0" />
-                      <span>{{ t('settings.lyricSize') }}</span>
+                      <span class="truncate">{{ t('settings.lyricSize') }}</span>
                     </div>
-                    <div class="flex p-0.5 rounded-xl bg-[var(--bg-subtle)]">
+                    <div class="pt-seg-group grid-cols-3">
                       <button
                         v-for="ls in lyricSizeOptions"
                         :key="ls.id"
                         type="button"
-                        class="px-2.5 h-7 rounded-[8px] text-[12px] font-semibold border-0 transition-all"
+                        class="pt-seg-btn"
                         :class="
                           settings.lyricFontSize === ls.id
                             ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-xs'
@@ -920,28 +975,28 @@ async function openAuthorProfile() {
                     </div>
                   </div>
 
-                  <label class="px-4 py-3 flex items-center justify-between cursor-pointer">
-                    <div>
-                      <div class="text-[15px] text-[var(--text-primary)]">{{ t('settings.coverLyrics') }}</div>
-                      <div class="text-[11px] text-[var(--text-secondary)]">{{ t('settings.coverLyricsSub') }}</div>
+                  <label class="px-4 py-3 flex items-center justify-between gap-3 cursor-pointer">
+                    <div class="min-w-0">
+                      <div class="text-[14.5px] text-[var(--text-primary)] leading-snug">{{ t('settings.coverLyrics') }}</div>
+                      <div class="text-[11px] text-[var(--text-secondary)] leading-snug mt-0.5">{{ t('settings.coverLyricsSub') }}</div>
                     </div>
                     <input v-model="settings.showCoverLyricsPreview" type="checkbox" class="ios-switch" />
                   </label>
 
-                  <label class="px-4 py-3 flex items-center justify-between cursor-pointer">
-                    <div>
-                      <div class="text-[15px] text-[var(--text-primary)]">{{ t('settings.lockLyrics') }}</div>
-                      <div class="text-[11px] text-[var(--text-secondary)]">{{ t('settings.lockLyricsSub') }}</div>
+                  <label class="px-4 py-3 flex items-center justify-between gap-3 cursor-pointer">
+                    <div class="min-w-0">
+                      <div class="text-[14.5px] text-[var(--text-primary)] leading-snug">{{ t('settings.lockLyrics') }}</div>
+                      <div class="text-[11px] text-[var(--text-secondary)] leading-snug mt-0.5">{{ t('settings.lockLyricsSub') }}</div>
                     </div>
                     <input v-model="settings.showLockScreenLyrics" type="checkbox" class="ios-switch" />
                   </label>
 
-                  <label class="px-4 py-3 flex items-center justify-between cursor-pointer">
-                    <div class="flex items-center gap-2">
+                  <label class="px-4 py-3 flex items-center justify-between gap-3 cursor-pointer">
+                    <div class="flex items-center gap-2 min-w-0">
                       <Icon :icon="iconSparkles" class="w-4 h-4 am-accent-text shrink-0" />
-                      <div>
-                        <div class="text-[15px] text-[var(--text-primary)]">{{ t('settings.autoUnblock') }}</div>
-                        <div class="text-[11px] text-[var(--text-secondary)]">{{ t('settings.autoUnblockSub') }}</div>
+                      <div class="min-w-0">
+                        <div class="text-[14.5px] text-[var(--text-primary)] leading-snug">{{ t('settings.autoUnblock') }}</div>
+                        <div class="text-[11px] text-[var(--text-secondary)] leading-snug mt-0.5">{{ t('settings.autoUnblockSub') }}</div>
                       </div>
                     </div>
                     <input v-model="settings.enableUnblock" type="checkbox" class="ios-switch" />
@@ -949,29 +1004,29 @@ async function openAuthorProfile() {
                 </div>
               </section>
 
-              <!-- Group B: Universal Android Media Controls, Cache & JSON Backup/Restore -->
+              <!-- Group B: Universal Android Media Controls, Transparent OEM Whitelist Note, Cache & Backup -->
               <section class="space-y-2">
                 <div class="text-[12px] font-semibold uppercase tracking-wide text-[var(--text-secondary)] px-2">
                   {{ t('settings.groupSystem') }}
                 </div>
                 <div class="rounded-[22px] bg-[var(--bg-card)] overflow-hidden divide-y divide-[var(--hairline)] shadow-xs">
-                  <div class="px-4 py-3 flex items-center justify-between gap-2">
-                    <div class="flex items-center gap-2 min-w-0">
-                      <Icon :icon="iconDeviceMobile" class="w-4 h-4 am-accent-text shrink-0" />
-                      <div class="min-w-0">
-                        <div class="flex items-center gap-1.5 text-[15px] text-[var(--text-primary)]">
-                          <span>{{ t('settings.mediaControl') }}</span>
-                          <span class="w-2 h-2 rounded-full" :class="notifGranted ? 'bg-[#34c759]' : 'bg-[#ff9500]'" />
+                  <div class="px-4 py-3 space-y-2.5">
+                    <div class="flex items-start gap-2">
+                      <Icon :icon="iconDeviceMobile" class="w-4 h-4 am-accent-text shrink-0 mt-0.5" />
+                      <div class="min-w-0 flex-1">
+                        <div class="flex items-center gap-1.5 text-[14.5px] font-medium text-[var(--text-primary)]">
+                          <span class="truncate">{{ t('settings.mediaControl') }}</span>
+                          <span class="w-2 h-2 rounded-full shrink-0" :class="notifGranted ? 'bg-[#34c759]' : 'bg-[#ff9500]'" />
                         </div>
-                        <div class="text-[11px] text-[var(--text-secondary)] leading-snug">
+                        <div class="text-[11px] text-[var(--text-secondary)] leading-relaxed mt-0.5">
                           {{ notifGranted ? t('settings.mediaControlSubGranted') : t('settings.mediaControlSubDenied') }}
                         </div>
                       </div>
                     </div>
-                    <div class="flex items-center gap-1.5 shrink-0">
+                    <div class="grid gap-2" :class="notifGranted ? 'grid-cols-2' : 'grid-cols-1'">
                       <button
                         type="button"
-                        class="px-2.5 h-7 rounded-full text-[12px] font-semibold border-0 am-tap"
+                        class="h-8 px-3 rounded-xl text-[12px] font-semibold border-0 am-tap truncate"
                         :class="notifGranted ? 'bg-[var(--bg-subtle)] text-[var(--text-primary)]' : 'am-accent-bg text-white'"
                         @click="handleMediaControlAction"
                       >
@@ -980,20 +1035,23 @@ async function openAuthorProfile() {
                       <button
                         v-if="notifGranted"
                         type="button"
-                        class="px-2.5 h-7 rounded-full bg-[var(--bg-subtle)] text-[var(--text-secondary)] text-[12px] font-medium border-0 am-tap"
+                        class="h-8 px-3 rounded-xl bg-[var(--bg-subtle)] text-[var(--text-secondary)] text-[12px] font-semibold border-0 am-tap truncate"
                         @click="handleOpenAppBatterySettings"
                       >
                         {{ t('settings.btnKeepAlive') }}
                       </button>
                     </div>
+                    <p class="m-0 px-2.5 py-2 rounded-xl bg-[var(--bg-subtle)]/55 text-[10.5px] leading-relaxed text-[var(--text-secondary)]">
+                      {{ t('settings.oemIslandHint') }}
+                    </p>
                   </div>
 
-                  <div class="px-4 py-3 flex items-center justify-between gap-2">
-                    <div class="flex items-center gap-2">
+                  <div class="px-4 py-3 flex items-center justify-between gap-3">
+                    <div class="flex items-center gap-2 min-w-0">
                       <Icon :icon="iconDatabase" class="w-4 h-4 am-accent-text shrink-0" />
-                      <div>
-                        <div class="text-[15px] text-[var(--text-primary)]">{{ t('settings.cacheTitle') }}</div>
-                        <div class="text-[11px] text-[var(--text-secondary)] tabular-nums">
+                      <div class="min-w-0">
+                        <div class="text-[14.5px] text-[var(--text-primary)] truncate">{{ t('settings.cacheTitle') }}</div>
+                        <div class="text-[11px] text-[var(--text-secondary)] tabular-nums truncate">
                           {{ t('settings.cacheSub', { mb: cacheUsedMb }) }}
                         </div>
                       </div>
@@ -1009,29 +1067,29 @@ async function openAuthorProfile() {
                   </div>
 
                   <div class="px-4 py-3 space-y-2.5">
-                    <div class="flex items-center justify-between gap-2">
-                      <div class="min-w-0">
-                        <div class="text-[15px] text-[var(--text-primary)]">{{ t('settings.backupTitle') }}</div>
-                        <div class="text-[11px] text-[var(--text-secondary)]">{{ t('settings.backupSub') }}</div>
+                    <div class="flex items-start justify-between gap-2">
+                      <div class="min-w-0 flex-1">
+                        <div class="text-[14.5px] text-[var(--text-primary)] leading-snug">{{ t('settings.backupTitle') }}</div>
+                        <div class="text-[11px] text-[var(--text-secondary)] leading-snug mt-0.5">{{ t('settings.backupSub') }}</div>
                       </div>
-                      <div class="flex items-center gap-1.5 shrink-0">
-                        <button
-                          type="button"
-                          class="px-2.5 h-7 rounded-full bg-[var(--bg-subtle)] text-[12px] font-semibold am-accent-text border-0 inline-flex items-center gap-1 am-tap"
-                          @click="handleExportBackup"
-                        >
-                          <Icon :icon="iconFileExport" class="w-3.5 h-3.5" />
-                          <span>{{ t('settings.btnBackup') }}</span>
-                        </button>
-                        <button
-                          type="button"
-                          class="px-2.5 h-7 rounded-full bg-[var(--bg-subtle)] text-[12px] font-semibold text-[var(--text-primary)] border-0 inline-flex items-center gap-1 am-tap"
-                          @click="showBackupPanel = !showBackupPanel"
-                        >
-                          <Icon :icon="iconFileImport" class="w-3.5 h-3.5" />
-                          <span>{{ t('settings.btnRestore') }}</span>
-                        </button>
-                      </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        class="h-8 px-3 rounded-xl bg-[var(--bg-subtle)] text-[12px] font-semibold am-accent-text border-0 inline-flex items-center justify-center gap-1 am-tap truncate"
+                        @click="handleExportBackup"
+                      >
+                        <Icon :icon="iconFileExport" class="w-3.5 h-3.5 shrink-0" />
+                        <span class="truncate">{{ t('settings.btnBackup') }}</span>
+                      </button>
+                      <button
+                        type="button"
+                        class="h-8 px-3 rounded-xl bg-[var(--bg-subtle)] text-[12px] font-semibold text-[var(--text-primary)] border-0 inline-flex items-center justify-center gap-1 am-tap truncate"
+                        @click="showBackupPanel = !showBackupPanel"
+                      >
+                        <Icon :icon="iconFileImport" class="w-3.5 h-3.5 shrink-0" />
+                        <span class="truncate">{{ t('settings.btnRestore') }}</span>
+                      </button>
                     </div>
 
                     <div v-if="showBackupPanel" class="space-y-2 pt-1">
@@ -1054,14 +1112,14 @@ async function openAuthorProfile() {
                 </div>
               </section>
 
-              <!-- Group C: About PureTone, Hayden Xue Author Bio, Repo & Full Compliance -->
+              <!-- Group C: About MELUNE (弥音), Brand Philosophy, Hayden Xue Bio, Repo & Compliance -->
               <section class="rounded-[22px] bg-[var(--bg-card)] p-4 shadow-xs space-y-3">
-                <div class="flex items-center justify-between gap-3">
-                  <div class="flex items-center gap-3 min-w-0">
+                <div class="flex items-center justify-between gap-2.5">
+                  <div class="flex items-center gap-3 min-w-0 flex-1">
                     <PureToneMark :size="44" />
                     <div class="min-w-0">
-                      <div class="text-[16px] font-bold text-[var(--text-primary)] whitespace-nowrap">{{ t('app.fullName') }}</div>
-                      <div class="text-[12px] text-[var(--text-secondary)] tabular-nums truncate">
+                      <div class="text-[16px] font-bold text-[var(--text-primary)] truncate">{{ t('app.fullName') }}</div>
+                      <div class="text-[11.5px] text-[var(--text-secondary)] tabular-nums truncate">
                         v{{ appVersion }} · GPL-3.0
                       </div>
                     </div>
@@ -1072,9 +1130,22 @@ async function openAuthorProfile() {
                     :disabled="checkingUpdate"
                     @click="handleCheckUpdate"
                   >
-                    <Icon :icon="checkingUpdate ? iconRefresh : iconDownload" class="w-3.5 h-3.5" :class="{ 'animate-spin': checkingUpdate }" />
+                    <Icon :icon="checkingUpdate ? iconRefresh : iconDownload" class="w-3.5 h-3.5 shrink-0" :class="{ 'animate-spin': checkingUpdate }" />
                     <span>{{ checkingUpdate ? t('about.checking') : t('about.checkUpdate') }}</span>
                   </button>
+                </div>
+
+                <!-- Brand Poetic Tagline Box -->
+                <div class="rounded-2xl bg-gradient-to-br from-[#3456be]/10 via-[#1a2d70]/8 to-transparent p-3 space-y-1 border border-[var(--hairline)]">
+                  <div class="text-[12.5px] font-semibold text-[var(--text-primary)]">
+                    {{ t('app.slogan') }}
+                  </div>
+                  <div class="text-[10.5px] font-medium tracking-wider text-[var(--text-tertiary)] uppercase">
+                    {{ t('app.sloganEn') }}
+                  </div>
+                  <p class="text-[11.5px] text-[var(--text-secondary)] leading-relaxed m-0 pt-0.5">
+                    {{ t('about.story') }}
+                  </p>
                 </div>
 
                 <!-- Author Card: Hayden Xue (@xhd2005) -->
@@ -1114,14 +1185,14 @@ async function openAuthorProfile() {
 
                   <button
                     type="button"
-                    class="w-full h-10 px-3.5 rounded-xl bg-[var(--bg-subtle)]/50 text-[13px] font-medium text-[var(--text-secondary)] border-0 flex items-center justify-between am-tap"
+                    class="w-full h-10 px-3.5 rounded-xl bg-[var(--bg-subtle)]/50 text-[13px] font-medium text-[var(--text-secondary)] border-0 flex items-center justify-between gap-2 am-tap"
                     @click="echoSystem.haptic('light'); ui.complianceModalOpen = true"
                   >
-                    <span class="flex items-center gap-2">
+                    <span class="flex items-center gap-2 min-w-0">
                       <Icon :icon="iconShieldCheck" class="w-4 h-4 am-accent-text shrink-0" />
-                      <span>{{ t('about.disclaimerLink') }}</span>
+                      <span class="truncate">{{ t('about.disclaimerLink') }}</span>
                     </span>
-                    <span class="text-[12px] text-[var(--text-tertiary)]">{{ t('common.view') }}</span>
+                    <span class="text-[12px] text-[var(--text-tertiary)] shrink-0">{{ t('common.view') }}</span>
                   </button>
                 </div>
 

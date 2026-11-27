@@ -351,7 +351,7 @@ async function handleOpenKugouH5() {
             <PureToneMark :size="38" />
             <div>
               <h2 class="text-[20px] font-bold tracking-tight text-[var(--text-primary)]">登录酷狗账号</h2>
-              <p class="text-[12px] text-[var(--text-secondary)] mt-0.5">纯音本地直连 · 支持多号独立领 VIP</p>
+              <p class="text-[12px] text-[var(--text-secondary)] mt-0.5">弥音本地直连 · 支持多号独立领 VIP</p>
             </div>
           </div>
           <button
