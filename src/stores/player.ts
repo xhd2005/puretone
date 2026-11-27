@@ -75,6 +75,8 @@ export const usePlayerStore = defineStore('player', () => {
   let recoveryAttemptsForCurrentTrack = 0;
   let recoveryInFlight = false;
   let needsRecoveryResumeOnPlay = false;
+  let pendingSeekTargetMs = -1;
+  let pendingSeekGuardUntil = 0;
 
   const settingsStore = useSettingsStore();
   const statsStore = useStatsStore();
@@ -367,10 +369,17 @@ export const usePlayerStore = defineStore('player', () => {
 
     await echoPlayer.onTimeUpdate((ev) => {
       if (ev.trackSeq !== trackSeq) return;
+      const now = ev.sampledAt || Date.now();
+      // Ignore stale pre-seek ticks still in flight across the native bridge for 380ms after seek()
+      if (pendingSeekTargetMs >= 0 && now < pendingSeekGuardUntil) {
+        if (Math.abs(ev.currentTimeMs - pendingSeekTargetMs) > 1500) {
+          return;
+        }
+        pendingSeekTargetMs = -1;
+      }
       currentTimeMs.value = ev.currentTimeMs;
       if (ev.durationMs > 0) durationMs.value = ev.durationMs;
       lastSampleTimeMs.value = ev.currentTimeMs;
-      const now = ev.sampledAt || Date.now();
       lastSampleAt.value = now;
 
       if (ev.isPlaying) {
@@ -842,6 +851,8 @@ export const usePlayerStore = defineStore('player', () => {
 
   async function seek(positionMs: number) {
     const clamped = Math.max(0, Math.min(durationMs.value || positionMs, positionMs));
+    pendingSeekTargetMs = clamped;
+    pendingSeekGuardUntil = Date.now() + 380;
     currentTimeMs.value = clamped;
     lastSampleTimeMs.value = clamped;
     lastSampleAt.value = Date.now();
@@ -1059,7 +1070,7 @@ export const usePlayerStore = defineStore('player', () => {
   }
 
   function getInterpolatedTimeMs(): number {
-    if (!isPlaying.value) return currentTimeMs.value;
+    if (!isPlaying.value || isBuffering.value) return currentTimeMs.value;
     if (lastSampleAt.value <= 0) return currentTimeMs.value;
     const elapsed = Math.max(0, Math.min(450, Date.now() - lastSampleAt.value));
     return currentTimeMs.value + elapsed * (playbackSpeed.value || 1);

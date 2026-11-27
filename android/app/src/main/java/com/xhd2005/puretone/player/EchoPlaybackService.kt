@@ -430,6 +430,16 @@ class EchoPlaybackService : MediaSessionService() {
     private val audioEffects = PureToneAudioEffects()
     private var transitionWakeLock: PowerManager.WakeLock? = null
 
+    private fun effectiveIsPlaying(): Boolean {
+        if (!::exoPlayer.isInitialized) return false
+        return computeEffectiveIsPlaying(
+            isPlaying = exoPlayer.isPlaying,
+            playWhenReady = exoPlayer.playWhenReady,
+            playbackState = exoPlayer.playbackState,
+            playbackSuppressionReason = exoPlayer.playbackSuppressionReason,
+        )
+    }
+
     private fun isCurrentlyActive(): Boolean {
         return try {
             ::exoPlayer.isInitialized && (exoPlayer.playWhenReady || exoPlayer.isPlaying)
@@ -677,7 +687,20 @@ class EchoPlaybackService : MediaSessionService() {
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 val buffering = exoPlayer.playbackState == Player.STATE_BUFFERING
-                bridgeListener?.onStateChange(isPlaying, buffering, false, currentTrackSeq)
+                bridgeListener?.onStateChange(effectiveIsPlaying(), buffering, false, currentTrackSeq)
+                syncWidgetState()
+            }
+
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                val state = exoPlayer.playbackState
+                val buffering = state == Player.STATE_BUFFERING
+                val effectivePlaying = computeEffectiveIsPlaying(
+                    isPlaying = exoPlayer.isPlaying,
+                    playWhenReady = playWhenReady,
+                    playbackState = state,
+                    playbackSuppressionReason = exoPlayer.playbackSuppressionReason,
+                )
+                bridgeListener?.onStateChange(effectivePlaying, buffering, false, currentTrackSeq)
                 syncWidgetState()
             }
 
@@ -720,7 +743,7 @@ class EchoPlaybackService : MediaSessionService() {
                     bridgeListener?.onStateChange(false, false, true, currentTrackSeq)
                     syncWidgetState()
                 } else {
-                    bridgeListener?.onStateChange(exoPlayer.isPlaying, buffering, false, currentTrackSeq)
+                    bridgeListener?.onStateChange(effectiveIsPlaying(), buffering, false, currentTrackSeq)
                     if (playbackState == Player.STATE_READY) {
                         retriedCurrentError = false
                         val dur = exoPlayer.duration.takeIf { it != C.TIME_UNSET && it > 0L } ?: 0L
@@ -764,7 +787,7 @@ class EchoPlaybackService : MediaSessionService() {
                         bridgeListener?.onTimeUpdate(
                             pos,
                             dur,
-                            exoPlayer.isPlaying,
+                            effectiveIsPlaying(),
                             currentTrackSeq,
                         )
                     }
@@ -1379,7 +1402,7 @@ class EchoPlaybackService : MediaSessionService() {
         exoPlayer.seekTo(safePos)
         val dur = exoPlayer.duration.takeIf { it != C.TIME_UNSET && it > 0L }
             ?: (currentMetadata?.durationMs ?: 0L)
-        bridgeListener?.onTimeUpdate(safePos, dur, exoPlayer.isPlaying, currentTrackSeq)
+        bridgeListener?.onTimeUpdate(safePos, dur, effectiveIsPlaying(), currentTrackSeq)
     }
 
     fun setVolume(volume: Float) = mainHandler.post {
@@ -1526,7 +1549,7 @@ class EchoPlaybackService : MediaSessionService() {
 
     private fun syncWidgetState() {
         val meta = currentMetadata
-        val playing = if (::exoPlayer.isInitialized) exoPlayer.isPlaying else false
+        val playing = effectiveIsPlaying()
         PureToneWidgetProvider.updateAll(
             context = this,
             title = meta?.title ?: getString(R.string.app_name),
@@ -1539,7 +1562,7 @@ class EchoPlaybackService : MediaSessionService() {
     }
 
     fun snapshotState(): Map<String, Any> {
-        val isPlaying = if (::exoPlayer.isInitialized) exoPlayer.isPlaying else false
+        val isPlaying = effectiveIsPlaying()
         val isBuffering = if (::exoPlayer.isInitialized) exoPlayer.playbackState == Player.STATE_BUFFERING else false
         val pos = if (::exoPlayer.isInitialized) exoPlayer.currentPosition.coerceAtLeast(0L) else 0L
         val dur = if (::exoPlayer.isInitialized) {
@@ -1646,6 +1669,23 @@ class EchoPlaybackService : MediaSessionService() {
         const val ACTION_TOGGLE_FAVORITE = "com.xhd2005.puretone.ACTION_TOGGLE_FAVORITE"
         const val ACTION_CYCLE_PLAY_MODE = "com.xhd2005.puretone.ACTION_CYCLE_PLAY_MODE"
         private const val DEFAULT_NOTIFICATION_ACCENT = 0xFF1A2D70.toInt()
+
+        /**
+         * Preserves stable UI playing state during transient seek/rebuffer windows (`STATE_BUFFERING`
+         * while `playWhenReady == true` and no audio-focus suppression) so album artwork & transport
+         * controls never flash paused or twitch when scrubbing the progress bar.
+         */
+        fun computeEffectiveIsPlaying(
+            isPlaying: Boolean,
+            playWhenReady: Boolean,
+            playbackState: Int,
+            playbackSuppressionReason: Int = Player.PLAYBACK_SUPPRESSION_REASON_NONE,
+        ): Boolean {
+            if (isPlaying) return true
+            return playWhenReady &&
+                playbackState == Player.STATE_BUFFERING &&
+                playbackSuppressionReason == Player.PLAYBACK_SUPPRESSION_REASON_NONE
+        }
 
         fun resolveRequestHeaders(
             existingHeaders: Map<String, String>,

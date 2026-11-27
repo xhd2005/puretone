@@ -154,6 +154,8 @@ describe('v2.4.10 zero-auto-skip in-place recovery state machine', () => {
     const onPlayerErrorBody = source.slice(onErrIdx, fwdIdx);
     expect(onPlayerErrorBody).not.toContain('exoPlayer.seekToNextMediaItem(');
     expect(source).not.toContain('upstreamFactory.setDefaultRequestProperties');
-    expect(FALLBACK_APP_VERSION).toBe('2.4.10');
+    expect(source).toContain('computeEffectiveIsPlaying(');
+    expect(source).toContain('override fun onPlayWhenReadyChanged');
+    expect(FALLBACK_APP_VERSION).toBe('2.4.11');
   });
 });

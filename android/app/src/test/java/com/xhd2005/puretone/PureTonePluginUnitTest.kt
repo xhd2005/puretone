@@ -1,5 +1,6 @@
 package com.xhd2005.puretone
 
+import androidx.media3.common.Player
 import com.xhd2005.puretone.player.EchoPlaybackService
 import com.xhd2005.puretone.plugins.EchoHttpPlugin
 import com.xhd2005.puretone.plugins.EchoSystemPlugin
@@ -203,5 +204,58 @@ class PureTonePluginUnitTest {
         assertFalse(EchoPlaybackService.shouldTriggerPrematureEndRecovery(238_000L, 240_000L, 240_000L, false))
         // Already recovered once -> does NOT loop
         assertFalse(EchoPlaybackService.shouldTriggerPrematureEndRecovery(192_000L, 240_000L, 240_000L, true))
+    }
+
+    @Test
+    fun computeEffectiveIsPlaying_staysTrueDuringSeekBufferingWithoutCoverTwitch() {
+        // Playing normally
+        assertTrue(
+            EchoPlaybackService.computeEffectiveIsPlaying(
+                isPlaying = true,
+                playWhenReady = true,
+                playbackState = Player.STATE_READY,
+            ),
+        )
+        // Transient seek rebuffer while playWhenReady == true -> MUST stay true (no pause flash / cover shrink!)
+        assertTrue(
+            EchoPlaybackService.computeEffectiveIsPlaying(
+                isPlaying = false,
+                playWhenReady = true,
+                playbackState = Player.STATE_BUFFERING,
+                playbackSuppressionReason = Player.PLAYBACK_SUPPRESSION_REASON_NONE,
+            ),
+        )
+        // Seeking while paused (playWhenReady == false) -> MUST remain false
+        assertFalse(
+            EchoPlaybackService.computeEffectiveIsPlaying(
+                isPlaying = false,
+                playWhenReady = false,
+                playbackState = Player.STATE_BUFFERING,
+            ),
+        )
+        // Transient audio focus loss during buffering -> MUST drop to false
+        assertFalse(
+            EchoPlaybackService.computeEffectiveIsPlaying(
+                isPlaying = false,
+                playWhenReady = true,
+                playbackState = Player.STATE_BUFFERING,
+                playbackSuppressionReason = Player.PLAYBACK_SUPPRESSION_REASON_TRANSIENT_AUDIO_FOCUS_LOSS,
+            ),
+        )
+        // Playback ended or idle -> MUST be false
+        assertFalse(
+            EchoPlaybackService.computeEffectiveIsPlaying(
+                isPlaying = false,
+                playWhenReady = true,
+                playbackState = Player.STATE_ENDED,
+            ),
+        )
+        assertFalse(
+            EchoPlaybackService.computeEffectiveIsPlaying(
+                isPlaying = false,
+                playWhenReady = true,
+                playbackState = Player.STATE_IDLE,
+            ),
+        )
     }
 }
