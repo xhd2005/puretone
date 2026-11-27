@@ -248,7 +248,8 @@ function openAlbum(al: AlbumSummary) {
 
         <div v-if="searching" class="py-12 text-center text-[14px] text-[var(--text-secondary)]">{{ t('search.searching') }}</div>
 
-        <Transition v-else :name="searchTabDir" mode="out-in">
+        <div v-else class="pt-tab-overlap">
+        <Transition :name="searchTabDir">
           <!-- Tab 1: Songs -->
           <div v-if="activeTab === 'song'" key="search-song">
             <div v-if="!songs.length" class="py-12 text-center text-[14px] text-[var(--text-secondary)]">{{ t('search.noResults') }}</div>
@@ -331,6 +332,7 @@ function openAlbum(al: AlbumSummary) {
             </div>
           </div>
         </Transition>
+        </div>
       </div>
 
       <!-- ==================== EMPTY STATE: RECENT SEARCHES + MULTI-CHART HOT SEARCH BOARD ==================== -->

@@ -30,12 +30,12 @@
   /* Liquid Glass Materials */
   --lg-capsule-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.90) 0%, rgba(246, 248, 254, 0.78) 100%);
   --lg-surface-bg: linear-gradient(155deg, rgba(255, 255, 255, 0.86) 0%, rgba(244, 246, 252, 0.74) 100%);
-  --lg-sheet-bg: rgba(247, 248, 252, 0.975);
+  --lg-sheet-bg: #f6f7fb;
   --sticky-glass-bg: rgba(255, 255, 255, 0.94);
   --lg-specular: inset 0 1.25px 0 rgba(255, 255, 255, 0.96), inset 0 -0.75px 0 rgba(15, 23, 42, 0.06), inset 0.75px 0 0 rgba(255, 255, 255, 0.55);
   --lg-active-pill: linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(240, 242, 249, 0.82) 100%);
   --lg-active-pill-shadow: 0 4px 14px rgba(15, 23, 42, 0.09), inset 0 1px 0 rgba(255, 255, 255, 1);
-  --lg-scrim: rgba(18, 22, 32, 0.14);
+  --lg-scrim: rgba(12, 16, 28, 0.36);
 
   --spring-ease: cubic-bezier(0.22, 1, 0.36, 1);
   --spring-bounce: cubic-bezier(0.32, 1.22, 0.42, 1);
@@ -62,12 +62,12 @@
 
   --lg-capsule-bg: linear-gradient(180deg, rgba(46, 46, 54, 0.82) 0%, rgba(24, 24, 29, 0.76) 100%);
   --lg-surface-bg: linear-gradient(155deg, rgba(44, 44, 52, 0.78) 0%, rgba(24, 24, 29, 0.68) 100%);
-  --lg-sheet-bg: rgba(22, 22, 26, 0.96);
+  --lg-sheet-bg: #16161a;
   --sticky-glass-bg: rgba(12, 12, 16, 0.90);
   --lg-specular: inset 0 1px 0 rgba(255, 255, 255, 0.24), inset 0 -0.75px 0 rgba(0, 0, 0, 0.45), inset 0.75px 0 0 rgba(255, 255, 255, 0.10);
   --lg-active-pill: linear-gradient(180deg, rgba(255, 255, 255, 0.20) 0%, rgba(255, 255, 255, 0.10) 100%);
   --lg-active-pill-shadow: 0 4px 14px rgba(0, 0, 0, 0.36), inset 0 1px 0 rgba(255, 255, 255, 0.28);
-  --lg-scrim: rgba(0, 0, 0, 0.48);
+  --lg-scrim: rgba(0, 0, 0, 0.56);
 }
 
 * {
@@ -209,11 +209,9 @@ body,
   will-change: transform;
 }
 
-/* Airy Frosted Scrim (eliminates muddy gray slab in Light Mode!) */
+/* Solid GPU-composited scrim (zero fullscreen backdrop-filter readback flicker over NowPlaying!) */
 .lg-scrim {
   background-color: var(--lg-scrim);
-  backdrop-filter: blur(7px) saturate(135%);
-  -webkit-backdrop-filter: blur(7px) saturate(135%);
 }
 
 /* Liquid Glass Pill Button on Dark/Fluid Backgrounds */
@@ -434,36 +432,95 @@ body,
   transform: translate3d(0, -4px, 0);
 }
 
-/* Directional Segmented Tab Transitions (GPU-only transform + opacity!) */
+/* Persistent Multi-Pane GPU Stage for Bottom Sheets (Details/Comments, Profile/VIP/Settings)
+   Zero DOM unmount, zero blank transition frame, zero image re-decode, preserved scroll per tab! */
+.pt-pane-stage {
+  position: relative;
+  flex: 1 1 0%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.pt-pane {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+  contain: layout style;
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+  transition:
+    transform 280ms var(--spring-ease),
+    opacity 200ms ease,
+    visibility 0s linear 280ms;
+}
+
+.pt-pane.is-before {
+  transform: translate3d(-24px, 0, 0);
+}
+
+.pt-pane.is-after {
+  transform: translate3d(24px, 0, 0);
+}
+
+.pt-pane.is-active {
+  opacity: 1;
+  pointer-events: auto;
+  visibility: visible;
+  transform: translate3d(0, 0, 0);
+  z-index: 2;
+  transition:
+    transform 300ms var(--spring-ease),
+    opacity 210ms ease,
+    visibility 0s linear 0s;
+}
+
+/* Zero-Gap Simultaneous Cross-Slide Wrapper for Flowing Page Tabs (Search, Artist Detail) */
+.pt-tab-overlap {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  overflow-x: hidden;
+}
+.pt-tab-overlap > * {
+  grid-area: 1 / 1;
+  min-width: 0;
+}
+
+/* Directional Segmented Tab Transitions (Simultaneous GPU cross-slide — zero 140ms blank gap!) */
 .am-slide-left-enter-active,
 .am-slide-right-enter-active {
   transition:
-    transform 300ms var(--spring-ease),
-    opacity 220ms ease;
+    transform 280ms var(--spring-ease),
+    opacity 200ms ease;
   will-change: transform, opacity;
 }
 .am-slide-left-leave-active,
 .am-slide-right-leave-active {
+  pointer-events: none;
   transition:
-    transform 140ms ease,
-    opacity 120ms ease;
+    transform 220ms ease,
+    opacity 170ms ease;
   will-change: transform, opacity;
 }
 .am-slide-left-enter-from {
   opacity: 0;
-  transform: translate3d(24px, 0, 0);
+  transform: translate3d(22px, 0, 0);
 }
 .am-slide-left-leave-to {
   opacity: 0;
-  transform: translate3d(-18px, 0, 0);
+  transform: translate3d(-16px, 0, 0);
 }
 .am-slide-right-enter-from {
   opacity: 0;
-  transform: translate3d(-24px, 0, 0);
+  transform: translate3d(-22px, 0, 0);
 }
 .am-slide-right-leave-to {
   opacity: 0;
-  transform: translate3d(18px, 0, 0);
+  transform: translate3d(16px, 0, 0);
 }
 
 /* Smooth Expandable Inline Strip (Search Bar, Lyric Offset Bar) */

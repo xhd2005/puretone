@@ -601,7 +601,7 @@ export async function renderLyricPosterToDataUrl(options: PosterRenderOptions): 
   ctx.stroke();
 
   // Left: Song Title + Artist (+ Date stamp for themes without top date stamp)
-  const leftMaxW = W - footerPad * 2 - 260;
+  const leftMaxW = W - footerPad * 2 - 340;
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
   ctx.fillStyle = isLight ? '#1c1b18' : '#ffffff';
@@ -629,7 +629,7 @@ export async function renderLyricPosterToDataUrl(options: PosterRenderOptions): 
 
   ctx.fillStyle = isLight ? '#8b857b' : 'rgba(255, 255, 255, 0.56)';
   ctx.font = `500 18px ${fontStack}`;
-  ctx.fillText(truncateText(ctx, options.brandSlogan, 280), badgeX - 18, badgeY + 42);
+  ctx.fillText(truncateText(ctx, options.brandSlogan, 330), badgeX - 18, badgeY + 42);
 
   return canvas.toDataURL('image/png');
 }

@@ -1,5 +1,7 @@
 import '@/polyfills/setupGlobals';
 import { Buffer } from 'buffer';
+import CryptoJS from 'crypto-js';
+import { nativeHttpRequest } from '@/native/echoHttp';
 import { echoSystem } from '@/native/echoSystem';
 import type {
   AccountProfile,
@@ -723,9 +725,40 @@ export function parseHotSearchTabs(body: Record<string, any> | null | undefined,
   return tabs;
 }
 
+export const KUGOU_COMMENT_SONG_CODE = 'fc4be23b4e972707f36b8a828a93ba8a';
+const KUGOU_COMMENT_LIKE_ASSIGN_SALT = '949ad1dac503e48ad6e86bb841383485';
+const KUGOU_COMMENT_LIKE_HOST = 'https://mlike.kugou.com';
+
+export function buildCommentLikeAssign(moduleCode: string, timestampSec: string): string {
+  return CryptoJS.MD5(`${moduleCode}${timestampSec}${KUGOU_COMMENT_LIKE_ASSIGN_SALT}`).toString();
+}
+
+export function resolveCommentPoolId(
+  body: Record<string, any> | null | undefined,
+  sampleItem?: Record<string, any> | null,
+): string | undefined {
+  const b = body || {};
+  const firstFromList =
+    sampleItem ||
+    (Array.isArray(b.list) && b.list[0]) ||
+    (Array.isArray(b.weightList) && b.weightList[0]) ||
+    {};
+  // KuGou returns the actual comment pool ID in `body.childrenid` and `item.special_child_id`.
+  // Note: `item.special_id` is an internal shard/category number (e.g. 2364), NOT the comment pool ID!
+  const cand =
+    b.childrenid ??
+    firstFromList.special_child_id ??
+    firstFromList.childrenid ??
+    b.special_child_id ??
+    b.special_id;
+  const clean = cand == null ? '' : String(cand).trim();
+  return clean && clean !== '0' ? clean : undefined;
+}
+
 export function normalizeCommentItem(raw: Record<string, any>, fallbackSpecialId = ''): SongComment {
   const likeObj = raw.like && typeof raw.like === 'object' ? raw.like : null;
   const likeCount = Number(likeObj?.likenum ?? likeObj?.count ?? raw.like_num ?? raw.likenum ?? raw.praise_num ?? 0) || 0;
+  const liked = Boolean(likeObj?.haslike ?? likeObj?.islike ?? likeObj?.is_like ?? raw.haslike ?? raw.is_like);
   const replyCount = Number(raw.reply_num ?? raw.replynum ?? raw.reply_count ?? 0) || 0;
   const userName = String(raw.user_name ?? raw.username ?? raw.nickname ?? '匿名乐迷').trim() || '匿名乐迷';
   const rawAvatar = String(raw.user_pic ?? raw.userpic ?? raw.avatar ?? '').trim();
@@ -736,7 +769,12 @@ export function normalizeCommentItem(raw: Record<string, any>, fallbackSpecialId
   const content = String(raw.content ?? '').trim();
   const id = String(raw.id ?? raw.cid ?? raw.comment_id ?? `${userName}-${addTime}`);
   const tid = String(raw.tid ?? raw.id ?? id);
-  const specialId = String(raw.special_id ?? raw.childrenid ?? fallbackSpecialId ?? '').trim() || undefined;
+  // IMPORTANT: KuGou comment items carry `special_child_id` (real comment pool ID, e.g. "351563")
+  // alongside an unrelated internal shard `special_id` (e.g. 2364). Always prioritize `special_child_id` /
+  // `childrenid` / response-level `fallbackSpecialId` over `raw.special_id`!
+  const specialId =
+    String(raw.special_child_id ?? raw.childrenid ?? (fallbackSpecialId || undefined) ?? raw.special_id ?? '').trim() ||
+    undefined;
   const replyToUser = String(raw.puser ?? raw.reply_user_name ?? '').trim() || undefined;
 
   return {
@@ -751,6 +789,7 @@ export function normalizeCommentItem(raw: Record<string, any>, fallbackSpecialId
     addTime,
     location,
     likeCount,
+    liked,
     replyCount,
     replyToUser,
   };
@@ -1178,7 +1217,7 @@ export const kugouApi = {
       show_hotword_list: 1,
     });
     const b = res?.body?.data && Array.isArray(res?.body?.data?.list) ? res.body.data : res?.body ?? {};
-    const specialId = String(b.special_id ?? b.childrenid ?? '').trim() || undefined;
+    const specialId = resolveCommentPoolId(b);
     const hotList: any[] = page === 1 && Array.isArray(b.weightList) ? b.weightList : [];
     const mainList: any[] = Array.isArray(b.list) ? b.list : [];
     const seen = new Set<string>();
@@ -1227,7 +1266,7 @@ export const kugouApi = {
     const route = rank === 'hot' ? '/comment/music/hot' : '/comment/music/newest';
     const res = await callKugouRoute(route, { mixsongid: mixSongId, page, pagesize });
     const b = res?.body?.data && Array.isArray(res?.body?.data?.list) ? res.body.data : res?.body ?? {};
-    const specialId = String(b.special_id ?? b.childrenid ?? '').trim() || undefined;
+    const specialId = resolveCommentPoolId(b);
     const mainList: any[] = Array.isArray(b.list) ? b.list : [];
     const comments = mainList.map((raw) => normalizeCommentItem(raw, specialId || ''));
     const total = Number(b.count ?? comments.length) || 0;
@@ -1256,7 +1295,7 @@ export const kugouApi = {
       pagesize,
     });
     const b = res?.body?.data && Array.isArray(res?.body?.data?.list) ? res.body.data : res?.body ?? {};
-    const specialId = String(b.special_id ?? b.childrenid ?? '').trim() || undefined;
+    const specialId = resolveCommentPoolId(b);
     const mainList: any[] = Array.isArray(b.list) ? b.list : [];
     const comments = mainList.map((raw) => normalizeCommentItem(raw, specialId || ''));
     const total = Number(b.count ?? comments.length) || 0;
@@ -1283,7 +1322,7 @@ export const kugouApi = {
       pagesize,
     });
     const b = res?.body?.data && Array.isArray(res?.body?.data?.list) ? res.body.data : res?.body ?? {};
-    const specialId = String(b.special_id ?? b.childrenid ?? '').trim() || undefined;
+    const specialId = resolveCommentPoolId(b);
     const mainList: any[] = Array.isArray(b.list) ? b.list : [];
     const comments = mainList.map((raw) => normalizeCommentItem(raw, specialId || ''));
     const total = Number(b.count ?? comments.length) || 0;
@@ -1357,6 +1396,79 @@ export const kugouApi = {
       ok,
       message: String(b.msg ?? b.error ?? b.errmsg ?? '').trim() || undefined,
     };
+  },
+
+  async toggleCommentLike(options: {
+    specialId: string;
+    commentId: string;
+    liked?: boolean;
+  }): Promise<{ ok: boolean; isLiked?: boolean; message?: string }> {
+    const auth = activeAuth;
+    if (!auth?.token || !auth?.userid) {
+      return { ok: false, message: '请先登录酷狗账号' };
+    }
+    const specialId = String(options.specialId || '').trim();
+    const commentId = String(options.commentId || '').trim();
+    if (!specialId || !commentId) {
+      return { ok: false, message: '评论参数缺失' };
+    }
+    const dev = await initKugouEngine();
+    const callOnce = async (): Promise<Record<string, any> | null> => {
+      const ts = String(Math.floor(Date.now() / 1000));
+      const assign = buildCommentLikeAssign(KUGOU_COMMENT_SONG_CODE, ts);
+      const q = new URLSearchParams({
+        childrenid: specialId,
+        object: commentId,
+        assign,
+        kugouid: String(auth.userid),
+        appid: '3116',
+        clienttoken: String(auth.token),
+        mid: dev.mid || '',
+        timestamp: ts,
+        modulecode: KUGOU_COMMENT_SONG_CODE,
+        format: 'jsonp',
+        from: 'phone',
+      });
+      const res = await nativeHttpRequest({
+        method: 'GET',
+        url: `${KUGOU_COMMENT_LIKE_HOST}/like/handlelike?${q.toString()}`,
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          Referer: 'https://www.kugou.com/',
+          Cookie: `kg_mid=${dev.mid || ''}; kg_dfid=${dev.dfid || '-'}`,
+        },
+        readTimeoutMs: 12000,
+      });
+      const raw = (res.body || '').trim();
+      if (!raw) return null;
+      const jsonText = raw.startsWith('{') ? raw : raw.replace(/^[^(]*\(/, '').replace(/\);?\s*$/, '');
+      try {
+        return JSON.parse(jsonText) as Record<string, any>;
+      } catch {
+        return null;
+      }
+    };
+
+    try {
+      let json = await callOnce();
+      if (!json || Number(json.status) !== 1 || Number(json.err_code ?? 0) !== 0) {
+        return {
+          ok: false,
+          message: String(json?.msg ?? json?.message ?? '').trim() || '点赞失败',
+        };
+      }
+      let isLiked = Number(json.islike) === 1;
+      if (typeof options.liked === 'boolean' && isLiked !== options.liked) {
+        json = await callOnce();
+        if (json && Number(json.status) === 1 && Number(json.err_code ?? 0) === 0) {
+          isLiked = Number(json.islike) === 1;
+        }
+      }
+      return { ok: true, isLiked, message: String(json?.msg ?? '').trim() || undefined };
+    } catch (e: any) {
+      return { ok: false, message: e?.message || '点赞失败' };
+    }
   },
 
   async getSongClimax(hash: string, durationMs = 0): Promise<SongClimaxRange | null> {

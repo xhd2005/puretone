@@ -23,6 +23,8 @@ export const useUiStore = defineStore('ui', () => {
   /** When true (e.g. playlist batch selection), AppShell smoothly hides MiniPlayer & TabBar for a bottom takeover dock. */
   const batchDockActive = ref(false);
   let batchExitHandler: (() => void) | null = null;
+  /** Incrementing counter to smoothly replay the moonlit brand splash from Settings -> About. */
+  const splashReplaySeq = ref(0);
 
   const toastMessage = ref('');
   let toastTimer: ReturnType<typeof setTimeout> | null = null;
@@ -106,6 +108,12 @@ export const useUiStore = defineStore('ui', () => {
     batchExitHandler = active ? (onExit ?? null) : null;
   }
 
+  function replaySplash() {
+    echoSystem.haptic('light');
+    accountSheetOpen.value = false;
+    splashReplaySeq.value += 1;
+  }
+
   function closeTopOverlay(): boolean {
     if (complianceModalOpen.value) {
       return true;
@@ -175,6 +183,7 @@ export const useUiStore = defineStore('ui', () => {
     updateReleaseInfo,
     complianceModalOpen,
     batchDockActive,
+    splashReplaySeq,
     hasModalOverlay,
     toastMessage,
     insets,
@@ -186,6 +195,7 @@ export const useUiStore = defineStore('ui', () => {
     closeSongActions,
     openAddToPlaylist,
     setBatchDock,
+    replaySplash,
     closeTopOverlay,
   };
 });

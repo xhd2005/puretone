@@ -113,10 +113,18 @@ function snapToActiveNow() {
 }
 
 watch(
-  () => [props.active, player.isPlaying, player.currentTimeMs, lyricOffsetMs.value],
+  () => [props.active, player.isPlaying, player.currentTimeMs],
   () => syncLoop(),
   { immediate: true },
 );
+
+watch(lyricOffsetMs, () => {
+  syncLoop();
+  if (props.active) {
+    userScrolling.value = false;
+    void nextTick(() => scrollToActive(true));
+  }
+});
 
 watch(
   () => player.lyrics.lines,
@@ -193,7 +201,8 @@ function handleLineClick(line: LyricLine) {
   echoSystem.haptic('selection');
   userScrolling.value = false;
   liveTimeMs.value = line.startMs;
-  void player.seek(line.startMs);
+  const targetAudioMs = Math.max(0, line.startMs - lyricOffsetMs.value);
+  void player.seek(targetAudioMs);
   emit('lineSeek');
   void nextTick(() => scrollToActive(true));
 }
@@ -225,18 +234,19 @@ function getLineClass(idx: number) {
     @wheel.passive="markUserScrolling"
     @click="onContainerClick"
   >
-    <div v-if="player.lyricsLoading" class="krc-empty">
-      <div class="krc-dots">
-        <span /><span /><span />
+    <Transition name="am-fade" mode="out-in">
+      <div v-if="player.lyricsLoading" key="krc-loading" class="krc-empty">
+        <div class="krc-dots">
+          <span /><span /><span />
+        </div>
       </div>
-    </div>
 
-    <div v-else-if="!player.lyrics.lines.length" class="krc-empty">
-      <p class="text-[22px] font-bold text-white/75 tracking-tight">{{ t('lyrics.none') }}</p>
-      <p class="text-[14px] text-white/45 mt-2">{{ t('lyrics.noneSub') }}</p>
-    </div>
+      <div v-else-if="!player.lyrics.lines.length" key="krc-none" class="krc-empty">
+        <p class="text-[22px] font-bold text-white/75 tracking-tight">{{ t('lyrics.none') }}</p>
+        <p class="text-[14px] text-white/45 mt-2">{{ t('lyrics.noneSub') }}</p>
+      </div>
 
-    <div v-else class="krc-list" :class="fontSizeClass">
+      <div v-else key="krc-list" class="krc-list" :class="fontSizeClass">
       <button
         v-for="(line, idx) in player.lyrics.lines"
         :key="`${line.startMs}-${idx}`"
@@ -278,6 +288,7 @@ function getLineClass(idx: number) {
         </div>
       </button>
     </div>
+    </Transition>
   </div>
 </template>
 

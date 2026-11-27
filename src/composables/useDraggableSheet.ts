@@ -7,7 +7,7 @@ export interface DraggableSheetOptions {
   /** Index into detents when sheet opens */
   initialDetentIndex?: number;
   /** Optional ref to inner scrollable element for seamless pull-down at top */
-  scrollElRef?: Ref<HTMLElement | null>;
+  scrollElRef?: Readonly<Ref<HTMLElement | null>>;
   /** Called when user drags past dismiss threshold or flicks downward */
   onDismiss: () => void;
 }

@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue';
+import { onMounted, onUnmounted, ref, watch } from 'vue';
+import { useUiStore } from '@/stores/ui';
 import { useI18n } from '@/i18n';
 import PureToneMark from './PureToneMark.vue';
 
@@ -7,34 +8,71 @@ const emit = defineEmits<{
   done: [];
 }>();
 
+const ui = useUiStore();
 const { t, effectiveLocale } = useI18n();
 const visible = ref(true);
 const revealed = ref(false);
 let revealTimer: ReturnType<typeof setTimeout> | null = null;
 let dismissTimer: ReturnType<typeof setTimeout> | null = null;
+let finishTimer: ReturnType<typeof setTimeout> | null = null;
 let finished = false;
+let isInitialBoot = true;
+
+function clearTimers() {
+  if (revealTimer) {
+    clearTimeout(revealTimer);
+    revealTimer = null;
+  }
+  if (dismissTimer) {
+    clearTimeout(dismissTimer);
+    dismissTimer = null;
+  }
+  if (finishTimer) {
+    clearTimeout(finishTimer);
+    finishTimer = null;
+  }
+}
 
 function dismiss() {
   if (finished) return;
   finished = true;
-  if (revealTimer) clearTimeout(revealTimer);
-  if (dismissTimer) clearTimeout(dismissTimer);
+  clearTimers();
   visible.value = false;
-  setTimeout(() => emit('done'), 320);
+  if (isInitialBoot) {
+    isInitialBoot = false;
+    finishTimer = setTimeout(() => emit('done'), 320);
+  }
 }
 
-onMounted(() => {
+function playSequence(durationMs = 1820) {
+  clearTimers();
+  finished = false;
+  revealed.value = false;
+  visible.value = true;
   revealTimer = setTimeout(() => {
     revealed.value = true;
   }, 45);
   dismissTimer = setTimeout(() => {
     dismiss();
-  }, 940);
+  }, durationMs);
+}
+
+watch(
+  () => ui.splashReplaySeq,
+  (seq, prev) => {
+    if (seq > 0 && seq !== prev) {
+      isInitialBoot = false;
+      playSequence(2400);
+    }
+  },
+);
+
+onMounted(() => {
+  playSequence(1820);
 });
 
 onUnmounted(() => {
-  if (revealTimer) clearTimeout(revealTimer);
-  if (dismissTimer) clearTimeout(dismissTimer);
+  clearTimers();
 });
 </script>
 
@@ -53,7 +91,7 @@ onUnmounted(() => {
       <div class="w-full pt-[calc(var(--safe-top)+14px)] flex justify-end relative z-10">
         <button
           type="button"
-          class="px-3 py-1 rounded-full bg-white/10 text-white/60 text-[11px] font-medium border-0 backdrop-blur-md"
+          class="px-3 py-1 rounded-full bg-white/10 text-white/65 text-[11px] font-medium border-0"
           @click.stop="dismiss"
         >
           {{ t('common.skip') }}
@@ -61,7 +99,7 @@ onUnmounted(() => {
       </div>
 
       <!-- Center Moonlit Emblem & Brand Typography -->
-      <div class="flex flex-col items-center text-center relative z-10 -mt-6">
+      <div class="flex flex-col items-center text-center relative z-10 -mt-6 max-w-[320px]">
         <div class="ml-emblem-wrap" :class="{ 'is-on': revealed }">
           <PureToneMark :size="84" />
         </div>
@@ -70,12 +108,23 @@ onUnmounted(() => {
           <div class="text-[24px] font-bold tracking-[0.14em] text-white">
             {{ t('app.fullName') }}
           </div>
-          <p class="mt-2.5 text-[13.5px] font-medium tracking-[0.12em] text-[#cbdcf8]/85 m-0">
-            {{ t('app.slogan') }}
+
+          <p class="mt-4 text-[15.5px] font-semibold tracking-[0.10em] text-white/95 leading-relaxed m-0">
+            {{ t('splash.headline') }}
           </p>
+
+          <div class="ml-brand-sub mt-3 space-y-1" :class="{ 'is-on': revealed }">
+            <p class="text-[12.5px] font-normal tracking-[0.09em] text-[#dceaff]/72 leading-relaxed m-0">
+              {{ t('splash.line1') }}
+            </p>
+            <p class="text-[12.5px] font-normal tracking-[0.09em] text-[#cbdcf8]/68 leading-relaxed m-0">
+              {{ t('splash.line2') }}
+            </p>
+          </div>
+
           <p
             v-if="effectiveLocale !== 'en'"
-            class="mt-1 text-[10.5px] font-medium tracking-[0.18em] uppercase text-[#a6c2f5]/52 m-0"
+            class="mt-3.5 text-[10px] font-medium tracking-[0.2em] uppercase text-[#a6c2f5]/46 m-0"
           >
             {{ t('app.sloganEn') }}
           </p>
@@ -142,9 +191,19 @@ onUnmounted(() => {
 .ml-brand-copy {
   opacity: 0;
   transform: translate3d(0, 12px, 0);
-  transition: opacity 540ms ease 110ms, transform 640ms cubic-bezier(0.22, 1, 0.36, 1) 110ms;
+  transition: opacity 540ms ease 100ms, transform 640ms cubic-bezier(0.22, 1, 0.36, 1) 100ms;
 }
 .ml-brand-copy.is-on {
+  opacity: 1;
+  transform: translate3d(0, 0, 0);
+}
+
+.ml-brand-sub {
+  opacity: 0;
+  transform: translate3d(0, 8px, 0);
+  transition: opacity 560ms ease 240ms, transform 640ms cubic-bezier(0.22, 1, 0.36, 1) 240ms;
+}
+.ml-brand-sub.is-on {
   opacity: 1;
   transform: translate3d(0, 0, 0);
 }

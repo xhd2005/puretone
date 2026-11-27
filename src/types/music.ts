@@ -215,6 +215,7 @@ export interface SongComment {
   addTime: string;
   location?: string;
   likeCount: number;
+  liked?: boolean;
   replyCount: number;
   replyToUser?: string;
 }

@@ -125,8 +125,15 @@ describe('MELUNE v2.4.0 brand, hot search, comments, artist, climax & i18n check
     expect(zhCN['app.fullName']).toBe('弥音 · MELUNE');
     expect(zhTW['app.fullName']).toBe('彌音 · MELUNE');
     expect(enUS['app.fullName']).toBe('MELUNE');
-    expect(zhCN['app.slogan']).toBe('余音绵延，音乐无界。');
+    expect(zhCN['app.slogan']).toBe('音乐终会停止，余音却可以绵延。');
+    expect(zhTW['app.slogan']).toBe('音樂終會停止，餘音卻可以綿延。');
     expect(enUS['app.slogan']).toBe('Where Music Becomes Memory.');
+    expect(zhCN['splash.line1']).toBe('让每一段旋律都拥有自己的空间');
+    expect(zhCN['splash.line2']).toBe('让每一种情绪都能找到共鸣');
+    expect(zhCN['about.miChar']).toBe('弥');
+    expect(zhCN['about.yinChar']).toBe('音');
+    expect(zhCN['about.closing']).toBe('音乐终会停止，余音却可以绵延。');
+    expect(enUS['about.philosophyTitle']).toBe('Brand Philosophy');
     // Ensure compact zero-overflow speed normal label across all 3 locales
     expect(enUS['song.speedNormal']).toBe('1.0x');
     expect(zhCN['song.speedNormal']).toBe('1.0x');

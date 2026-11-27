@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router';
 import { Icon } from '@iconify/vue';
 import iconX from '@iconify/icons-tabler/x';
 import iconThumbUp from '@iconify/icons-tabler/thumb-up';
+import iconThumbUpFilled from '@iconify/icons-tabler/thumb-up-filled';
 import iconMessageCircle from '@iconify/icons-tabler/message-circle';
 import iconSend from '@iconify/icons-tabler/send';
 import iconChevronRight from '@iconify/icons-tabler/chevron-right';
@@ -55,9 +56,12 @@ const player = usePlayerStore();
 const ui = useUiStore();
 const { t, effectiveLocale } = useI18n();
 
-const scrollRef = ref<HTMLElement | null>(null);
+const detailsScrollRef = ref<HTMLElement | null>(null);
+const commentsScrollRef = ref<HTMLElement | null>(null);
+const activeScrollRef = computed(() =>
+  ui.commentsSheetTab === 'details' ? detailsScrollRef.value : commentsScrollRef.value,
+);
 const subMode = ref<CommentSubMode>('all');
-const mainTabDir = ref<'am-slide-left' | 'am-slide-right'>('am-slide-left');
 const mainTabIndex = computed(() => (ui.commentsSheetTab === 'comments' ? 1 : 0));
 const subModeIndex = computed(() => {
   const order: CommentSubMode[] = ['all', 'hot', 'newest', 'hotword'];
@@ -67,17 +71,36 @@ const subModeIndex = computed(() => {
 
 function switchMainTab(next: 'details' | 'comments') {
   if (ui.commentsSheetTab === next) return;
-  mainTabDir.value = next === 'comments' ? 'am-slide-left' : 'am-slide-right';
   echoSystem.haptic('selection');
   ui.commentsSheetTab = next;
 }
 const loading = ref(false);
+const switchingSubMode = ref(false);
 const loadingMore = ref(false);
 const comments = ref<SongComment[]>([]);
 const totalCount = ref(0);
 const hasMore = ref(false);
 const page = ref(1);
 const specialId = ref('');
+
+interface CommentBucketSnapshot {
+  comments: SongComment[];
+  page: number;
+  hasMore: boolean;
+}
+const commentBuckets = new Map<string, CommentBucketSnapshot>();
+
+function currentBucketKey(mode: CommentSubMode = subMode.value, hotword: string = selectedHotword.value): string {
+  return mode === 'hotword' ? `hotword:${hotword}` : mode;
+}
+
+function saveCurrentBucket(mode: CommentSubMode = subMode.value, hotword: string = selectedHotword.value) {
+  commentBuckets.set(currentBucketKey(mode, hotword), {
+    comments: comments.value,
+    page: page.value,
+    hasMore: hasMore.value,
+  });
+}
 
 const hotwords = ref<CommentHotwordTag[]>([]);
 const selectedHotword = ref('');
@@ -159,7 +182,7 @@ const albumPreviewTracks = computed<Song[]>(() => {
 const dragSheet = useDraggableSheet({
   detents: [0.74, 0.94],
   initialDetentIndex: 1,
-  scrollElRef: scrollRef,
+  scrollElRef: activeScrollRef,
   onDismiss: () => {
     ui.commentsSheetSong = null;
   },
@@ -214,15 +237,34 @@ async function loadEnrichedTrackDetails(s: Song, seq: number) {
   }
 }
 
-async function fetchComments(reset = true) {
+async function fetchComments(reset = true, forceRefresh = false) {
   const s = song.value;
   if (!s) return;
   const reqSeq = sheetSessionSeq;
+  const targetMode = subMode.value;
+  const targetHotword = selectedHotword.value;
+  const bucketKey = currentBucketKey(targetMode, targetHotword);
+
   if (reset) {
-    loading.value = true;
+    if (!forceRefresh) {
+      const cached = commentBuckets.get(bucketKey);
+      if (cached) {
+        comments.value = cached.comments;
+        page.value = cached.page;
+        hasMore.value = cached.hasMore;
+        loading.value = false;
+        switchingSubMode.value = false;
+        return;
+      }
+    }
     page.value = 1;
-    comments.value = [];
-    floorStates.value = {};
+    if (comments.value.length > 0) {
+      switchingSubMode.value = true;
+      loading.value = false;
+    } else {
+      loading.value = true;
+      switchingSubMode.value = false;
+    }
   } else {
     if (loadingMore.value || !hasMore.value) return;
     loadingMore.value = true;
@@ -232,27 +274,28 @@ async function fetchComments(reset = true) {
   try {
     if (!activeMixSongId) {
       const resolved = await resolveMixSongId();
-      if (reqSeq !== sheetSessionSeq) return;
+      if (reqSeq !== sheetSessionSeq || currentBucketKey() !== bucketKey) return;
       if (!resolved) {
         totalCount.value = 0;
         hasMore.value = false;
+        if (reset) comments.value = [];
         return;
       }
       activeMixSongId = resolved;
     }
 
     let res;
-    if (subMode.value === 'hot') {
+    if (targetMode === 'hot') {
       res = await kugouApi.getSongCommentsRanked(activeMixSongId, 'hot', page.value);
-    } else if (subMode.value === 'newest') {
+    } else if (targetMode === 'newest') {
       res = await kugouApi.getSongCommentsRanked(activeMixSongId, 'newest', page.value);
-    } else if (subMode.value === 'hotword') {
-      if (!selectedHotword.value) {
+    } else if (targetMode === 'hotword') {
+      if (!targetHotword) {
         comments.value = [];
         hasMore.value = false;
         return;
       }
-      res = await kugouApi.getSongCommentsByHotword(activeMixSongId, selectedHotword.value, page.value);
+      res = await kugouApi.getSongCommentsByHotword(activeMixSongId, targetHotword, page.value);
     } else {
       res = await kugouApi.getSongComments(activeMixSongId, page.value);
       if (reset) {
@@ -263,9 +306,9 @@ async function fetchComments(reset = true) {
       }
     }
 
-    if (reqSeq !== sheetSessionSeq) return;
+    if (reqSeq !== sheetSessionSeq || currentBucketKey() !== bucketKey) return;
     if (res.specialId) specialId.value = res.specialId;
-    if (res.total > 0 && (subMode.value === 'all' || !totalCount.value)) {
+    if (res.total > 0 && (targetMode === 'all' || !totalCount.value)) {
       totalCount.value = res.total;
     }
     hasMore.value = res.hasMore;
@@ -275,12 +318,16 @@ async function fetchComments(reset = true) {
       const existing = new Set(comments.value.map((c) => c.id));
       comments.value = [...comments.value, ...res.comments.filter((c) => !existing.has(c.id))];
     }
+    saveCurrentBucket(targetMode, targetHotword);
   } catch {
-    if (reqSeq === sheetSessionSeq && reset) comments.value = [];
+    if (reqSeq === sheetSessionSeq && currentBucketKey() === bucketKey && reset && !comments.value.length) {
+      comments.value = [];
+    }
     hasMore.value = false;
   } finally {
-    if (reqSeq === sheetSessionSeq) {
+    if (reqSeq === sheetSessionSeq && currentBucketKey() === bucketKey) {
       loading.value = false;
+      switchingSubMode.value = false;
       loadingMore.value = false;
     }
   }
@@ -292,6 +339,10 @@ watch(
     if (!next) return;
     const seq = ++sheetSessionSeq;
     dragSheet.reset();
+    commentBuckets.clear();
+    comments.value = [];
+    floorStates.value = {};
+    switchingSubMode.value = false;
     subMode.value = 'all';
     selectedHotword.value = '';
     hotwords.value = [];
@@ -300,7 +351,9 @@ watch(
     specialId.value = '';
     activeMixSongId = next.mixSongId || 0;
     totalCount.value = 0;
-    void fetchComments(true);
+    if (detailsScrollRef.value) detailsScrollRef.value.scrollTop = 0;
+    if (commentsScrollRef.value) commentsScrollRef.value.scrollTop = 0;
+    void fetchComments(true, true);
     void loadEnrichedTrackDetails(next, seq);
   },
 );
@@ -336,7 +389,10 @@ async function toggleFloorReplies(cmt: SongComment) {
     return;
   }
   const spId = cmt.specialId || specialId.value;
-  if (!spId) return;
+  if (!spId) {
+    ui.showToast(t('comments.empty'));
+    return;
+  }
 
   floorStates.value = {
     ...floorStates.value,
@@ -388,6 +444,52 @@ async function loadMoreFloorReplies(cmt: SongComment) {
     };
   } catch {
     floorStates.value = { ...floorStates.value, [cmt.id]: { ...st, loading: false } };
+  }
+}
+
+const likingIds = ref<Record<string, boolean>>({});
+
+async function handleToggleCommentLike(target: SongComment) {
+  if (!accounts.isLoggedIn) {
+    ui.loginModalOpen = true;
+    return;
+  }
+  const spId = target.specialId || specialId.value;
+  if (!spId || likingIds.value[target.id]) return;
+
+  echoSystem.haptic('light');
+  const prevLiked = Boolean(target.liked);
+  const prevCount = target.likeCount;
+  const nextLiked = !prevLiked;
+
+  target.liked = nextLiked;
+  target.likeCount = Math.max(0, prevCount + (nextLiked ? 1 : -1));
+  likingIds.value = { ...likingIds.value, [target.id]: true };
+
+  try {
+    const res = await kugouApi.toggleCommentLike({
+      specialId: spId,
+      commentId: target.id,
+      liked: nextLiked,
+    });
+    if (!res.ok) {
+      target.liked = prevLiked;
+      target.likeCount = prevCount;
+      ui.showToast(res.message || t('comments.sendFailed'));
+    } else {
+      if (typeof res.isLiked === 'boolean' && res.isLiked !== target.liked) {
+        target.liked = res.isLiked;
+        target.likeCount = Math.max(0, prevCount + (res.isLiked ? 1 : -1));
+      }
+      saveCurrentBucket();
+    }
+  } catch {
+    target.liked = prevLiked;
+    target.likeCount = prevCount;
+  } finally {
+    const nextMap = { ...likingIds.value };
+    delete nextMap[target.id];
+    likingIds.value = nextMap;
   }
 }
 
@@ -477,6 +579,7 @@ async function submitComment() {
         };
         comments.value = [optimistic, ...comments.value];
         totalCount.value += 1;
+        saveCurrentBucket();
       }
     } else {
       ui.showToast(res.message || t('comments.sendFailed'), 3000);
@@ -660,18 +763,22 @@ function addToPlaylist() {
             </div>
           </div>
 
-          <!-- Scrollable Sheet Body -->
-          <div
-            ref="scrollRef"
-            class="flex-1 am-scroll px-4 pt-3.5 pb-6 space-y-3 overflow-x-hidden"
-            @touchstart.passive="dragSheet.onBodyTouchStart"
-            @touchmove="dragSheet.onBodyTouchMove"
-            @touchend.passive="dragSheet.onBodyTouchEnd"
-            @touchcancel.passive="dragSheet.onBodyTouchEnd"
-          >
-            <Transition :name="mainTabDir" mode="out-in">
-              <!-- ==================== TAB A: RICH TRACK DETAILS ==================== -->
-              <div v-if="ui.commentsSheetTab === 'details'" key="sheet-details" class="space-y-3">
+          <!-- Persistent Dual-Pane Stage: ZERO unmount, ZERO blank frame, ZERO avatar re-decode! -->
+          <div class="pt-pane-stage">
+            <!-- ==================== PANE A: RICH TRACK DETAILS ==================== -->
+            <div
+              class="pt-pane flex flex-col overflow-hidden"
+              :class="ui.commentsSheetTab === 'details' ? 'is-active' : 'is-before'"
+              :aria-hidden="ui.commentsSheetTab !== 'details'"
+            >
+              <div
+                ref="detailsScrollRef"
+                class="flex-1 am-scroll px-4 pt-3.5 pb-[calc(var(--safe-bottom)+24px)] space-y-3 overflow-x-hidden"
+                @touchstart.passive="dragSheet.onBodyTouchStart"
+                @touchmove="dragSheet.onBodyTouchMove"
+                @touchend.passive="dragSheet.onBodyTouchEnd"
+                @touchcancel.passive="dragSheet.onBodyTouchEnd"
+              >
               <!-- Quick Actions Strip -->
               <div class="grid grid-cols-4 gap-2">
                 <button
@@ -920,9 +1027,22 @@ function addToPlaylist() {
                 </button>
               </div>
               </div>
+            </div>
 
-              <!-- ==================== TAB B: 4-MODE REAL COMMENTS (FEATURED / TOP / LATEST / HOTWORDS) ==================== -->
-              <div v-else key="sheet-comments" class="space-y-3">
+            <!-- ==================== PANE B: 4-MODE REAL COMMENTS + COMPOSER ==================== -->
+            <div
+              class="pt-pane flex flex-col overflow-hidden"
+              :class="ui.commentsSheetTab === 'comments' ? 'is-active' : 'is-after'"
+              :aria-hidden="ui.commentsSheetTab !== 'comments'"
+            >
+              <div
+                ref="commentsScrollRef"
+                class="flex-1 am-scroll px-4 pt-3.5 pb-6 space-y-3 overflow-x-hidden"
+                @touchstart.passive="dragSheet.onBodyTouchStart"
+                @touchmove="dragSheet.onBodyTouchMove"
+                @touchend.passive="dragSheet.onBodyTouchEnd"
+                @touchcancel.passive="dragSheet.onBodyTouchEnd"
+              >
               <div class="pt-seg-group grid-cols-4">
                 <div
                   class="pt-seg-thumb"
@@ -1002,8 +1122,8 @@ function addToPlaylist() {
                 {{ t('comments.empty') }}
               </div>
 
-              <!-- Comment Cards -->
-              <div v-else class="space-y-2.5">
+              <!-- Comment Cards (gently dims on uncached sub-tab load instead of wiping blank!) -->
+              <div v-else class="space-y-2.5 transition-opacity duration-150" :class="{ 'opacity-55': switchingSubMode }">
                 <article
                   v-for="cmt in comments"
                   :key="cmt.id"
@@ -1031,10 +1151,24 @@ function addToPlaylist() {
                       </div>
                     </div>
 
-                    <div class="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-[var(--bg-subtle)]/75 text-[11px] font-semibold text-[var(--text-secondary)] tabular-nums shrink-0">
-                      <Icon :icon="iconThumbUp" class="w-3.5 h-3.5 am-accent-text" />
+                    <button
+                      type="button"
+                      class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border-0 text-[11px] font-semibold tabular-nums shrink-0 transition-colors am-tap"
+                      :class="
+                        cmt.liked
+                          ? 'am-accent-bg text-white shadow-xs'
+                          : 'bg-[var(--bg-subtle)]/75 text-[var(--text-secondary)]'
+                      "
+                      :disabled="Boolean(likingIds[cmt.id])"
+                      @click="handleToggleCommentLike(cmt)"
+                    >
+                      <Icon
+                        :icon="cmt.liked ? iconThumbUpFilled : iconThumbUp"
+                        class="w-3.5 h-3.5"
+                        :class="cmt.liked ? 'text-white' : 'am-accent-text'"
+                      />
                       <span>{{ formatCompactCount(cmt.likeCount, effectiveLocale) }}</span>
-                    </div>
+                    </button>
                   </div>
 
                   <p class="text-[13.5px] leading-relaxed text-[var(--text-primary)] whitespace-pre-wrap break-words m-0 pl-[42px]">
@@ -1080,6 +1214,12 @@ function addToPlaylist() {
                       {{ t('common.loading') }}
                     </div>
                     <div
+                      v-else-if="!(floorStates[cmt.id]?.replies?.length)"
+                      class="text-[12px] text-[var(--text-tertiary)]"
+                    >
+                      {{ t('comments.empty') }}
+                    </div>
+                    <div
                       v-for="rep in floorStates[cmt.id]?.replies || []"
                       :key="rep.id"
                       class="space-y-0.5"
@@ -1091,7 +1231,19 @@ function addToPlaylist() {
                             <span class="font-normal text-[var(--text-tertiary)]"> ▸ {{ rep.replyToUser }}</span>
                           </template>
                         </span>
-                        <span class="text-[10.5px] text-[var(--text-tertiary)] tabular-nums shrink-0">{{ rep.addTime }}</span>
+                        <div class="inline-flex items-center gap-2 shrink-0">
+                          <span class="text-[10.5px] text-[var(--text-tertiary)] tabular-nums">{{ rep.addTime }}</span>
+                          <button
+                            type="button"
+                            class="inline-flex items-center gap-0.5 bg-transparent border-0 p-0 text-[10.5px] font-semibold tabular-nums am-tap"
+                            :class="rep.liked ? 'am-accent-text' : 'text-[var(--text-tertiary)]'"
+                            :disabled="Boolean(likingIds[rep.id])"
+                            @click="handleToggleCommentLike(rep)"
+                          >
+                            <Icon :icon="rep.liked ? iconThumbUpFilled : iconThumbUp" class="w-3 h-3" />
+                            <span v-if="rep.likeCount > 0">{{ formatCompactCount(rep.likeCount, effectiveLocale) }}</span>
+                          </button>
+                        </div>
                       </div>
                       <p class="text-[12.5px] leading-snug text-[var(--text-primary)]/90 whitespace-pre-wrap break-words m-0">
                         {{ rep.content }}
@@ -1120,16 +1272,12 @@ function addToPlaylist() {
                 </button>
               </div>
               </div>
-            </Transition>
-          </div>
 
-          <!-- IME-Aware Bottom Comment / Reply Composer -->
-          <Transition name="am-expand">
-            <div
-              v-if="ui.commentsSheetTab === 'comments'"
-              class="shrink-0 px-4 pt-2.5 am-hairline-t bg-[var(--bg-card)]/92 backdrop-blur-xl space-y-1.5"
-              :style="{ paddingBottom: `calc(max(var(--safe-bottom), var(--ime-height)) + 10px)` }"
-            >
+              <!-- IME-Aware Bottom Comment / Reply Composer (Solid surface inside Pane B: zero flex jump & zero nested blur!) -->
+              <div
+                class="shrink-0 px-4 pt-2.5 am-hairline-t bg-[var(--bg-card)] space-y-1.5"
+                :style="{ paddingBottom: `calc(max(var(--safe-bottom), var(--ime-height)) + 10px)` }"
+              >
             <div v-if="replyTarget" class="flex items-center justify-between gap-2 px-2.5 py-1 rounded-xl bg-[var(--bg-subtle)]/75 text-[11.5px]">
               <span class="text-[var(--text-secondary)] truncate">
                 {{ t('comments.replyingTo', { user: replyTarget.userName }) }}
@@ -1159,8 +1307,9 @@ function addToPlaylist() {
                 <span>{{ t('comments.send') }}</span>
               </button>
             </form>
+              </div>
             </div>
-          </Transition>
+          </div>
         </div>
       </div>
     </div>

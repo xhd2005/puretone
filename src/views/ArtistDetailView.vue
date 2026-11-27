@@ -382,7 +382,8 @@ watch(artistId, () => void bootstrap());
         </div>
       </section>
 
-      <Transition :name="artistTabDir" mode="out-in">
+      <div class="pt-tab-overlap">
+      <Transition :name="artistTabDir">
         <!-- ==================== TAB 1: ARTIST SONGS ==================== -->
         <section v-if="activeTab === 'songs'" key="artist-songs" class="relative z-10">
         <!-- Quick Filter & Hot/New Sort Bar -->
@@ -492,6 +493,7 @@ watch(artistId, () => void bootstrap());
         </div>
       </section>
       </Transition>
+      </div>
     </div>
 
     <!-- Full Artist Biography Modal (Structured Multi-Section Reader) -->

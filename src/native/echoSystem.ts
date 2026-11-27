@@ -157,7 +157,7 @@ export const echoSystem = {
     if (Capacitor.isNativePlatform()) {
       return EchoSystemNative.getLaunchFlags();
     }
-    return { openNowPlaying: false, versionName: '2.4.5', versionCode: 12 };
+    return { openNowPlaying: false, versionName: '2.4.6', versionCode: 13 };
   },
 
   async checkNotificationPermission(): Promise<{ granted: boolean; systemEnabled: boolean; runtimeGranted: boolean }> {

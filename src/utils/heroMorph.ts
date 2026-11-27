@@ -97,6 +97,62 @@ export function computeMetaGlideTransform(
   };
 }
 
+export interface SharedArtworkTransformResult {
+  dx: number;
+  dy: number;
+  scale: number;
+  transform: string;
+}
+
+/**
+ * Computes the exact pure-GPU `transform` for the single persistent `.np-shared-artwork`
+ * element positioned over `coverSlot`, flying seamlessly into `miniSlot` in lyrics/queue modes
+ * without ever hiding or swapping DOM nodes (eliminating mode-switch flicker completely).
+ */
+export function computeSharedArtworkTransform(
+  coverSlot: BoxRect,
+  miniSlot: BoxRect,
+  options: {
+    mode: 'cover' | 'lyrics' | 'queue';
+    isPlaying: boolean;
+    swipeX?: number;
+  },
+): SharedArtworkTransformResult {
+  const swipeX = Number(options.swipeX || 0);
+
+  if (options.mode === 'cover') {
+    if (Math.abs(swipeX) > 0.5) {
+      const tilt = Math.max(-5, Math.min(5, swipeX * 0.032));
+      return {
+        dx: Number(swipeX.toFixed(2)),
+        dy: 0,
+        scale: 0.95,
+        transform: `translate3d(${swipeX.toFixed(2)}px, 0, 0) rotate(${tilt.toFixed(2)}deg) scale3d(0.95, 0.95, 1)`,
+      };
+    }
+    const scale = options.isPlaying ? 1 : 0.84;
+    return {
+      dx: 0,
+      dy: 0,
+      scale,
+      transform: `translate3d(0, 0, 0) scale3d(${scale}, ${scale}, 1)`,
+    };
+  }
+
+  const coverW = Math.max(1, coverSlot.width);
+  const miniW = Math.max(1, miniSlot.width);
+  const dx = Number((miniSlot.left + miniW / 2 - (coverSlot.left + coverW / 2)).toFixed(2));
+  const dy = Number((miniSlot.top + miniSlot.height / 2 - (coverSlot.top + coverSlot.height / 2)).toFixed(2));
+  const scale = Number((miniW / coverW).toFixed(4));
+
+  return {
+    dx,
+    dy,
+    scale,
+    transform: `translate3d(${dx}px, ${dy}px, 0) scale3d(${scale}, ${scale}, 1)`,
+  };
+}
+
 export interface QueueWindowSlice {
   start: number;
   end: number;

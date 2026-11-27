@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { Icon } from '@iconify/vue';
 import iconPlayerPlayFilled from '@iconify/icons-tabler/player-play-filled';
@@ -28,12 +28,11 @@ import type { SongClimaxRange } from '@/types/music';
 import { formatCompactCount, kugouApi } from '@/services/kugou/kugouEngine';
 import { openArtistProfileFromSong } from '@/services/playback/artistNavigation';
 import {
-  computeHeroFlipTransform,
-  computeMetaGlideTransform,
   computeQueueWindow,
-  HERO_MORPH_EASING,
+  computeSharedArtworkTransform,
   type BoxRect,
 } from '@/utils/heroMorph';
+import { useDecodedCover } from '@/composables/useDecodedCover';
 import { usePlayerStore } from '@/stores/player';
 import { useSettingsStore } from '@/stores/settings';
 import { useUiStore } from '@/stores/ui';
@@ -48,12 +47,15 @@ const settings = useSettingsStore();
 const ui = useUiStore();
 const { t, effectiveLocale } = useI18n();
 
+// Double-buffered pre-decoded cover URL: zero empty gray flash on track switch!
+const { displayedCoverUrl } = useDecodedCover(() => player.currentSong?.coverUrl || '');
+
 // Track extras: Comment Count badge & Chorus Climax marker
 const commentCount = ref(0);
 const climaxRange = ref<SongClimaxRange | null>(null);
 const showLyricOffsetBar = ref(false);
 
-// Windowed Up Next Queue (renders ~60 rows max instead of 1,500+ DOM nodes!)
+// Windowed Up Next Queue (~60 rows max instead of 1,500+ DOM nodes)
 const queueBeforeCount = ref(15);
 const queueAfterCount = ref(45);
 
@@ -94,146 +96,98 @@ watch(
   },
 );
 
-// Persistent-Layer Pure-GPU Shared-Element Hero Morph refs
-const coverArtworkRef = ref<HTMLElement | null>(null);
-const coverMetaRef = ref<HTMLElement | null>(null);
-const miniThumbRef = ref<HTMLElement | null>(null);
-const miniMetaRef = ref<HTMLElement | null>(null);
-const morphHideCoverArt = ref(false);
-const morphHideMiniArt = ref(false);
-let activeArtworkAnim: Animation | null = null;
-let activeMetaAnim: Animation | null = null;
-let morphCleanupTimer: ReturnType<typeof setTimeout> | null = null;
+// ==================== SINGLE PERSISTENT SHARED ARTWORK GEOMETRY ====================
+// One single always-visible artwork layer lives directly on `.np-stage-host` (z-index: 24).
+// Switching Cover <-> Lyrics <-> Queue ONLY changes its GPU `transform`, making double-blank
+// cover flicker physically impossible!
+const stageHostRef = ref<HTMLElement | null>(null);
+const coverSlotRef = ref<HTMLElement | null>(null);
+const miniSlotRef = ref<HTMLElement | null>(null);
 
-function snapshotRect(el: HTMLElement | null): BoxRect | null {
-  if (!el) return null;
-  const r = el.getBoundingClientRect();
-  if (r.width < 4 || r.height < 4) return null;
-  return { left: r.left, top: r.top, width: r.width, height: r.height };
+const stageRect = ref<BoxRect | null>(null);
+const coverSlotRect = ref<BoxRect | null>(null);
+const miniSlotRect = ref<BoxRect | null>(null);
+const artworkReadyForTransition = ref(false);
+let slotResizeObserver: ResizeObserver | null = null;
+let readyRaf1 = 0;
+let readyRaf2 = 0;
+
+function measureArtworkSlots() {
+  const host = stageHostRef.value;
+  const cover = coverSlotRef.value;
+  const mini = miniSlotRef.value;
+  if (!host || !cover || !mini) return;
+
+  const hr = host.getBoundingClientRect();
+  const cr = cover.getBoundingClientRect();
+  const mr = mini.getBoundingClientRect();
+  if (hr.width < 10 || cr.width < 10 || mr.width < 10) return;
+
+  stageRect.value = { left: hr.left, top: hr.top, width: hr.width, height: hr.height };
+  coverSlotRect.value = { left: cr.left, top: cr.top, width: cr.width, height: cr.height };
+  miniSlotRect.value = { left: mr.left, top: mr.top, width: mr.width, height: mr.height };
 }
 
-function cancelActiveMorph() {
-  if (activeArtworkAnim) {
-    try {
-      activeArtworkAnim.cancel();
-    } catch {
-      // ignore
-    }
-    activeArtworkAnim = null;
-  }
-  if (activeMetaAnim) {
-    try {
-      activeMetaAnim.cancel();
-    } catch {
-      // ignore
-    }
-    activeMetaAnim = null;
-  }
-  if (morphCleanupTimer) {
-    clearTimeout(morphCleanupTimer);
-    morphCleanupTimer = null;
+function attachSlotObserver() {
+  detachSlotObserver();
+  if (typeof ResizeObserver !== 'undefined' && stageHostRef.value) {
+    slotResizeObserver = new ResizeObserver(() => measureArtworkSlots());
+    slotResizeObserver.observe(stageHostRef.value);
+    if (coverSlotRef.value) slotResizeObserver.observe(coverSlotRef.value);
   }
 }
 
-/**
- * Pure GPU compositor-thread (transform + opacity ONLY) shared-element hero morph.
- * Because cover, mini-header, lyrics, and windowed queue all live in fixed-geometry persistent
- * layers, switching triggers ZERO DOM mounts, ZERO flex reflow, and ZERO box-shadow repaints!
- */
-function switchModeWithMorph(target: 'cover' | 'lyrics' | 'queue') {
-  const fromMode = ui.nowPlayingMode;
-  if (fromMode === target) return;
-
-  const leavingCover = fromMode === 'cover';
-  const enteringCover = target === 'cover';
-  const needsHeroMorph = leavingCover !== enteringCover;
-
-  // Measure live on-screen rects synchronously BEFORE cancelling any in-flight animation
-  const fromArtRect = needsHeroMorph
-    ? snapshotRect(leavingCover ? coverArtworkRef.value : miniThumbRef.value)
-    : null;
-  const fromMetaRect = needsHeroMorph
-    ? snapshotRect(leavingCover ? coverMetaRef.value : miniMetaRef.value)
-    : null;
-
-  cancelActiveMorph();
-
-  if (leavingCover) {
-    morphHideCoverArt.value = true;
-    morphHideMiniArt.value = false;
-  } else if (enteringCover) {
-    morphHideCoverArt.value = false;
-    morphHideMiniArt.value = true;
-  } else {
-    morphHideCoverArt.value = false;
-    morphHideMiniArt.value = false;
+function detachSlotObserver() {
+  if (slotResizeObserver) {
+    slotResizeObserver.disconnect();
+    slotResizeObserver = null;
   }
-
-  ui.nowPlayingMode = target;
-
-  if (!needsHeroMorph || !fromArtRect) return;
-
-  const targetArtEl = enteringCover ? coverArtworkRef.value : miniThumbRef.value;
-  const targetMetaEl = enteringCover ? coverMetaRef.value : miniMetaRef.value;
-
-  if (targetArtEl && typeof targetArtEl.animate === 'function') {
-    const toArtRect = snapshotRect(targetArtEl);
-    if (toArtRect) {
-      const restScale = enteringCover ? (player.isPlaying ? 1 : 0.84) : 1;
-      const plan = computeHeroFlipTransform(fromArtRect, toArtRect, {
-        fromRadiusPx: leavingCover ? 18 : 10,
-        toRadiusPx: enteringCover ? 18 : 10,
-        targetRestScale: restScale,
-      });
-      if (plan) {
-        // Pure GPU compositor animation: transform ONLY (zero CPU box-shadow/border-radius repaint!)
-        activeArtworkAnim = targetArtEl.animate(
-          [
-            { transform: plan.fromTransform },
-            { transform: plan.toTransform },
-          ],
-          {
-            duration: 390,
-            easing: HERO_MORPH_EASING,
-            fill: 'none',
-          },
-        );
-        activeArtworkAnim.onfinish = () => {
-          activeArtworkAnim = null;
-        };
-      }
-    }
+  if (readyRaf1) {
+    cancelAnimationFrame(readyRaf1);
+    readyRaf1 = 0;
   }
-
-  if (fromMetaRect && targetMetaEl && typeof targetMetaEl.animate === 'function') {
-    const toMetaRect = snapshotRect(targetMetaEl);
-    if (toMetaRect) {
-      const glide = computeMetaGlideTransform(fromMetaRect, toMetaRect);
-      if (glide) {
-        activeMetaAnim = targetMetaEl.animate(
-          [
-            { transform: glide.fromTransform, opacity: 0.55 },
-            { transform: glide.toTransform, opacity: 1 },
-          ],
-          {
-            duration: 360,
-            easing: HERO_MORPH_EASING,
-            fill: 'none',
-          },
-        );
-        activeMetaAnim.onfinish = () => {
-          activeMetaAnim = null;
-        };
-      }
-    }
+  if (readyRaf2) {
+    cancelAnimationFrame(readyRaf2);
+    readyRaf2 = 0;
   }
-
-  morphCleanupTimer = setTimeout(() => {
-    morphHideCoverArt.value = false;
-    morphHideMiniArt.value = false;
-    morphCleanupTimer = null;
-  }, 410);
 }
+
+// Sheet Drag-to-Dismiss & Cover Swipe/Double-Tap state
+const dragOffsetY = ref(0);
+const isDraggingSheet = ref(false);
+const coverSwipeX = ref(0);
+const isSwipingCover = ref(false);
+const heartBurst = ref(false);
+let sheetTouchY = 0;
+let coverTouchStartX = 0;
+let coverTouchStartY = 0;
+let coverGestureAxis: 'none' | 'x' | 'y' = 'none';
+let lastCoverTapAt = 0;
+let heartBurstTimer: ReturnType<typeof setTimeout> | null = null;
+
+const sharedArtworkStyle = computed(() => {
+  const hr = stageRect.value;
+  const cr = coverSlotRect.value;
+  const mr = miniSlotRect.value;
+  if (!hr || !cr || !mr) {
+    return { opacity: '0', pointerEvents: 'none' as const };
+  }
+
+  const tf = computeSharedArtworkTransform(cr, mr, {
+    mode: ui.nowPlayingMode,
+    isPlaying: player.isPlaying,
+    swipeX: ui.nowPlayingMode === 'cover' ? coverSwipeX.value : 0,
+  });
+
+  return {
+    left: `${(cr.left - hr.left).toFixed(2)}px`,
+    top: `${(cr.top - hr.top).toFixed(2)}px`,
+    width: `${cr.width.toFixed(2)}px`,
+    height: `${cr.height.toFixed(2)}px`,
+    transform: tf.transform,
+    transition: !artworkReadyForTransition.value || isSwipingCover.value ? 'none' : undefined,
+  };
+});
 
 const currentTrackOffsetKey = computed(() => {
   const s = player.currentSong;
@@ -297,6 +251,7 @@ function nudgeLyricOffset(deltaMs: number) {
   const key = currentTrackOffsetKey.value;
   if (!key) return;
   echoSystem.haptic('selection');
+  revealLyricsHud(true);
   settings.adjustLyricOffset(key, deltaMs);
 }
 
@@ -304,6 +259,7 @@ function resetLyricOffset() {
   const key = currentTrackOffsetKey.value;
   if (!key) return;
   echoSystem.haptic('light');
+  revealLyricsHud(true);
   settings.resetLyricOffset(key);
   ui.showToast(t('np.lyricOffsetReset'));
 }
@@ -327,33 +283,11 @@ let activeScrubPointerId: number | null = null;
 const lyricsHudVisible = ref(true);
 let lyricsHideTimer: ReturnType<typeof setTimeout> | null = null;
 
-// Sheet Drag-to-Dismiss & Cover Swipe/Double-Tap state
-const dragOffsetY = ref(0);
-const isDraggingSheet = ref(false);
-const coverSwipeX = ref(0);
-const isSwipingCover = ref(false);
-const heartBurst = ref(false);
-let sheetTouchY = 0;
-let coverTouchStartX = 0;
-let coverTouchStartY = 0;
-let coverGestureAxis: 'none' | 'x' | 'y' = 'none';
-let lastCoverTapAt = 0;
-let heartBurstTimer: ReturnType<typeof setTimeout> | null = null;
-
 const overlayDragStyle = computed(() => {
   if (dragOffsetY.value <= 0) return undefined;
   return {
     transform: `translate3d(0, ${dragOffsetY.value}px, 0)`,
     transition: isDraggingSheet.value ? 'none' : undefined,
-  };
-});
-
-const artworkSwipeStyle = computed(() => {
-  if (!coverSwipeX.value) return undefined;
-  const tilt = Math.max(-5, Math.min(5, coverSwipeX.value * 0.032));
-  return {
-    transform: `translate3d(${coverSwipeX.value}px, 0, 0) rotate(${tilt.toFixed(2)}deg) scale(0.95)`,
-    transition: isSwipingCover.value ? 'none' : undefined,
   };
 });
 
@@ -403,7 +337,7 @@ const coverLyricsPreview = computed(() => {
   if (!settings.showCoverLyricsPreview) return null;
   const lines = player.lyrics.lines;
   if (!lines.length) return null;
-  const t = player.currentTimeMs + 120;
+  const t = Math.max(0, player.currentTimeMs + currentLyricOffsetMs.value + 120);
   let lo = 0;
   let hi = lines.length - 1;
   let idx = -1;
@@ -431,13 +365,26 @@ const coverLyricsPreview = computed(() => {
 });
 
 watch(
-  () => ui.nowPlayingOpen,
-  (open) => {
-    settings.applyThemeClass(open);
-    if (!open) {
-      cancelActiveMorph();
-      morphHideCoverArt.value = false;
-      morphHideMiniArt.value = false;
+  () => [ui.nowPlayingOpen, Boolean(player.currentSong)],
+  async ([open, hasSong]) => {
+    settings.applyThemeClass(Boolean(open));
+    if (open && hasSong) {
+      artworkReadyForTransition.value = false;
+      await nextTick();
+      measureArtworkSlots();
+      attachSlotObserver();
+      readyRaf1 = requestAnimationFrame(() => {
+        measureArtworkSlots();
+        readyRaf2 = requestAnimationFrame(() => {
+          artworkReadyForTransition.value = true;
+        });
+      });
+      if (ui.nowPlayingMode === 'lyrics') {
+        revealLyricsHud(true);
+      }
+    } else {
+      detachSlotObserver();
+      artworkReadyForTransition.value = false;
       isDraggingSheet.value = false;
       isSwipingCover.value = false;
       dragOffsetY.value = 0;
@@ -445,10 +392,9 @@ watch(
       showLyricOffsetBar.value = false;
       clearLyricsHideTimer();
       lyricsHudVisible.value = true;
-    } else if (ui.nowPlayingMode === 'lyrics') {
-      revealLyricsHud(true);
     }
   },
+  { immediate: true },
 );
 
 watch(
@@ -477,7 +423,7 @@ watch(
 );
 
 onUnmounted(() => {
-  cancelActiveMorph();
+  detachSlotObserver();
   clearLyricsHideTimer();
   if (heartBurstTimer) clearTimeout(heartBurstTimer);
 });
@@ -574,6 +520,7 @@ function onHandleTouchEnd() {
 // ---- Cover Gestures: Swipe Skip / Drag Down Dismiss / Double-Tap Heart ----
 
 function onCoverTouchStart(e: TouchEvent) {
+  if (ui.nowPlayingMode !== 'cover') return;
   const t = e.touches[0];
   if (!t) return;
   coverTouchStartX = t.clientX;
@@ -582,6 +529,7 @@ function onCoverTouchStart(e: TouchEvent) {
 }
 
 function onCoverTouchMove(e: TouchEvent) {
+  if (ui.nowPlayingMode !== 'cover') return;
   const t = e.touches[0];
   if (!t) return;
   const dx = t.clientX - coverTouchStartX;
@@ -603,6 +551,7 @@ function onCoverTouchMove(e: TouchEvent) {
 }
 
 function onCoverTouchEnd(e: TouchEvent) {
+  if (ui.nowPlayingMode !== 'cover') return;
   const t = e.changedTouches[0];
   const dx = (t?.clientX ?? coverTouchStartX) - coverTouchStartX;
   const dy = (t?.clientY ?? coverTouchStartY) - coverTouchStartY;
@@ -640,14 +589,22 @@ function onCoverTouchEnd(e: TouchEvent) {
   coverGestureAxis = 'none';
 }
 
+function onSharedArtworkClick() {
+  if (ui.nowPlayingMode !== 'cover') {
+    returnToCover();
+  }
+}
+
 function toggleMode(target: 'lyrics' | 'queue') {
   echoSystem.haptic('selection');
-  switchModeWithMorph(ui.nowPlayingMode === target ? 'cover' : target);
+  measureArtworkSlots();
+  ui.nowPlayingMode = ui.nowPlayingMode === target ? 'cover' : target;
 }
 
 function returnToCover() {
   echoSystem.haptic('selection');
-  switchModeWithMorph('cover');
+  measureArtworkSlots();
+  ui.nowPlayingMode = 'cover';
 }
 
 const playModeIcon = computed(() => {
@@ -668,6 +625,21 @@ function handleClearQueue() {
   ui.nowPlayingOpen = false;
   ui.showToast(t('np.queueCleared'));
 }
+
+// Pause ambient background animation while a modal sheet (Comments, Actions, Settings, etc.)
+// covers NowPlaying so Android WebView never wastes GPU frames or triggers compositor ghosting.
+const fluidBgActive = computed(
+  () =>
+    ui.nowPlayingOpen &&
+    !ui.commentsSheetSong &&
+    !ui.actionSheetSong &&
+    !(ui.addToPlaylistSongs && ui.addToPlaylistSongs.length > 0) &&
+    !ui.lyricPosterSong &&
+    !ui.unblockModalSong &&
+    !ui.accountSheetOpen &&
+    !ui.loginModalOpen &&
+    !ui.artistPickerCandidates,
+);
 </script>
 
 <template>
@@ -678,7 +650,10 @@ function handleClearQueue() {
       :class="{ 'is-dragging': isDraggingSheet }"
       :style="overlayDragStyle"
     >
-      <FluidCoverBackground :active="ui.nowPlayingOpen" />
+      <FluidCoverBackground
+        :active="fluidBgActive"
+        :colors="player.palette.fluidColors"
+      />
 
       <div class="np-content">
         <!-- Top drag pill (Apple Music dismiss handle) -->
@@ -692,8 +667,8 @@ function handleClearQueue() {
           <div class="np-handle" />
         </div>
 
-        <!-- Fixed-Geometry Stage Host: ZERO flex height shifts when switching Cover / Lyrics / Queue! -->
-        <div class="np-stage-host">
+        <!-- Fixed-Geometry Stage Host: ZERO flex height shifts & ONE persistent shared artwork! -->
+        <div ref="stageHostRef" class="np-stage-host">
           <!-- Floating Sleep Timer Pill (cover mode) -->
           <Transition name="am-expand">
             <div
@@ -711,6 +686,41 @@ function handleClearQueue() {
             </div>
           </Transition>
 
+          <!-- SINGLE PERSISTENT SHARED ARTWORK (Always opacity:1, pure GPU transform -> ZERO flicker!) -->
+          <div
+            class="np-shared-artwork"
+            :style="sharedArtworkStyle"
+            @click="onSharedArtworkClick"
+            @touchstart.passive="onCoverTouchStart"
+            @touchmove.passive="onCoverTouchMove"
+            @touchend.passive="onCoverTouchEnd"
+          >
+            <Transition name="art-xfade">
+              <img
+                v-if="displayedCoverUrl"
+                :key="displayedCoverUrl"
+                :src="displayedCoverUrl"
+                decoding="async"
+                :alt="player.currentSong.title"
+                class="art-layer w-full h-full object-cover"
+              />
+              <div
+                v-else
+                key="cover-fallback"
+                class="art-layer w-full h-full flex items-center justify-center bg-white/10 text-white/40"
+              >
+                <Icon :icon="iconMusic" class="w-20 h-20" />
+              </div>
+            </Transition>
+
+            <!-- Double-Tap Heart Burst -->
+            <Transition name="heart-pop">
+              <div v-if="heartBurst" class="heart-burst-overlay">
+                <Icon :icon="iconHeartFilled" class="w-20 h-20 text-[#ff375f] drop-shadow-2xl" />
+              </div>
+            </Transition>
+          </div>
+
           <!-- Persistent Mini Header (absolute top inside stage host -> ZERO layout reflow!) -->
           <div
             class="np-mini-header"
@@ -721,30 +731,9 @@ function handleClearQueue() {
               class="flex items-center gap-3 flex-1 min-w-0 text-left bg-transparent border-0 p-0"
               @click="returnToCover"
             >
-              <div
-                ref="miniThumbRef"
-                class="np-mini-thumb"
-                :class="{ 'is-morph-hidden': morphHideMiniArt }"
-              >
-                <Transition name="art-xfade">
-                  <img
-                    v-if="player.currentSong.coverUrl"
-                    :key="player.currentSong.coverUrl"
-                    :src="player.currentSong.coverUrl"
-                    decoding="async"
-                    class="art-layer w-full h-full object-cover"
-                    alt=""
-                  />
-                  <div
-                    v-else
-                    key="mini-fallback"
-                    class="art-layer w-full h-full flex items-center justify-center bg-white/10 text-white/40"
-                  >
-                    <Icon :icon="iconMusic" class="w-5 h-5" />
-                  </div>
-                </Transition>
-              </div>
-              <div ref="miniMetaRef" class="min-w-0 flex-1">
+              <!-- Transparent layout slot where `.np-shared-artwork` lands in Lyrics/Queue mode -->
+              <div ref="miniSlotRef" class="np-mini-slot" aria-hidden="true" />
+              <div class="np-mini-meta min-w-0 flex-1">
                 <div class="text-[16px] font-semibold text-white truncate">{{ player.currentSong.title }}</div>
                 <div class="text-[13px] text-white/65 truncate flex items-center gap-1.5">
                   <span class="truncate">{{ player.currentSong.artist }}</span>
@@ -765,7 +754,7 @@ function handleClearQueue() {
                 type="button"
                 class="np-glass-chip h-9 px-2.5 rounded-full text-[11px] font-semibold text-white/90 tabular-nums am-tap"
                 :class="{ '!bg-white/30 !text-white': showLyricOffsetBar || currentLyricOffsetMs !== 0 }"
-                @click="showLyricOffsetBar = !showLyricOffsetBar; echoSystem.haptic('selection')"
+                @click="showLyricOffsetBar = !showLyricOffsetBar; revealLyricsHud(true); echoSystem.haptic('selection')"
               >
                 {{ currentLyricOffsetMs !== 0 ? lyricOffsetLabel : t('np.lyricOffset') }}
               </button>
@@ -799,7 +788,7 @@ function handleClearQueue() {
             </div>
           </div>
 
-          <!-- Floating Lyric Offset Adjuster (overlaid below mini header -> zero layout shift!) -->
+          <!-- Floating Lyric Offset Adjuster (Delay / Advance Lyrics Sync) -->
           <Transition name="am-expand">
             <div
               v-if="ui.nowPlayingMode === 'lyrics' && showLyricOffsetBar"
@@ -807,24 +796,44 @@ function handleClearQueue() {
             >
               <button
                 type="button"
-                class="np-glass-chip h-7 px-3 rounded-full text-[11.5px] font-semibold text-white tabular-nums am-tap"
+                class="np-glass-chip h-7 px-2.5 rounded-full text-[11px] font-semibold text-white tabular-nums am-tap"
+                @click="nudgeLyricOffset(-1000)"
+              >
+                -1s
+              </button>
+              <button
+                type="button"
+                class="np-glass-chip h-7 px-2.5 rounded-full text-[11px] font-semibold text-white tabular-nums am-tap"
                 @click="nudgeLyricOffset(-500)"
               >
                 -0.5s
               </button>
               <button
                 type="button"
-                class="np-glass-chip h-7 px-3.5 rounded-full text-[11.5px] font-bold text-white/95 tabular-nums am-tap"
+                class="np-glass-chip h-7 px-3 rounded-full text-[11px] font-bold text-white/95 tabular-nums am-tap"
                 @click="resetLyricOffset"
               >
-                {{ t('np.lyricOffset') }} {{ lyricOffsetLabel }}
+                {{
+                  currentLyricOffsetMs > 0
+                    ? `提前 ${lyricOffsetLabel}`
+                    : currentLyricOffsetMs < 0
+                      ? `延后 ${lyricOffsetLabel}`
+                      : `${t('np.lyricOffset')} 0.0s`
+                }}
               </button>
               <button
                 type="button"
-                class="np-glass-chip h-7 px-3 rounded-full text-[11.5px] font-semibold text-white tabular-nums am-tap"
+                class="np-glass-chip h-7 px-2.5 rounded-full text-[11px] font-semibold text-white tabular-nums am-tap"
                 @click="nudgeLyricOffset(500)"
               >
                 +0.5s
+              </button>
+              <button
+                type="button"
+                class="np-glass-chip h-7 px-2.5 rounded-full text-[11px] font-semibold text-white tabular-nums am-tap"
+                @click="nudgeLyricOffset(1000)"
+              >
+                +1s
               </button>
             </div>
           </Transition>
@@ -838,40 +847,8 @@ function handleClearQueue() {
             @touchend.passive="onCoverTouchEnd"
           >
             <div class="np-artwork-wrap">
-              <div
-                ref="coverArtworkRef"
-                class="np-artwork"
-                :class="[
-                  player.isPlaying ? 'is-playing' : 'is-paused',
-                  { 'is-morph-hidden': morphHideCoverArt },
-                ]"
-                :style="artworkSwipeStyle"
-              >
-                <Transition name="art-xfade">
-                  <img
-                    v-if="player.currentSong.coverUrl"
-                    :key="player.currentSong.coverUrl"
-                    :src="player.currentSong.coverUrl"
-                    decoding="async"
-                    :alt="player.currentSong.title"
-                    class="art-layer w-full h-full object-cover"
-                  />
-                  <div
-                    v-else
-                    key="cover-fallback"
-                    class="art-layer w-full h-full flex items-center justify-center bg-white/10 text-white/40"
-                  >
-                    <Icon :icon="iconMusic" class="w-20 h-20" />
-                  </div>
-                </Transition>
-
-                <!-- Double-Tap Heart Burst -->
-                <Transition name="heart-pop">
-                  <div v-if="heartBurst" class="heart-burst-overlay">
-                    <Icon :icon="iconHeartFilled" class="w-20 h-20 text-[#ff375f] drop-shadow-2xl" />
-                  </div>
-                </Transition>
-              </div>
+              <!-- Transparent layout slot where `.np-shared-artwork` rests in Cover mode -->
+              <div ref="coverSlotRef" class="np-artwork-slot" aria-hidden="true" />
             </div>
 
             <!-- Cover Page 2-Line Live Lyrics Preview -->
@@ -893,7 +870,7 @@ function handleClearQueue() {
             </button>
 
             <div class="np-meta-row">
-              <div ref="coverMetaRef" class="min-w-0 flex-1 pr-3">
+              <div class="min-w-0 flex-1 pr-3">
                 <h1 class="text-[22px] font-bold text-white truncate tracking-tight leading-snug">
                   {{ player.currentSong.title }}
                 </h1>
@@ -931,7 +908,7 @@ function handleClearQueue() {
             </div>
           </div>
 
-          <!-- PERSISTENT LAYER 2: WORD-BY-WORD KRC LYRICS (Pre-mounted -> 0ms instant enter!) -->
+          <!-- PERSISTENT LAYER 2: WORD-BY-WORD KRC LYRICS -->
           <div
             class="np-pane np-pane-detail"
             :class="{ 'is-active': ui.nowPlayingMode === 'lyrics' }"
@@ -944,7 +921,7 @@ function handleClearQueue() {
             />
           </div>
 
-          <!-- PERSISTENT LAYER 3: WINDOWED UP NEXT QUEUE (~60 rows max -> instant even for 1,500+ songs!) -->
+          <!-- PERSISTENT LAYER 3: WINDOWED UP NEXT QUEUE -->
           <div
             class="np-pane np-pane-detail flex flex-col px-6 pt-[72px] pb-2"
             :class="{ 'is-active': ui.nowPlayingMode === 'queue' }"
@@ -1043,12 +1020,11 @@ function handleClearQueue() {
           </div>
         </div>
 
-        <!-- Scrubber & Transport Controls (Fixed height across modes -> ZERO reflow!) -->
+        <!-- Scrubber & Transport Controls -->
         <div
           class="np-controls"
           :class="{ 'is-immersive-hidden': isLyricsImmersive }"
         >
-          <!-- Pointer-Captured Scrub Bar -->
           <div class="px-1">
             <div
               class="scrub-hit"
@@ -1092,7 +1068,6 @@ function handleClearQueue() {
             </div>
           </div>
 
-          <!-- Transport Buttons -->
           <div class="np-transport">
             <button type="button" class="np-skip-btn am-tap" aria-label="上一首" @click="player.previous(); scheduleLyricsAutoHide()">
               <Icon :icon="iconPlayerTrackPrevFilled" class="w-9 h-9" />
@@ -1113,7 +1088,6 @@ function handleClearQueue() {
             </button>
           </div>
 
-          <!-- Bottom 4 Balanced Utility Icons -->
           <div class="np-footer-bar">
             <button
               type="button"
@@ -1211,7 +1185,6 @@ function handleClearQueue() {
   background: rgba(255, 255, 255, 0.38);
 }
 
-/* Zero-backdrop-filter frosted chip: ultra-fast GPU compositing over fluid glow! */
 .np-glass-chip {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.20) 0%, rgba(255, 255, 255, 0.11) 100%);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 4px 12px rgba(0, 0, 0, 0.18);
@@ -1239,6 +1212,21 @@ function handleClearQueue() {
   pointer-events: auto;
 }
 
+/* SINGLE PERSISTENT SHARED ARTWORK LAYER (Always opacity:1 -> mathematically flicker-free!) */
+.np-shared-artwork {
+  position: absolute;
+  z-index: 24;
+  border-radius: 22px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+  transform-origin: center center;
+  box-shadow: 0 22px 54px rgba(0, 0, 0, 0.44), 0 6px 16px rgba(0, 0, 0, 0.26);
+  transition: transform 390ms var(--spring-ease);
+  will-change: transform;
+  backface-visibility: hidden;
+  cursor: pointer;
+}
+
 /* Fixed-position Mini Header inside stage host -> zero height shift! */
 .np-mini-header {
   position: absolute;
@@ -1255,8 +1243,8 @@ function handleClearQueue() {
   visibility: hidden;
   pointer-events: none;
   transition:
-    opacity 220ms ease,
-    visibility 0s linear 240ms;
+    opacity 200ms ease,
+    visibility 0s linear 220ms;
   will-change: opacity;
 }
 
@@ -1265,8 +1253,25 @@ function handleClearQueue() {
   visibility: visible;
   pointer-events: auto;
   transition:
-    opacity 240ms ease,
+    opacity 240ms ease 40ms,
     visibility 0s linear 0s;
+}
+
+.np-mini-slot {
+  width: 48px;
+  height: 48px;
+  flex-shrink: 0;
+  pointer-events: none;
+}
+
+.np-mini-meta {
+  transform: translate3d(0, 10px, 0);
+  transition: transform 340ms var(--spring-ease);
+  will-change: transform;
+}
+
+.np-mini-header.is-visible .np-mini-meta {
+  transform: translate3d(0, 0, 0);
 }
 
 .np-mini-actions {
@@ -1281,7 +1286,7 @@ function handleClearQueue() {
 .np-mini-header.is-visible .np-mini-actions {
   transform: translate3d(0, 0, 0);
   opacity: 1;
-  transition-delay: 50ms;
+  transition-delay: 60ms;
 }
 
 .np-offset-bar {
@@ -1297,20 +1302,7 @@ function handleClearQueue() {
   gap: 8px;
 }
 
-.np-mini-thumb {
-  position: relative;
-  width: 48px;
-  height: 48px;
-  border-radius: 10px;
-  overflow: hidden;
-  flex-shrink: 0;
-  background: rgba(255, 255, 255, 0.10);
-  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.30);
-  transform-origin: center center;
-  will-change: transform;
-}
-
-/* Persistent GPU-Composited Stage Panes (ZERO mount/unmount jank!) */
+/* Persistent GPU-Composited Stage Panes */
 .np-pane {
   position: absolute;
   top: 0;
@@ -1323,7 +1315,7 @@ function handleClearQueue() {
   will-change: transform, opacity;
   backface-visibility: hidden;
   transition:
-    opacity 220ms ease,
+    opacity 210ms ease,
     transform 340ms var(--spring-ease),
     visibility 0s linear 340ms;
 }
@@ -1345,12 +1337,12 @@ function handleClearQueue() {
 .np-pane-cover.is-active .np-meta-row {
   opacity: 1;
   transform: translate3d(0, 0, 0);
-  transition-delay: 40ms;
+  transition-delay: 45ms;
 }
 
 .np-pane-detail {
   padding-top: 64px;
-  transform: translate3d(0, 22px, 0) scale3d(0.982, 0.982, 1);
+  transform: translate3d(0, 20px, 0) scale3d(0.985, 0.985, 1);
 }
 
 .np-pane.is-active {
@@ -1360,8 +1352,8 @@ function handleClearQueue() {
   pointer-events: auto;
   transform: translate3d(0, 0, 0) scale3d(1, 1, 1);
   transition:
-    opacity 240ms ease 25ms,
-    transform 380ms var(--spring-ease),
+    opacity 240ms ease 20ms,
+    transform 360ms var(--spring-ease),
     visibility 0s linear 0s;
 }
 
@@ -1381,32 +1373,12 @@ function handleClearQueue() {
   padding: 6px 0;
 }
 
-.np-artwork {
-  position: relative;
+.np-artwork-slot {
   width: min(79vw, 336px);
   max-height: 100%;
   max-width: 100%;
   aspect-ratio: 1;
-  border-radius: 18px;
-  overflow: hidden;
-  background: rgba(255, 255, 255, 0.08);
-  transform-origin: center center;
-  box-shadow: 0 24px 56px rgba(0, 0, 0, 0.46), 0 6px 18px rgba(0, 0, 0, 0.28);
-  transition: transform 420ms var(--spring-ease);
-  will-change: transform;
-}
-
-.np-artwork.is-playing {
-  transform: scale3d(1, 1, 1);
-}
-
-.np-artwork.is-paused {
-  transform: scale3d(0.84, 0.84, 1);
-}
-
-.is-morph-hidden {
-  opacity: 0 !important;
-  visibility: hidden !important;
+  pointer-events: none;
 }
 
 .art-layer {
@@ -1419,15 +1391,14 @@ function handleClearQueue() {
 
 .art-xfade-enter-active,
 .art-xfade-leave-active {
-  transition: opacity 360ms ease, transform 440ms var(--spring-ease);
+  transition: opacity 340ms ease, transform 420ms var(--spring-ease);
 }
 .art-xfade-enter-from {
   opacity: 0;
-  transform: scale(1.05);
+  transform: scale(1.04);
 }
 .art-xfade-leave-to {
   opacity: 0;
-  transform: scale(0.97);
 }
 
 .np-cover-lyrics {
@@ -1491,7 +1462,6 @@ function handleClearQueue() {
   justify-content: center;
 }
 
-/* Constant-height transport bar across modes -> ZERO layout reflow! */
 .np-controls {
   position: relative;
   z-index: 25;

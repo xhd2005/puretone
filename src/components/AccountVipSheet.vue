@@ -63,9 +63,15 @@ const stats = useStatsStore();
 const ui = useUiStore();
 const { t, effectiveLocale } = useI18n();
 
-const scrollRef = ref<HTMLElement | null>(null);
+const profileScrollRef = ref<HTMLElement | null>(null);
+const vipScrollRef = ref<HTMLElement | null>(null);
+const settingsScrollRef = ref<HTMLElement | null>(null);
 const activeTab = ref<ProfileSectionTab>('profile');
-const tabSlideDir = ref<'am-slide-left' | 'am-slide-right'>('am-slide-left');
+const activeScrollRef = computed(() => {
+  if (activeTab.value === 'vip') return vipScrollRef.value;
+  if (activeTab.value === 'settings') return settingsScrollRef.value;
+  return profileScrollRef.value;
+});
 const showAccountSwitcher = ref(false);
 const showCalendar = ref(false);
 const showBackupPanel = ref(false);
@@ -80,7 +86,7 @@ const appVersion = ref(FALLBACK_APP_VERSION);
 const dragSheet = useDraggableSheet({
   detents: [0.60, 0.92],
   initialDetentIndex: 1,
-  scrollElRef: scrollRef,
+  scrollElRef: activeScrollRef,
   onDismiss: () => {
     ui.accountSheetOpen = false;
   },
@@ -99,11 +105,8 @@ const activeTabIndex = computed(() => {
 
 function switchTab(next: ProfileSectionTab) {
   if (activeTab.value === next) return;
-  const order: ProfileSectionTab[] = ['profile', 'vip', 'settings'];
-  tabSlideDir.value = order.indexOf(next) > order.indexOf(activeTab.value) ? 'am-slide-left' : 'am-slide-right';
   echoSystem.haptic('selection');
   activeTab.value = next;
-  if (scrollRef.value) scrollRef.value.scrollTop = 0;
 }
 
 async function refreshDeviceStats() {
@@ -424,18 +427,19 @@ async function openAuthorProfile() {
             </div>
           </div>
 
-          <!-- Scrollable Tab Body -->
-          <div
-            ref="scrollRef"
-            class="flex-1 am-scroll px-4 pt-4 pb-[calc(var(--safe-bottom)+32px)] overflow-x-hidden"
-            @touchstart.passive="dragSheet.onBodyTouchStart"
-            @touchmove="dragSheet.onBodyTouchMove"
-            @touchend.passive="dragSheet.onBodyTouchEnd"
-            @touchcancel.passive="dragSheet.onBodyTouchEnd"
-          >
-            <Transition :name="tabSlideDir" mode="out-in">
+          <!-- Persistent 3-Pane GPU Stage: ZERO unmount, ZERO blank gap, independent scroll -->
+          <div class="pt-pane-stage">
               <!-- ==================== TAB 1: 档案统计 ==================== -->
-              <div v-if="activeTab === 'profile'" key="acc-tab-profile" class="space-y-4">
+              <div
+                ref="profileScrollRef"
+                class="pt-pane am-scroll px-4 pt-4 pb-[calc(var(--safe-bottom)+32px)] space-y-4"
+                :class="activeTabIndex === 0 ? 'is-active' : 'is-before'"
+                :aria-hidden="activeTabIndex !== 0"
+                @touchstart.passive="dragSheet.onBodyTouchStart"
+                @touchmove="dragSheet.onBodyTouchMove"
+                @touchend.passive="dragSheet.onBodyTouchEnd"
+                @touchcancel.passive="dragSheet.onBodyTouchEnd"
+              >
               <section class="rounded-[22px] bg-[var(--bg-card)] overflow-hidden shadow-xs">
                 <div v-if="!accounts.isLoggedIn" class="p-5 text-center">
                   <div class="w-14 h-14 rounded-full bg-[var(--bg-subtle)] mx-auto flex items-center justify-center am-accent-text mb-3">
@@ -593,7 +597,16 @@ async function openAuthorProfile() {
               </div>
 
               <!-- ==================== TAB 2: 会员签到 ==================== -->
-              <div v-else-if="activeTab === 'vip'" key="acc-tab-vip" class="space-y-4">
+              <div
+                ref="vipScrollRef"
+                class="pt-pane am-scroll px-4 pt-4 pb-[calc(var(--safe-bottom)+32px)] space-y-4"
+                :class="activeTabIndex === 1 ? 'is-active' : activeTabIndex > 1 ? 'is-before' : 'is-after'"
+                :aria-hidden="activeTabIndex !== 1"
+                @touchstart.passive="dragSheet.onBodyTouchStart"
+                @touchmove="dragSheet.onBodyTouchMove"
+                @touchend.passive="dragSheet.onBodyTouchEnd"
+                @touchcancel.passive="dragSheet.onBodyTouchEnd"
+              >
               <section v-if="!accounts.isLoggedIn" class="rounded-[22px] bg-[var(--bg-card)] p-6 text-center shadow-xs">
                 <div class="w-14 h-14 rounded-full bg-[var(--bg-subtle)] mx-auto flex items-center justify-center am-accent-text mb-3">
                   <Icon :icon="iconCrown" class="w-7 h-7" />
@@ -744,7 +757,16 @@ async function openAuthorProfile() {
               </div>
 
               <!-- ==================== TAB 3: 偏好设置 ==================== -->
-              <div v-else key="acc-tab-settings" class="space-y-4">
+              <div
+                ref="settingsScrollRef"
+                class="pt-pane am-scroll px-4 pt-4 pb-[calc(var(--safe-bottom)+32px)] space-y-4"
+                :class="activeTabIndex === 2 ? 'is-active' : 'is-after'"
+                :aria-hidden="activeTabIndex !== 2"
+                @touchstart.passive="dragSheet.onBodyTouchStart"
+                @touchmove="dragSheet.onBodyTouchMove"
+                @touchend.passive="dragSheet.onBodyTouchEnd"
+                @touchcancel.passive="dragSheet.onBodyTouchEnd"
+              >
               <!-- Group A: Playback, Transitions, EQ, Language & Appearance (Uniform 2-Row Zero-Overflow!) -->
               <section class="space-y-2">
                 <div class="text-[12px] font-semibold uppercase tracking-wide text-[var(--text-secondary)] px-2">
@@ -1113,6 +1135,46 @@ async function openAuthorProfile() {
                   </div>
                 </div>
 
+                <!-- 1.5 Editorial Magazine Brand Philosophy Card (Verbatim 5-Line Manifesto) -->
+                <div class="rounded-[22px] bg-[var(--bg-card)] px-5 py-4.5 shadow-xs space-y-3.5" data-brand-philosophy>
+                  <div class="flex items-center justify-between gap-2 pb-2.5 border-b border-[var(--hairline)]">
+                    <div class="flex items-center gap-2 min-w-0">
+                      <span class="text-[14px] font-bold tracking-[0.06em] text-[var(--text-primary)] truncate">
+                        {{ t('app.fullName') }}
+                      </span>
+                      <span class="px-2 py-0.5 rounded-full bg-[var(--bg-subtle)] text-[10.5px] font-semibold tracking-[0.08em] am-accent-text shrink-0">
+                        {{ t('about.philosophyTitle') }}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      class="px-2.5 h-7 rounded-full bg-[var(--bg-subtle)] text-[11px] font-semibold am-accent-text border-0 inline-flex items-center gap-1 am-tap shrink-0"
+                      @click="ui.replaySplash()"
+                    >
+                      <Icon :icon="iconSparkles" class="w-3 h-3 shrink-0" />
+                      <span>{{ t('about.replaySplash') }}</span>
+                    </button>
+                  </div>
+
+                  <div class="space-y-2.5 text-[13px] leading-[1.7] text-[var(--text-secondary)]">
+                    <p class="m-0">
+                      {{ t('about.miLine') }}
+                    </p>
+                    <p class="m-0">
+                      {{ t('about.yinLine') }}
+                    </p>
+                    <p class="m-0">
+                      {{ t('about.vision') }}
+                    </p>
+                  </div>
+
+                  <div class="pt-3 border-t border-[var(--hairline)] flex items-center justify-between gap-2">
+                    <p class="text-[13.5px] font-semibold tracking-[0.05em] text-[var(--text-primary)] m-0">
+                      {{ t('about.closing') }}
+                    </p>
+                  </div>
+                </div>
+
                 <!-- 2. Clean iOS-Style Unified Hairline List (No Boxes-Inside-Boxes!) -->
                 <div class="rounded-[22px] bg-[var(--bg-card)] overflow-hidden divide-y divide-[var(--hairline)] shadow-xs">
                   <!-- Author Row: Hayden Xue -->
@@ -1225,7 +1287,6 @@ async function openAuthorProfile() {
                 </div>
               </section>
               </div>
-            </Transition>
           </div>
         </div>
       </div>
