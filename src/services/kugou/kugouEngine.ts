@@ -769,6 +769,7 @@ export function normalizeCommentItem(raw: Record<string, any>, fallbackSpecialId
   const content = String(raw.content ?? '').trim();
   const id = String(raw.id ?? raw.cid ?? raw.comment_id ?? `${userName}-${addTime}`);
   const tid = String(raw.tid ?? raw.id ?? id);
+  const pid = raw.pid != null ? String(raw.pid).trim() : undefined;
   // IMPORTANT: KuGou comment items carry `special_child_id` (real comment pool ID, e.g. "351563")
   // alongside an unrelated internal shard `special_id` (e.g. 2364). Always prioritize `special_child_id` /
   // `childrenid` / response-level `fallbackSpecialId` over `raw.special_id`!
@@ -780,6 +781,7 @@ export function normalizeCommentItem(raw: Record<string, any>, fallbackSpecialId
   return {
     id,
     tid,
+    pid,
     specialId,
     userId: raw.user_id ? String(raw.user_id) : undefined,
     userName,

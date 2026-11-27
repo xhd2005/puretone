@@ -39,6 +39,12 @@ import { useUiStore } from '@/stores/ui';
 import { useI18n } from '@/i18n';
 import { useDraggableSheet } from '@/composables/useDraggableSheet';
 import { echoSystem } from '@/native/echoSystem';
+import {
+  formatCommentTime,
+  parseFloorReplyContent,
+  replaceKugouEmoticons,
+  type ParsedFloorReply,
+} from '@/utils/commentFormat';
 
 type CommentSubMode = 'all' | 'hot' | 'newest' | 'hotword';
 
@@ -115,6 +121,7 @@ const climaxRange = ref<SongClimaxRange | null>(null);
 const composerText = ref('');
 const sending = ref(false);
 const replyTarget = ref<SongComment | null>(null);
+const replyParentCommentId = ref<string | null>(null);
 
 const song = computed(() => ui.commentsSheetSong);
 const isCurrentPlayingSong = computed(() => {
@@ -493,13 +500,34 @@ async function handleToggleCommentLike(target: SongComment) {
   }
 }
 
-function startReply(cmt: SongComment) {
+function getFormattedFloorReply(rep: SongComment, parent: SongComment): ParsedFloorReply {
+  return parseFloorReplyContent(rep.content, {
+    pid: rep.pid,
+    parentUserName: parent.userName,
+    parentContent: parent.content,
+    explicitReplyTo: rep.replyToUser,
+  });
+}
+
+function startReply(target: SongComment, parentCmt?: SongComment) {
   if (!accounts.isLoggedIn) {
     ui.loginModalOpen = true;
     return;
   }
   echoSystem.haptic('selection');
-  replyTarget.value = cmt;
+  if (parentCmt) {
+    const parsed = getFormattedFloorReply(target, parentCmt);
+    replyParentCommentId.value = parentCmt.id;
+    replyTarget.value = {
+      ...target,
+      tid: parentCmt.tid,
+      specialId: target.specialId || parentCmt.specialId || specialId.value,
+      content: parsed.body || target.content,
+    };
+  } else {
+    replyParentCommentId.value = target.id;
+    replyTarget.value = target;
+  }
 }
 
 async function submitComment() {
@@ -540,10 +568,13 @@ async function submitComment() {
       ui.showToast(t('comments.sentOk'));
       composerText.value = '';
       if (target) {
-        const prev = floorStates.value[target.id];
+        const threadKey = replyParentCommentId.value || target.id;
+        const isSubReply = Boolean(replyParentCommentId.value && replyParentCommentId.value !== target.id);
+        const prev = floorStates.value[threadKey];
         const optimistic: SongComment = {
           id: `local-${Date.now()}`,
           tid: target.tid,
+          pid: isSubReply ? target.id : '0',
           specialId: target.specialId || specialId.value,
           userName: accounts.activeAccount?.nickname || 'Me',
           userAvatar: accounts.activeAccount?.avatar || '',
@@ -552,10 +583,11 @@ async function submitComment() {
           addTime: 'Just now',
           likeCount: 0,
           replyCount: 0,
+          replyToUser: isSubReply ? target.userName : undefined,
         };
         floorStates.value = {
           ...floorStates.value,
-          [target.id]: {
+          [threadKey]: {
             open: true,
             loading: false,
             replies: [optimistic, ...(prev?.replies || [])],
@@ -564,6 +596,7 @@ async function submitComment() {
           },
         };
         replyTarget.value = null;
+        replyParentCommentId.value = null;
       } else {
         const optimistic: SongComment = {
           id: `local-${Date.now()}`,
@@ -1146,7 +1179,7 @@ function addToPlaylist() {
                           </span>
                         </div>
                         <div class="text-[10.5px] text-[var(--text-tertiary)] truncate tabular-nums">
-                          {{ cmt.addTime }}<template v-if="cmt.location"> · {{ cmt.location }}</template>
+                          {{ formatCommentTime(cmt.addTime) }}<template v-if="cmt.location"> · {{ cmt.location }}</template>
                         </div>
                       </div>
                     </div>
@@ -1172,7 +1205,7 @@ function addToPlaylist() {
                   </div>
 
                   <p class="text-[13.5px] leading-relaxed text-[var(--text-primary)] whitespace-pre-wrap break-words m-0 pl-[42px]">
-                    {{ cmt.content }}
+                    {{ replaceKugouEmoticons(cmt.content) }}
                   </p>
 
                   <!-- Floor Reply Toggle & Quick Reply -->
@@ -1222,32 +1255,57 @@ function addToPlaylist() {
                     <div
                       v-for="rep in floorStates[cmt.id]?.replies || []"
                       :key="rep.id"
-                      class="space-y-0.5"
+                      class="flex items-start gap-2.5 pt-2 first:pt-0 border-t border-[var(--hairline)] first:border-t-0"
                     >
-                      <div class="flex items-center justify-between gap-2 text-[11.5px]">
-                        <span class="font-bold text-[var(--text-primary)] truncate">
-                          {{ rep.userName }}
-                          <template v-if="rep.replyToUser">
-                            <span class="font-normal text-[var(--text-tertiary)]"> ▸ {{ rep.replyToUser }}</span>
-                          </template>
-                        </span>
-                        <div class="inline-flex items-center gap-2 shrink-0">
-                          <span class="text-[10.5px] text-[var(--text-tertiary)] tabular-nums">{{ rep.addTime }}</span>
+                      <div class="w-6 h-6 rounded-full overflow-hidden bg-[var(--bg-card)] shrink-0 mt-0.5 flex items-center justify-center text-[10px] font-bold text-[var(--text-secondary)]">
+                        <img v-if="rep.userAvatar" :src="rep.userAvatar" class="w-full h-full object-cover" alt="" />
+                        <span v-else>{{ rep.userName.slice(0, 1) }}</span>
+                      </div>
+                      <div class="min-w-0 flex-1 space-y-1">
+                        <div class="flex items-start justify-between gap-2">
+                          <div class="min-w-0 flex-1 leading-snug">
+                            <span class="text-[12px] font-bold text-[var(--text-primary)] break-words">{{ rep.userName }}</span>
+                            <template v-if="getFormattedFloorReply(rep, cmt).replyToUser">
+                              <span class="text-[11px] font-normal text-[var(--text-tertiary)] mx-1">▸</span>
+                              <span class="text-[11.5px] font-semibold am-accent-text break-words">@{{ getFormattedFloorReply(rep, cmt).replyToUser }}</span>
+                            </template>
+                          </div>
                           <button
                             type="button"
-                            class="inline-flex items-center gap-0.5 bg-transparent border-0 p-0 text-[10.5px] font-semibold tabular-nums am-tap"
+                            class="inline-flex items-center gap-0.5 bg-transparent border-0 p-0.5 text-[11px] font-semibold tabular-nums shrink-0 am-tap"
                             :class="rep.liked ? 'am-accent-text' : 'text-[var(--text-tertiary)]'"
                             :disabled="Boolean(likingIds[rep.id])"
                             @click="handleToggleCommentLike(rep)"
                           >
-                            <Icon :icon="rep.liked ? iconThumbUpFilled : iconThumbUp" class="w-3 h-3" />
+                            <Icon :icon="rep.liked ? iconThumbUpFilled : iconThumbUp" class="w-3.5 h-3.5" />
                             <span v-if="rep.likeCount > 0">{{ formatCompactCount(rep.likeCount, effectiveLocale) }}</span>
                           </button>
                         </div>
+
+                        <p class="text-[12.5px] leading-[1.55] text-[var(--text-primary)]/92 whitespace-pre-wrap break-words m-0">
+                          {{ getFormattedFloorReply(rep, cmt).body }}
+                        </p>
+
+                        <div
+                          v-if="getFormattedFloorReply(rep, cmt).quotedSnippet"
+                          class="px-2 py-1 rounded-lg bg-[var(--bg-card)]/75 border-l-2 border-[var(--accent)]/45 text-[11px] text-[var(--text-secondary)] truncate"
+                        >
+                          {{ getFormattedFloorReply(rep, cmt).replyToUser ? `@${getFormattedFloorReply(rep, cmt).replyToUser}: ` : '' }}{{ getFormattedFloorReply(rep, cmt).quotedSnippet }}
+                        </div>
+
+                        <div class="flex items-center gap-3 pt-0.5">
+                          <span class="text-[10.5px] text-[var(--text-tertiary)] tabular-nums">
+                            {{ formatCommentTime(rep.addTime) }}<template v-if="rep.location"> · {{ rep.location }}</template>
+                          </span>
+                          <button
+                            type="button"
+                            class="bg-transparent border-0 p-0 text-[11px] font-medium text-[var(--text-secondary)] am-tap"
+                            @click="startReply(rep, cmt)"
+                          >
+                            {{ t('comments.reply') }}
+                          </button>
+                        </div>
                       </div>
-                      <p class="text-[12.5px] leading-snug text-[var(--text-primary)]/90 whitespace-pre-wrap break-words m-0">
-                        {{ rep.content }}
-                      </p>
                     </div>
                     <button
                       v-if="floorStates[cmt.id]?.hasMore"
@@ -1285,7 +1343,7 @@ function addToPlaylist() {
               <button
                 type="button"
                 class="bg-transparent border-0 p-0.5 text-[var(--text-tertiary)]"
-                @click="replyTarget = null"
+                @click="replyTarget = null; replyParentCommentId = null"
               >
                 <Icon :icon="iconX" class="w-3.5 h-3.5" />
               </button>

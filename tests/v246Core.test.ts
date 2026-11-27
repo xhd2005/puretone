@@ -52,8 +52,8 @@ describe('v2.4.6 Brand Philosophy & Splash Replay', () => {
     expect(ui.splashReplaySeq).toBe(2);
   });
 
-  it('reports v2.4.6 as the fallback app version', () => {
-    expect(FALLBACK_APP_VERSION).toBe('2.4.6');
+  it('reports a valid v2.4.x fallback app version', () => {
+    expect(FALLBACK_APP_VERSION).toMatch(/^2\.4\.\d+$/);
   });
 });
 

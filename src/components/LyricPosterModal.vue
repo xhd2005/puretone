@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
 import { Icon } from '@iconify/vue';
 import iconX from '@iconify/icons-tabler/x';
 import iconDownload from '@iconify/icons-tabler/download';
@@ -9,6 +9,7 @@ import iconLanguage from '@iconify/icons-tabler/language';
 import iconCalendar from '@iconify/icons-tabler/calendar';
 import type { LyricLine } from '@/types/music';
 import {
+  renderLyricPosterToCanvas,
   renderLyricPosterToDataUrl,
   type PosterLyricItem,
   type PosterThemeId,
@@ -25,6 +26,8 @@ const ui = useUiStore();
 const { t, effectiveLocale } = useI18n();
 
 const scrollRef = ref<HTMLElement | null>(null);
+const previewCanvasRef = ref<HTMLCanvasElement | null>(null);
+const previewReady = ref(false);
 const loading = ref(false);
 const saving = ref(false);
 const sharing = ref(false);
@@ -33,7 +36,6 @@ const selectedIndices = ref<number[]>([]);
 const theme = ref<PosterThemeId>('glass');
 const includeTranslation = ref(true);
 const showDateStamp = ref(true);
-const previewDataUrl = ref('');
 
 const song = computed(() => ui.lyricPosterSong);
 const hasAnyTranslation = computed(() => lines.value.some((l) => Boolean(l.translation?.trim())));
@@ -54,6 +56,11 @@ const themes = computed<Array<{ id: PosterThemeId; label: string }>>(() => [
   { id: 'cinema', label: t('poster.themeCinema') },
   { id: 'melune', label: t('poster.themeMelune') },
 ]);
+
+const themeIndex = computed(() => {
+  const idx = themes.value.findIndex((item) => item.id === theme.value);
+  return idx >= 0 ? idx : 0;
+});
 
 const selectedItems = computed<PosterLyricItem[]>(() =>
   selectedIndices.value
@@ -93,6 +100,18 @@ function pickDefaultLines(all: LyricLine[]) {
 
 let previewSeq = 0;
 let previewTimer: ReturnType<typeof setTimeout> | null = null;
+let previewRaf = 0;
+
+function cancelScheduledPreview() {
+  if (previewTimer) {
+    clearTimeout(previewTimer);
+    previewTimer = null;
+  }
+  if (previewRaf) {
+    cancelAnimationFrame(previewRaf);
+    previewRaf = 0;
+  }
+}
 
 function buildRenderConfig(scale: number) {
   const s = song.value!;
@@ -113,30 +132,47 @@ function buildRenderConfig(scale: number) {
   };
 }
 
-function schedulePreviewRender() {
-  if (previewTimer) clearTimeout(previewTimer);
+function schedulePreviewRender(delayMs = 16) {
+  cancelScheduledPreview();
   if (!song.value) return;
-  previewTimer = setTimeout(async () => {
-    if (!song.value) return;
-    const seq = ++previewSeq;
-    try {
-      const url = await renderLyricPosterToDataUrl(buildRenderConfig(0.46));
-      if (seq === previewSeq) {
-        previewDataUrl.value = url;
+  const runPaint = () => {
+    previewRaf = requestAnimationFrame(async () => {
+      previewRaf = 0;
+      const canvas = previewCanvasRef.value;
+      if (!song.value || !canvas) return;
+      const seq = ++previewSeq;
+      try {
+        await renderLyricPosterToCanvas(canvas, buildRenderConfig(0.42));
+        if (seq === previewSeq) {
+          previewReady.value = true;
+        }
+      } catch {
+        // ignore preview error
       }
-    } catch {
-      // ignore preview error
-    }
-  }, 60);
+    });
+  };
+  if (delayMs <= 16) {
+    runPaint();
+  } else {
+    previewTimer = setTimeout(() => {
+      previewTimer = null;
+      runPaint();
+    }, delayMs);
+  }
 }
 
 watch(
   () => ui.lyricPosterSong,
   async (s) => {
-    if (!s) return;
+    cancelScheduledPreview();
+    if (!s) {
+      previewReady.value = false;
+      return;
+    }
     dragSheet.reset();
     echoSystem.haptic('light');
-    previewDataUrl.value = '';
+    previewReady.value = false;
+
     const isCurrent = Boolean(
       player.currentSong &&
         s.hash === player.currentSong.hash &&
@@ -145,22 +181,29 @@ watch(
     if (isCurrent) {
       lines.value = player.lyrics.lines.filter((l) => l.text.trim().length > 0);
       pickDefaultLines(lines.value);
-      schedulePreviewRender();
+      await nextTick();
+      // Let the 440ms bottom sheet spring entrance clear its opening frames at full 120fps!
+      schedulePreviewRender(180);
       return;
     }
+
     loading.value = true;
     lines.value = [];
     selectedIndices.value = [];
-    schedulePreviewRender();
+    await nextTick();
+    schedulePreviewRender(180);
     try {
       const parsed = await fetchLyricsForSong(s);
+      if (ui.lyricPosterSong?.id !== s.id) return;
       lines.value = parsed.lines.filter((l) => l.text.trim().length > 0);
       pickDefaultLines(lines.value);
     } catch {
       lines.value = [];
     } finally {
       loading.value = false;
-      schedulePreviewRender();
+      if (ui.lyricPosterSong?.id === s.id) {
+        schedulePreviewRender(16);
+      }
     }
   },
 );
@@ -168,10 +211,16 @@ watch(
 watch(
   () => [theme.value, selectedItems.value, includeTranslation.value, showDateStamp.value, effectiveLocale.value],
   () => {
-    if (song.value) schedulePreviewRender();
+    if (song.value && previewReady.value) {
+      schedulePreviewRender(16);
+    }
   },
   { deep: true },
 );
+
+onUnmounted(() => {
+  cancelScheduledPreview();
+});
 
 function toggleLine(idx: number) {
   echoSystem.haptic('selection');
@@ -266,17 +315,24 @@ async function handleSharePoster() {
             @touchend.passive="dragSheet.onBodyTouchEnd"
             @touchcancel.passive="dragSheet.onBodyTouchEnd"
           >
-            <!-- 5 Curated Editorial Templates (zero-overflow equal 5-column segmented selector!) -->
+            <!-- 5 Curated Editorial Templates with 120fps Spring Sliding Pill -->
             <div class="pt-seg-group grid-cols-5">
+              <div
+                class="pt-seg-thumb"
+                :style="{
+                  width: 'calc((100% - 6px) / 5)',
+                  transform: `translate3d(${themeIndex * 100}%, 0, 0)`,
+                }"
+              />
               <button
                 v-for="item in themes"
                 :key="item.id"
                 type="button"
-                class="pt-seg-btn"
+                class="pt-seg-btn bg-transparent"
                 :class="
                   theme === item.id
-                    ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-xs'
-                    : 'bg-transparent text-[var(--text-secondary)]'
+                    ? 'text-[var(--text-primary)]'
+                    : 'text-[var(--text-secondary)]'
                 "
                 @click="echoSystem.haptic('selection'); theme = item.id"
               >
@@ -284,15 +340,19 @@ async function handleSharePoster() {
               </button>
             </div>
 
-            <!-- 100% WYSIWYG Canvas Live Preview -->
-            <div class="mx-auto w-full max-w-[266px] aspect-[1080/1520] rounded-[22px] overflow-hidden shadow-2xl bg-[#0b1336] flex items-center justify-center">
-              <img
-                v-if="previewDataUrl"
-                :src="previewDataUrl"
-                alt="Lyric Poster Preview"
-                class="w-full h-full object-cover block"
+            <!-- 100% Direct-Painted Live Canvas Preview (<4ms, zero PNG encoding stall!) -->
+            <div class="relative mx-auto w-full max-w-[266px] aspect-[1080/1520] rounded-[22px] overflow-hidden shadow-2xl bg-[#0b1336] flex items-center justify-center">
+              <canvas
+                ref="previewCanvasRef"
+                class="w-full h-full block transition-opacity duration-220"
+                :class="previewReady ? 'opacity-100' : 'opacity-0'"
               />
-              <div v-else class="text-[12px] text-white/60">{{ t('common.loading') }}</div>
+              <div
+                v-if="!previewReady"
+                class="absolute top-0 right-0 bottom-0 left-0 flex items-center justify-center text-[12px] text-white/60 pointer-events-none"
+              >
+                {{ t('common.loading') }}
+              </div>
             </div>
 
             <!-- Studio Quick Toggles: Bilingual Translation & Date Stamp -->

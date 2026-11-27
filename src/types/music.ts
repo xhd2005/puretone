@@ -206,6 +206,7 @@ export interface HotSearchTab {
 export interface SongComment {
   id: string;
   tid: string;
+  pid?: string;
   specialId?: string;
   userId?: string;
   userName: string;

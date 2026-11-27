@@ -1135,43 +1135,77 @@ async function openAuthorProfile() {
                   </div>
                 </div>
 
-                <!-- 1.5 Editorial Magazine Brand Philosophy Card (Verbatim 5-Line Manifesto) -->
-                <div class="rounded-[22px] bg-[var(--bg-card)] px-5 py-4.5 shadow-xs space-y-3.5" data-brand-philosophy>
-                  <div class="flex items-center justify-between gap-2 pb-2.5 border-b border-[var(--hairline)]">
-                    <div class="flex items-center gap-2 min-w-0">
-                      <span class="text-[14px] font-bold tracking-[0.06em] text-[var(--text-primary)] truncate">
-                        {{ t('app.fullName') }}
-                      </span>
-                      <span class="px-2 py-0.5 rounded-full bg-[var(--bg-subtle)] text-[10.5px] font-semibold tracking-[0.08em] am-accent-text shrink-0">
-                        {{ t('about.philosophyTitle') }}
-                      </span>
+                <!-- 1.5 Moonlit Starlight Collector Brand Philosophy Card (Zero-Truncation Editorial Design) -->
+                <div
+                  class="relative rounded-[24px] px-5 py-5 overflow-hidden shadow-md text-white border border-white/12"
+                  style="background: linear-gradient(150deg, #1b2f74 0%, #101c4b 54%, #0a1233 100%);"
+                  data-brand-philosophy
+                >
+                  <!-- Ambient Moonlit Halo & Subtle Crescent Watermark (Zero blur-filter stall!) -->
+                  <div
+                    class="pointer-events-none absolute -top-16 -right-12 w-52 h-52 rounded-full"
+                    style="background: radial-gradient(circle, rgba(145, 192, 255, 0.24) 0%, rgba(92, 134, 248, 0.06) 52%, transparent 72%);"
+                  />
+                  <div class="pointer-events-none absolute -top-3 -right-3 opacity-[0.09]">
+                    <PureToneMark :size="108" />
+                  </div>
+
+                  <div class="relative z-10 space-y-4">
+                    <!-- Clean 2-Line Header: Brand Name Never Truncates! -->
+                    <div class="space-y-1 pb-3 border-b border-white/12">
+                      <div class="flex items-center justify-between gap-2">
+                        <span class="text-[17px] font-bold tracking-[0.10em] text-white">
+                          {{ t('app.fullName') }}
+                        </span>
+                        <span class="px-2.5 py-0.5 rounded-full bg-white/12 border border-white/15 text-[10.5px] font-semibold tracking-[0.08em] text-[#d6e7ff] shrink-0">
+                          {{ t('about.philosophyTitle') }}
+                        </span>
+                      </div>
+                      <div
+                        v-if="effectiveLocale !== 'en'"
+                        class="text-[9.5px] font-medium tracking-[0.20em] uppercase text-[#a6c2f5]/58"
+                      >
+                        {{ t('app.sloganEn') }}
+                      </div>
                     </div>
-                    <button
-                      type="button"
-                      class="px-2.5 h-7 rounded-full bg-[var(--bg-subtle)] text-[11px] font-semibold am-accent-text border-0 inline-flex items-center gap-1 am-tap shrink-0"
-                      @click="ui.replaySplash()"
-                    >
-                      <Icon :icon="iconSparkles" class="w-3 h-3 shrink-0" />
-                      <span>{{ t('about.replaySplash') }}</span>
-                    </button>
-                  </div>
 
-                  <div class="space-y-2.5 text-[13px] leading-[1.7] text-[var(--text-secondary)]">
-                    <p class="m-0">
-                      {{ t('about.miLine') }}
-                    </p>
-                    <p class="m-0">
-                      {{ t('about.yinLine') }}
-                    </p>
-                    <p class="m-0">
-                      {{ t('about.vision') }}
-                    </p>
-                  </div>
+                    <!-- Editorial Illuminated Paragraphs -->
+                    <div class="space-y-3">
+                      <p class="m-0 flex items-start gap-2.5">
+                        <span class="w-[22px] h-[22px] rounded-[7px] bg-white/14 border border-white/18 text-white text-[12px] font-bold inline-flex items-center justify-center shrink-0 mt-[2px]">
+                          {{ t('about.miChar') }}
+                        </span>
+                        <span class="text-[13px] leading-[1.72] text-[#e2eeff]/88">
+                          {{ t('about.miDesc') }}
+                        </span>
+                      </p>
+                      <p class="m-0 flex items-start gap-2.5">
+                        <span class="w-[22px] h-[22px] rounded-[7px] bg-white/14 border border-white/18 text-white text-[12px] font-bold inline-flex items-center justify-center shrink-0 mt-[2px]">
+                          {{ t('about.yinChar') }}
+                        </span>
+                        <span class="text-[13px] leading-[1.72] text-[#e2eeff]/88">
+                          {{ t('about.yinDesc') }}
+                        </span>
+                      </p>
+                      <p class="m-0 pt-0.5 text-[13px] leading-[1.75] text-[#cfe0ff]/80">
+                        {{ t('about.vision') }}
+                      </p>
+                    </div>
 
-                  <div class="pt-3 border-t border-[var(--hairline)] flex items-center justify-between gap-2">
-                    <p class="text-[13.5px] font-semibold tracking-[0.05em] text-[var(--text-primary)] m-0">
-                      {{ t('about.closing') }}
-                    </p>
+                    <!-- Closing Manifesto Quote + Full-Width Frosted Replay Pill -->
+                    <div class="pt-3.5 border-t border-white/12 space-y-3">
+                      <p class="text-[14px] font-semibold tracking-[0.06em] text-white leading-relaxed m-0">
+                        {{ t('about.closing') }}
+                      </p>
+                      <button
+                        type="button"
+                        class="w-full h-9 rounded-full bg-white/12 border border-white/18 text-[12px] font-semibold text-[#e6f0ff] inline-flex items-center justify-center gap-1.5 am-tap"
+                        @click="ui.replaySplash()"
+                      >
+                        <Icon :icon="iconSparkles" class="w-3.5 h-3.5 text-[#a8cbff] shrink-0" />
+                        <span>{{ t('about.replaySplash') }}</span>
+                      </button>
+                    </div>
                   </div>
                 </div>
 
@@ -1191,7 +1225,7 @@ async function openAuthorProfile() {
                         <span class="text-[14.5px] font-semibold text-[var(--text-primary)] truncate">{{ t('about.authorTitle') }}</span>
                         <span class="text-[11.5px] text-[var(--text-tertiary)] shrink-0">@{{ APP_AUTHOR }}</span>
                       </div>
-                      <p class="text-[11.5px] text-[var(--text-secondary)] leading-snug m-0 mt-0.5 line-clamp-2">
+                      <p class="text-[11.5px] text-[var(--text-secondary)] leading-relaxed m-0 mt-0.5">
                         {{ t('about.authorBio') }}
                       </p>
                     </div>

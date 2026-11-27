@@ -44,7 +44,7 @@ function dismiss() {
   }
 }
 
-function playSequence(durationMs = 1820) {
+function playSequence(durationMs = 1950) {
   clearTimers();
   finished = false;
   revealed.value = false;
@@ -62,13 +62,13 @@ watch(
   (seq, prev) => {
     if (seq > 0 && seq !== prev) {
       isInitialBoot = false;
-      playSequence(2400);
+      playSequence(2600);
     }
   },
 );
 
 onMounted(() => {
-  playSequence(1820);
+  playSequence(1950);
 });
 
 onUnmounted(() => {
@@ -98,8 +98,8 @@ onUnmounted(() => {
         </button>
       </div>
 
-      <!-- Center Moonlit Emblem & Brand Typography -->
-      <div class="flex flex-col items-center text-center relative z-10 -mt-6 max-w-[320px]">
+      <!-- Center Moonlit Emblem & Poetic Brand Copy -->
+      <div class="flex flex-col items-center text-center relative z-10 -mt-6 max-w-[330px]">
         <div class="ml-emblem-wrap" :class="{ 'is-on': revealed }">
           <PureToneMark :size="84" />
         </div>
@@ -109,25 +109,29 @@ onUnmounted(() => {
             {{ t('app.fullName') }}
           </div>
 
-          <p class="mt-4 text-[15.5px] font-semibold tracking-[0.10em] text-white/95 leading-relaxed m-0">
-            {{ t('splash.headline') }}
-          </p>
-
-          <div class="ml-brand-sub mt-3 space-y-1" :class="{ 'is-on': revealed }">
-            <p class="text-[12.5px] font-normal tracking-[0.09em] text-[#dceaff]/72 leading-relaxed m-0">
+          <!-- Centerpiece Dual-Line Poetic Manifesto -->
+          <div class="mt-4.5 space-y-1.5">
+            <p class="text-[16px] font-semibold tracking-[0.09em] text-white/95 leading-[1.65] m-0">
               {{ t('splash.line1') }}
             </p>
-            <p class="text-[12.5px] font-normal tracking-[0.09em] text-[#cbdcf8]/68 leading-relaxed m-0">
+            <p class="text-[16px] font-semibold tracking-[0.09em] text-white/95 leading-[1.65] m-0">
               {{ t('splash.line2') }}
             </p>
           </div>
 
-          <p
-            v-if="effectiveLocale !== 'en'"
-            class="mt-3.5 text-[10px] font-medium tracking-[0.2em] uppercase text-[#a6c2f5]/46 m-0"
-          >
-            {{ t('app.sloganEn') }}
-          </p>
+          <!-- Delicate Moonlit Hairline & Echo Whisper -->
+          <div class="ml-brand-sub mt-4" :class="{ 'is-on': revealed }">
+            <div class="w-8 h-[1px] bg-white/22 mx-auto mb-3" />
+            <p class="text-[12px] font-normal tracking-[0.10em] text-[#cfe2ff]/72 leading-relaxed m-0">
+              {{ t('splash.headline') }}
+            </p>
+            <p
+              v-if="effectiveLocale !== 'en'"
+              class="mt-2.5 text-[9.5px] font-medium tracking-[0.20em] uppercase text-[#a6c2f5]/46 m-0"
+            >
+              {{ t('app.sloganEn') }}
+            </p>
+          </div>
         </div>
       </div>
 
@@ -201,7 +205,7 @@ onUnmounted(() => {
 .ml-brand-sub {
   opacity: 0;
   transform: translate3d(0, 8px, 0);
-  transition: opacity 560ms ease 240ms, transform 640ms cubic-bezier(0.22, 1, 0.36, 1) 240ms;
+  transition: opacity 560ms ease 260ms, transform 640ms cubic-bezier(0.22, 1, 0.36, 1) 260ms;
 }
 .ml-brand-sub.is-on {
   opacity: 1;

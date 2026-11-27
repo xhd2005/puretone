@@ -891,7 +891,7 @@ export const usePlayerStore = defineStore('player', () => {
     if (!isPlaying.value) return currentTimeMs.value;
     if (lastSampleAt.value <= 0) return currentTimeMs.value;
     const elapsed = Math.max(0, Math.min(450, Date.now() - lastSampleAt.value));
-    return currentTimeMs.value + elapsed;
+    return currentTimeMs.value + elapsed * (playbackSpeed.value || 1);
   }
 
   return {

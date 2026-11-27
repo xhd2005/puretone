@@ -4,7 +4,12 @@ import { usePlayerStore } from '@/stores/player';
 import { useSettingsStore } from '@/stores/settings';
 import { useI18n } from '@/i18n';
 import { echoSystem } from '@/native/echoSystem';
-import type { LyricLine, LyricWord } from '@/types/music';
+import {
+  advanceMonotonicLyricTime,
+  computeWordSweepPosPercent,
+  findActiveLyricIndex,
+} from '@/utils/lyricClock';
+import type { LyricLine } from '@/types/music';
 
 const props = defineProps<{
   active: boolean;
@@ -27,59 +32,101 @@ const currentTrackOffsetKey = computed(() => {
 });
 const lyricOffsetMs = computed(() => settings.getLyricOffset(currentTrackOffsetKey.value));
 
-function getShiftedTimeMs(): number {
+function getRawShiftedTimeMs(): number {
   return Math.max(0, player.getInterpolatedTimeMs() + lyricOffsetMs.value);
 }
 
 const scrollerRef = ref<HTMLElement | null>(null);
 const lineRefs = ref<HTMLElement[]>([]);
-const liveTimeMs = ref(getShiftedTimeMs());
+// Only flips on actual lyric line transitions (~every 3-5s) -> ZERO 60/120fps Vue VDOM diff!
+const activeIndex = ref(-1);
 const userScrolling = ref(false);
+
+let displayTimeMs = -1;
 let scrollResumeTimer: ReturnType<typeof setTimeout> | null = null;
 let rafId = 0;
 let touchStartY = 0;
 let didScrollGesture = false;
+let paintedLineIdx = -1;
+let cachedWordNodes: HTMLElement[] = [];
 
-function tick() {
-  if (!props.active) {
-    rafId = 0;
+function clearWordCache() {
+  for (let i = 0; i < cachedWordNodes.length; i += 1) {
+    const el = cachedWordNodes[i];
+    if (el) {
+      el.style.removeProperty('--wp-pos');
+      delete el.dataset.wpq;
+    }
+  }
+  cachedWordNodes = [];
+  paintedLineIdx = -1;
+}
+
+function paintActiveLineWords(idx: number, nowMs: number) {
+  if (idx < 0) {
+    if (paintedLineIdx >= 0) clearWordCache();
     return;
   }
-  liveTimeMs.value = getShiftedTimeMs();
-  if (player.isPlaying) {
-    rafId = requestAnimationFrame(tick);
-  } else {
-    rafId = 0;
+  const line = player.lyrics.lines[idx];
+  if (!line?.words?.length) {
+    if (paintedLineIdx >= 0) clearWordCache();
+    return;
+  }
+
+  if (paintedLineIdx !== idx) {
+    clearWordCache();
+    const rowEl = lineRefs.value[idx];
+    if (!rowEl) return;
+    cachedWordNodes = Array.from(rowEl.querySelectorAll<HTMLElement>('.krc-word'));
+    paintedLineIdx = idx;
+  }
+
+  const words = line.words;
+  const count = Math.min(words.length, cachedWordNodes.length);
+  for (let i = 0; i < count; i += 1) {
+    const posPct = computeWordSweepPosPercent(words[i], nowMs);
+    // 0.5% quantization avoids redundant style writes while staying ultra-smooth at 120fps
+    const q = String(Math.round(posPct * 2));
+    const el = cachedWordNodes[i];
+    if (el.dataset.wpq !== q) {
+      el.dataset.wpq = q;
+      el.style.setProperty('--wp-pos', `${posPct.toFixed(1)}%`);
+    }
   }
 }
 
-function syncLoop() {
-  if (rafId) cancelAnimationFrame(rafId);
-  rafId = 0;
-  liveTimeMs.value = getShiftedTimeMs();
+function syncFrame(forceSnap = false) {
+  const rawMs = getRawShiftedTimeMs();
+  displayTimeMs = forceSnap
+    ? rawMs
+    : advanceMonotonicLyricTime(displayTimeMs, rawMs, player.isPlaying);
+
+  const nextIdx = findActiveLyricIndex(player.lyrics.lines, displayTimeMs, 90);
+  if (nextIdx !== activeIndex.value) {
+    activeIndex.value = nextIdx;
+  }
+  paintActiveLineWords(activeIndex.value, displayTimeMs);
+}
+
+function tick() {
+  if (!props.active || !player.isPlaying) {
+    rafId = 0;
+    return;
+  }
+  syncFrame(false);
+  rafId = requestAnimationFrame(tick);
+}
+
+function syncLoop(forceSnap = false) {
+  if (rafId) {
+    cancelAnimationFrame(rafId);
+    rafId = 0;
+  }
+  syncFrame(forceSnap);
   if (props.active && player.isPlaying) {
     rafId = requestAnimationFrame(tick);
   }
 }
-
-const activeIndex = computed(() => {
-  const lines = player.lyrics.lines;
-  if (!lines.length) return -1;
-  const t = liveTimeMs.value + 90;
-  let lo = 0;
-  let hi = lines.length - 1;
-  let ans = -1;
-  while (lo <= hi) {
-    const mid = (lo + hi) >> 1;
-    if (lines[mid].startMs <= t) {
-      ans = mid;
-      lo = mid + 1;
-    } else {
-      hi = mid - 1;
-    }
-  }
-  return ans;
-});
 
 function scrollToActive(smooth = true) {
   if (userScrolling.value) return;
@@ -99,27 +146,50 @@ function scrollToActive(smooth = true) {
   });
 }
 
-/**
- * Instant (<16ms) non-animated snap to the current line on mount, mode switch,
- * or fresh lyrics arrival — completely eliminates the 3-second waiting lag!
- */
 function snapToActiveNow() {
   userScrolling.value = false;
-  liveTimeMs.value = getShiftedTimeMs();
+  displayTimeMs = -1;
+  syncLoop(true);
   void nextTick(() => {
+    paintActiveLineWords(activeIndex.value, Math.max(0, displayTimeMs));
     scrollToActive(false);
     requestAnimationFrame(() => scrollToActive(false));
   });
 }
 
+// Start/stop single RAF loop strictly on visibility or play/pause state (NEVER cancelled on 250ms ticks!)
 watch(
-  () => [props.active, player.isPlaying, player.currentTimeMs],
-  () => syncLoop(),
+  () => [props.active, player.isPlaying],
+  ([isActive]) => {
+    if (isActive) {
+      syncLoop(!player.isPlaying);
+    } else if (rafId) {
+      cancelAnimationFrame(rafId);
+      rafId = 0;
+    }
+  },
   { immediate: true },
 );
 
+// Handle external seeks (scrubber drag / chorus jump) or paused position updates cleanly
+watch(
+  () => player.currentTimeMs,
+  () => {
+    if (!props.active) return;
+    if (!player.isPlaying) {
+      syncFrame(true);
+      return;
+    }
+    const rawMs = getRawShiftedTimeMs();
+    if (displayTimeMs < 0 || Math.abs(rawMs - displayTimeMs) > 450) {
+      syncFrame(true);
+    }
+  },
+);
+
 watch(lyricOffsetMs, () => {
-  syncLoop();
+  displayTimeMs = -1;
+  syncFrame(true);
   if (props.active) {
     userScrolling.value = false;
     void nextTick(() => scrollToActive(true));
@@ -129,13 +199,18 @@ watch(lyricOffsetMs, () => {
 watch(
   () => player.lyrics.lines,
   () => {
+    clearWordCache();
     lineRefs.value = [];
+    displayTimeMs = -1;
     if (props.active) snapToActiveNow();
   },
 );
 
-watch(activeIndex, () => {
-  void nextTick(() => scrollToActive(true));
+watch(activeIndex, (nextIdx) => {
+  void nextTick(() => {
+    paintActiveLineWords(nextIdx, Math.max(0, displayTimeMs));
+    scrollToActive(true);
+  });
 });
 
 watch(
@@ -149,7 +224,6 @@ watch(
 );
 
 onMounted(() => {
-  syncLoop();
   if (props.active) {
     snapToActiveNow();
   }
@@ -158,6 +232,7 @@ onMounted(() => {
 onUnmounted(() => {
   if (rafId) cancelAnimationFrame(rafId);
   if (scrollResumeTimer) clearTimeout(scrollResumeTimer);
+  clearWordCache();
 });
 
 function markUserScrolling() {
@@ -200,20 +275,14 @@ function handleLineClick(line: LyricLine) {
   }
   echoSystem.haptic('selection');
   userScrolling.value = false;
-  liveTimeMs.value = line.startMs;
+  displayTimeMs = line.startMs;
   const targetAudioMs = Math.max(0, line.startMs - lyricOffsetMs.value);
   void player.seek(targetAudioMs);
+  const nextIdx = findActiveLyricIndex(player.lyrics.lines, displayTimeMs, 90);
+  if (nextIdx !== activeIndex.value) activeIndex.value = nextIdx;
+  paintActiveLineWords(activeIndex.value, displayTimeMs);
   emit('lineSeek');
   void nextTick(() => scrollToActive(true));
-}
-
-function getWordProgress(word: LyricWord, lineIdx: number): number {
-  if (lineIdx < activeIndex.value) return 1;
-  if (lineIdx > activeIndex.value) return 0;
-  const t = liveTimeMs.value;
-  if (t <= word.startMs) return 0;
-  if (t >= word.startMs + word.durationMs) return 1;
-  return (t - word.startMs) / Math.max(1, word.durationMs);
 }
 
 function getLineClass(idx: number) {
@@ -247,47 +316,38 @@ function getLineClass(idx: number) {
       </div>
 
       <div v-else key="krc-list" class="krc-list" :class="fontSizeClass">
-      <button
-        v-for="(line, idx) in player.lyrics.lines"
-        :key="`${line.startMs}-${idx}`"
-        :ref="(el) => { if (el) lineRefs[idx] = el as HTMLElement }"
-        type="button"
-        class="krc-line"
-        :class="getLineClass(idx)"
-        @click.stop="handleLineClick(line)"
-      >
-        <!-- Word-by-word Apple Music style karaoke rendering -->
-        <div v-if="line.words && line.words.length" class="krc-main">
-          <span
-            v-for="(w, wi) in line.words"
-            :key="wi"
-            class="krc-word"
-            :class="{
-              'word-singing': idx === activeIndex && getWordProgress(w, idx) > 0 && getWordProgress(w, idx) < 1,
-              'word-sung': idx === activeIndex && getWordProgress(w, idx) >= 1,
-            }"
-            :style="
-              idx === activeIndex
-                ? { '--wp': `${Math.round(getWordProgress(w, idx) * 100)}%` }
-                : undefined
-            "
-          >{{ w.text }}</span>
-        </div>
-
-        <!-- Standard LRC line -->
-        <div v-else class="krc-main">
-          {{ line.text }}
-        </div>
-
-        <!-- Bilingual translation -->
-        <div
-          v-if="settings.showTranslation && line.translation"
-          class="krc-trans"
+        <button
+          v-for="(line, idx) in player.lyrics.lines"
+          :key="`${line.startMs}-${idx}`"
+          :ref="(el) => { if (el) lineRefs[idx] = el as HTMLElement }"
+          type="button"
+          class="krc-line"
+          :class="getLineClass(idx)"
+          @click.stop="handleLineClick(line)"
         >
-          {{ line.translation }}
-        </div>
-      </button>
-    </div>
+          <!-- Word-by-word karaoke: constant GPU gradient mask driven imperatively -> ZERO flicker! -->
+          <div v-if="line.words && line.words.length" class="krc-main">
+            <span
+              v-for="(w, wi) in line.words"
+              :key="wi"
+              class="krc-word"
+            >{{ w.text }}</span>
+          </div>
+
+          <!-- Standard LRC line -->
+          <div v-else class="krc-main">
+            {{ line.text }}
+          </div>
+
+          <!-- Bilingual translation -->
+          <div
+            v-if="settings.showTranslation && line.translation"
+            class="krc-trans"
+          >
+            {{ line.translation }}
+          </div>
+        </button>
+      </div>
     </Transition>
   </div>
 </template>
@@ -337,10 +397,11 @@ function getLineClass(idx: number) {
   padding: 4px 0;
   color: rgba(255, 255, 255, 0.36);
   transform-origin: left center;
+  backface-visibility: hidden;
   transition:
-    transform 360ms var(--spring-ease),
-    opacity 320ms ease,
-    color 260ms ease;
+    transform 340ms var(--spring-ease),
+    opacity 300ms ease,
+    color 240ms ease;
 }
 
 .krc-main {
@@ -398,31 +459,25 @@ function getLineClass(idx: number) {
   transform: scale(1);
 }
 
-/* Smooth Apple Music left-to-right syllable sweep (pure GPU, zero per-word SVG filter!) */
+/* Constant-layer Apple Music syllable sweep:
+   100% -> dim unsung white; 0% -> solid pure #ffffff.
+   NEVER switches background:none or toggles text-shadow -> ZERO Skia syllable flash! */
 .krc-line.is-active .krc-word {
   display: inline-block;
   white-space: pre-wrap;
-  background: linear-gradient(
+  background-image: linear-gradient(
     90deg,
     #ffffff 0%,
-    #ffffff var(--wp, 0%),
-    rgba(255, 255, 255, 0.36) calc(var(--wp, 0%) + 6%),
+    #ffffff 48%,
+    rgba(255, 255, 255, 0.36) 52%,
     rgba(255, 255, 255, 0.36) 100%
   );
+  background-size: 220% 100%;
+  background-repeat: no-repeat;
+  background-position: var(--wp-pos, 100%) 0;
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-  transition: transform 200ms var(--spring-ease);
-}
-
-.krc-line.is-active .krc-word.word-singing {
-  transform: translate3d(0, -1.5px, 0);
-  text-shadow: 0 0 14px rgba(255, 255, 255, 0.28);
-}
-
-.krc-line.is-active .krc-word.word-sung {
-  color: #ffffff;
-  background: none;
 }
 
 .krc-empty {
@@ -445,11 +500,15 @@ function getLineClass(idx: number) {
   background: rgba(255, 255, 255, 0.6);
   animation: krc-pulse 1.2s ease-in-out infinite;
 }
-.krc-dots span:nth-child(2) { animation-delay: 0.2s; }
-.krc-dots span:nth-child(3) { animation-delay: 0.4s; }
+.krc-dots span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.krc-dots span:nth-child(3) {
+  animation-delay: 0.4s;
+}
 
 @keyframes krc-pulse {
-  0%, 100% { opacity: 0.28; transform: scale(0.85); }
-  50% { opacity: 1; transform: scale(1.1); }
+  0%, 80%, 100% { opacity: 0.3; transform: scale(0.82); }
+  40% { opacity: 1; transform: scale(1.1); }
 }
 </style>
