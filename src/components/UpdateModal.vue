@@ -246,11 +246,20 @@ async function handleSkip() {
               type="button"
               class="h-10 rounded-[12px] bg-[var(--bg-subtle)] text-[var(--text-secondary)] text-[13px] font-semibold border-0 am-tap"
               :disabled="downloading"
-              @click="handleSkip"
+              @click="close"
             >
               {{ t('update.later') }}
             </button>
           </div>
+
+          <button
+            v-if="!downloading"
+            type="button"
+            class="w-full py-1.5 text-[12px] font-medium text-[var(--text-tertiary)] bg-transparent border-0 text-center am-tap"
+            @click="handleSkip"
+          >
+            {{ t('update.ignoreVersion', { ver: info.latestVersion }) }}
+          </button>
         </div>
       </div>
     </div>

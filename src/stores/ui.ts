@@ -19,6 +19,7 @@ export const useUiStore = defineStore('ui', () => {
   const commentsSheetTab = ref<'details' | 'comments'>('comments');
   const artistPickerCandidates = ref<SongArtistRef[] | null>(null);
   const updateReleaseInfo = ref<ReleaseUpdateInfo | null>(null);
+  const availableUpdateVersion = ref('');
   const complianceModalOpen = ref(false);
   /** When true (e.g. playlist batch selection), AppShell smoothly hides MiniPlayer & TabBar for a bottom takeover dock. */
   const batchDockActive = ref(false);
@@ -181,6 +182,7 @@ export const useUiStore = defineStore('ui', () => {
     commentsSheetTab,
     artistPickerCandidates,
     updateReleaseInfo,
+    availableUpdateVersion,
     complianceModalOpen,
     batchDockActive,
     splashReplaySeq,

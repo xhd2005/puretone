@@ -226,15 +226,15 @@ class EchoSystemPlugin : Plugin() {
         pendingOpenNowPlaying = false
 
         val versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            pkgInfo?.longVersionCode?.toInt() ?: 14
+            pkgInfo?.longVersionCode?.toInt() ?: 15
         } else {
             @Suppress("DEPRECATION")
-            pkgInfo?.versionCode ?: 14
+            pkgInfo?.versionCode ?: 15
         }
         call.resolve(
             JSObject()
                 .put("openNowPlaying", openNowPlaying)
-                .put("versionName", pkgInfo?.versionName ?: "2.4.7")
+                .put("versionName", pkgInfo?.versionName ?: "2.4.8")
                 .put("versionCode", versionCode),
         )
     }
@@ -298,6 +298,42 @@ class EchoSystemPlugin : Plugin() {
             call.resolve(JSObject().put("opened", true))
         } catch (_: Exception) {
             call.resolve(JSObject().put("opened", false))
+        }
+    }
+
+    @PluginMethod
+    fun checkOverlayPermission(call: PluginCall) {
+        val granted = Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(context)
+        call.resolve(JSObject().put("granted", granted))
+    }
+
+    @PluginMethod
+    fun openOverlaySettings(call: PluginCall) {
+        try {
+            val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:${context.packageName}"),
+                )
+            } else {
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = Uri.fromParts("package", context.packageName, null)
+                }
+            }
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(intent)
+            call.resolve(JSObject().put("opened", true))
+        } catch (_: Exception) {
+            try {
+                val fallback = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = Uri.fromParts("package", context.packageName, null)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(fallback)
+                call.resolve(JSObject().put("opened", true))
+            } catch (_: Exception) {
+                call.resolve(JSObject().put("opened", false))
+            }
         }
     }
 
@@ -398,7 +434,7 @@ class EchoSystemPlugin : Plugin() {
                 try {
                     val req = Request.Builder()
                         .url(targetUrl)
-                        .header("User-Agent", "MELUNE-Android/2.4.7")
+                        .header("User-Agent", "MELUNE-Android/2.4.8")
                         .build()
                     val downloadedOk = updateHttpClient.newCall(req).execute().use { res ->
                         if (!res.isSuccessful) {

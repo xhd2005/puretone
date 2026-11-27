@@ -6,7 +6,7 @@ export const APP_REPO = 'xhd2005/puretone';
 export const APP_REPO_URL = `https://github.com/${APP_REPO}`;
 export const APP_RELEASES_URL = `${APP_REPO_URL}/releases`;
 export const APP_AUTHOR = 'xhd2005';
-export const FALLBACK_APP_VERSION = '2.4.7';
+export const FALLBACK_APP_VERSION = '2.4.8';
 
 const LAST_CHECK_KEY = 'update.lastCheckAt.v1';
 const SKIPPED_VERSION_KEY = 'update.skippedVersion.v1';
@@ -227,6 +227,17 @@ export async function getCurrentAppVersion(): Promise<string> {
   return FALLBACK_APP_VERSION;
 }
 
+export function shouldPromptAutoUpdate(
+  info: Pick<ReleaseUpdateInfo, 'hasUpdate' | 'latestVersion'> | null | undefined,
+  skippedVersion = '',
+): boolean {
+  if (!info || !info.hasUpdate) return false;
+  const latest = String(info.latestVersion || '').trim();
+  const skipped = String(skippedVersion || '').trim();
+  if (!latest) return false;
+  return !skipped || skipped !== latest;
+}
+
 export async function checkForAppUpdate(
   options: {
     silent?: boolean;
@@ -238,13 +249,6 @@ export async function checkForAppUpdate(
   const currentVersion = options.currentVersion || (await getCurrentAppVersion());
   const mirrorMode = options.mirrorMode || 'auto';
   const customMirror = options.customMirror || '';
-
-  if (options.silent) {
-    const lastCheck = await echoSystem.kvGetJson<number>(LAST_CHECK_KEY, 0);
-    if (Date.now() - lastCheck < 12 * 60 * 60 * 1000) {
-      return null;
-    }
-  }
 
   const endpoints = buildManifestCandidateUrls(mirrorMode, customMirror);
   let resolvedInfo: ReleaseUpdateInfo | null = null;
@@ -332,9 +336,9 @@ export async function checkForAppUpdate(
 
   await echoSystem.kvSetJson(LAST_CHECK_KEY, Date.now());
 
-  if (options.silent && resolvedInfo.hasUpdate) {
+  if (options.silent) {
     const skipped = await echoSystem.kvGetJson<string>(SKIPPED_VERSION_KEY, '');
-    if (skipped === resolvedInfo.latestVersion) return null;
+    if (!shouldPromptAutoUpdate(resolvedInfo, skipped)) return null;
   }
 
   return resolvedInfo;
@@ -342,4 +346,8 @@ export async function checkForAppUpdate(
 
 export async function skipUpdateVersion(version: string): Promise<void> {
   await echoSystem.kvSetJson(SKIPPED_VERSION_KEY, version);
+}
+
+export async function clearSkippedUpdateVersion(): Promise<void> {
+  await echoSystem.kvDelete(SKIPPED_VERSION_KEY);
 }

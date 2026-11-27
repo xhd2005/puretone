@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { echoSystem } from '@/native/echoSystem';
 import { initKugouEngine } from '@/services/kugou/kugouEngine';
 import { hydratePlaylistCoverCache } from '@/services/playback/playlistCoverResolver';
-import { checkForAppUpdate, FALLBACK_APP_VERSION } from '@/services/update/updateService';
+import { checkForAppUpdate, FALLBACK_APP_VERSION, type ReleaseUpdateInfo } from '@/services/update/updateService';
 import { useSettingsStore } from '@/stores/settings';
 import { useAccountsStore } from '@/stores/accounts';
 import { useVipStore } from '@/stores/vip';
@@ -40,6 +40,31 @@ const ui = useUiStore();
 
 const splashDone = ref(false);
 const pendingCompliancePrompt = ref(false);
+const pendingAutoUpdate = ref<ReleaseUpdateInfo | null>(null);
+let autoUpdatePromptTimer: ReturnType<typeof setTimeout> | null = null;
+
+function flushPendingAutoUpdateIfReady() {
+  if (!splashDone.value || ui.complianceModalOpen || !pendingAutoUpdate.value) return;
+  if (autoUpdatePromptTimer) clearTimeout(autoUpdatePromptTimer);
+  autoUpdatePromptTimer = setTimeout(() => {
+    autoUpdatePromptTimer = null;
+    if (!splashDone.value || ui.complianceModalOpen || !pendingAutoUpdate.value || ui.updateReleaseInfo) return;
+    const next = pendingAutoUpdate.value;
+    pendingAutoUpdate.value = null;
+    ui.updateReleaseInfo = next;
+  }, 260);
+}
+
+watch([splashDone, () => ui.complianceModalOpen, pendingAutoUpdate], () => {
+  flushPendingAutoUpdateIfReady();
+});
+
+onUnmounted(() => {
+  if (autoUpdatePromptTimer) {
+    clearTimeout(autoUpdatePromptTimer);
+    autoUpdatePromptTimer = null;
+  }
+});
 
 function onSplashDone() {
   splashDone.value = true;
@@ -47,6 +72,7 @@ function onSplashDone() {
     pendingCompliancePrompt.value = false;
     ui.complianceModalOpen = true;
   }
+  flushPendingAutoUpdateIfReady();
 }
 
 onMounted(async () => {
@@ -98,8 +124,9 @@ onMounted(async () => {
     void vip.maybeAutoClaimOnLaunch(false);
   }, 2000);
 
-  // Silent daily update check (non-intrusive; China-friendly multi-mirror auto-fallback)
+  // Automatic cold-start update check (queues gracefully behind Splash & Compliance modal)
   setTimeout(async () => {
+    if (!settings.autoCheckUpdate) return;
     try {
       const update = await checkForAppUpdate({
         silent: true,
@@ -108,12 +135,13 @@ onMounted(async () => {
         customMirror: settings.customUpdateMirror,
       });
       if (update?.hasUpdate) {
-        ui.updateReleaseInfo = update;
+        ui.availableUpdateVersion = update.latestVersion;
+        pendingAutoUpdate.value = update;
       }
     } catch {
       // silent network error
     }
-  }, 4500);
+  }, 800);
 });
 </script>
 

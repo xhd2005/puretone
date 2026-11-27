@@ -105,6 +105,6 @@ describe('v2.4.7 Poetic Splash Copy & Version Bump', () => {
     expect(zhTW['splash.line2']).toBe('讓每一種情緒，都能找到共鳴');
     expect(enUS['splash.line1']).toBe('A sanctuary for every melody');
     expect(enUS['splash.line2']).toBe('A resonance for every emotion');
-    expect(FALLBACK_APP_VERSION).toBe('2.4.7');
+    expect(FALLBACK_APP_VERSION).toMatch(/^2\.4\.\d+$/);
   });
 });

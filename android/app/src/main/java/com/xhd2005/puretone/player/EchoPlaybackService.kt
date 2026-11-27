@@ -94,8 +94,9 @@ interface PlayerBridgeListener {
 
 @OptIn(UnstableApi::class)
 private class PureToneMediaNotificationProvider(
-    context: Context,
+    private val context: Context,
     private val accentColorProvider: () -> Int,
+    private val titleProvider: () -> String,
 ) : MediaNotification.Provider {
 
     private val delegate = DefaultMediaNotificationProvider.Builder(context)
@@ -105,6 +106,17 @@ private class PureToneMediaNotificationProvider(
         .apply {
             setSmallIcon(R.drawable.ic_stat_puretone)
         }
+
+    private fun canPostPromotedOngoing(): Boolean {
+        if (Build.VERSION.SDK_INT < 36) return false
+        return try {
+            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return false
+            val method = nm.javaClass.getMethod("canPostPromotedNotifications")
+            (method.invoke(nm) as? Boolean) == true
+        } catch (_: Exception) {
+            false
+        }
+    }
 
     override fun createNotification(
         mediaSession: MediaSession,
@@ -122,9 +134,21 @@ private class PureToneMediaNotificationProvider(
         n.color = accentColorProvider()
         n.visibility = Notification.VISIBILITY_PUBLIC
         n.category = Notification.CATEGORY_TRANSPORT
-        n.extras.putBoolean(Notification.EXTRA_COLORIZED, true)
-        // Android 16/17 (API 36+) official Live Updates promoted ongoing opt-in (safe no-op on older OS)
-        n.extras.putBoolean("android.requestPromotedOngoing", true)
+
+        // Android 16/17 (API 36+) Live Updates reject notifications when EXTRA_COLORIZED=true
+        // is combined with requestPromotedOngoing=true. Apply strictly mutually-exclusive flags.
+        if (EchoPlaybackService.shouldUsePromotedLiveUpdate(Build.VERSION.SDK_INT, canPostPromotedOngoing())) {
+            n.flags = n.flags or Notification.FLAG_ONGOING_EVENT
+            n.extras.putBoolean(Notification.EXTRA_COLORIZED, false)
+            n.extras.putBoolean("android.requestPromotedOngoing", true)
+            val shortTitle = EchoPlaybackService.formatShortCriticalTitle(titleProvider())
+            if (shortTitle.isNotEmpty()) {
+                n.extras.putCharSequence("android.shortCriticalText", shortTitle)
+            }
+        } else {
+            n.extras.putBoolean(Notification.EXTRA_COLORIZED, true)
+            n.extras.remove("android.requestPromotedOngoing")
+        }
         return mediaNotification
     }
 
@@ -268,6 +292,9 @@ class EchoPlaybackService : MediaSessionService() {
     private var mediaSession: MediaSession? = null
     private val audioEffects = PureToneAudioEffects()
     private var transitionWakeLock: PowerManager.WakeLock? = null
+    private var islandController: MeluneIslandController? = null
+    private var currentIslandLyric: String = ""
+    private var lastIslandLyricUpdatedAt: Long = 0L
 
     private fun isCurrentlyActive(): Boolean {
         return try {
@@ -341,6 +368,7 @@ class EchoPlaybackService : MediaSessionService() {
                     }
                 }
                 bridgeListener?.onTimeUpdate(pos, dur, true, currentTrackSeq)
+                islandController?.updateProgress(pos, dur)
             }
             mainHandler.postDelayed(this, 160L)
         }
@@ -387,8 +415,25 @@ class EchoPlaybackService : MediaSessionService() {
 
         ensureMediaNotificationChannel()
         setMediaNotificationProvider(
-            PureToneMediaNotificationProvider(this) { currentAccentColor },
+            PureToneMediaNotificationProvider(
+                context = this,
+                accentColorProvider = { currentAccentColor },
+                titleProvider = { currentMetadata?.title ?: getString(R.string.app_name) },
+            ),
         )
+
+        islandController = MeluneIslandController(
+            context = applicationContext,
+            callbacks = object : IslandCallbacks {
+                override fun onTogglePlay() = handleWidgetTogglePlay()
+                override fun onNext() = handleWidgetNext()
+                override fun onPrev() = handleWidgetPrev()
+                override fun onToggleFavorite() = handleWidgetToggleFav()
+                override fun onOffsetYChanged(offsetYDp: Int) = Unit
+            },
+        ).also { controller ->
+            controller.setAppInForeground(appInForegroundState)
+        }
 
         upstreamFactory = OkHttpDataSource.Factory(okHttpClient)
             .setUserAgent("MELUNE-Android/2.4 (Linux; Android 16)")
@@ -435,6 +480,9 @@ class EchoPlaybackService : MediaSessionService() {
                 currentArtworkBitmap = null
                 currentLiveLyric = ""
                 lastLiveLyricUpdatedAt = 0L
+                currentIslandLyric = ""
+                lastIslandLyricUpdatedAt = 0L
+                islandController?.updateLiveLyric("")
                 currentAccentColor = DEFAULT_NOTIFICATION_ACCENT
                 upstreamFactory.setDefaultRequestProperties(matched.headers)
 
@@ -634,6 +682,8 @@ class EchoPlaybackService : MediaSessionService() {
         cancelRetry()
         releaseTransitionWakeLock()
         mainHandler.removeCallbacks(timeTicker)
+        islandController?.destroy()
+        islandController = null
         audioEffects.release()
         try {
             unregisterReceiver(noisyReceiver)
@@ -790,6 +840,9 @@ class EchoPlaybackService : MediaSessionService() {
                 currentArtworkBitmap = null
                 currentLiveLyric = ""
                 lastLiveLyricUpdatedAt = 0L
+                currentIslandLyric = ""
+                lastIslandLyricUpdatedAt = 0L
+                islandController?.updateLiveLyric("")
                 currentAccentColor = DEFAULT_NOTIFICATION_ACCENT
                 upstreamFactory.setDefaultRequestProperties(headers)
 
@@ -1002,6 +1055,29 @@ class EchoPlaybackService : MediaSessionService() {
         applyMetadataToActiveItem(meta, currentArtworkBytes)
     }
 
+    fun setIslandConfig(enabled: Boolean, showLyric: Boolean, offsetYDp: Int) = mainHandler.post {
+        islandController?.updateConfig(enabled, showLyric, offsetYDp)
+        syncIslandState()
+    }
+
+    fun setIslandLyric(lyricLine: String) = mainHandler.post {
+        val clean = lyricLine.trim()
+        if (clean == currentIslandLyric) return@post
+        if (clean.isNotEmpty()) {
+            if (!isScreenInteractive()) return@post
+            val now = System.currentTimeMillis()
+            if (now - lastIslandLyricUpdatedAt < 250L) return@post
+            lastIslandLyricUpdatedAt = now
+        }
+        currentIslandLyric = clean
+        islandController?.updateLiveLyric(clean)
+    }
+
+    fun previewIsland(durationMs: Long = 4200L) = mainHandler.post {
+        syncIslandState()
+        islandController?.triggerPreview(durationMs)
+    }
+
     fun updateMetadata(metadata: TrackMetadataPayload) {
         mainHandler.post {
             currentMetadata = metadata
@@ -1069,6 +1145,25 @@ class EchoPlaybackService : MediaSessionService() {
         }
     }
 
+    private fun syncIslandState() {
+        val meta = currentMetadata
+        val playing = if (::exoPlayer.isInitialized) exoPlayer.isPlaying else false
+        val dur = if (::exoPlayer.isInitialized) {
+            exoPlayer.duration.takeIf { it != C.TIME_UNSET && it > 0L } ?: (meta?.durationMs ?: 0L)
+        } else {
+            meta?.durationMs ?: 0L
+        }
+        islandController?.updateTrack(
+            title = meta?.title ?: getString(R.string.app_name),
+            artist = meta?.artist ?: getString(R.string.widget_idle_subtitle),
+            artwork = currentArtworkBitmap,
+            accentColor = currentAccentColor,
+            isPlaying = playing,
+            isFavorite = isCurrentFavorite,
+            durationMs = dur,
+        )
+    }
+
     private fun syncWidgetState() {
         val meta = currentMetadata
         val playing = if (::exoPlayer.isInitialized) exoPlayer.isPlaying else false
@@ -1081,6 +1176,7 @@ class EchoPlaybackService : MediaSessionService() {
             accentColor = currentAccentColor,
             isFavorite = isCurrentFavorite,
         )
+        syncIslandState()
     }
 
     fun snapshotState(): Map<String, Any> {
@@ -1198,6 +1294,24 @@ class EchoPlaybackService : MediaSessionService() {
 
         @Volatile
         private var sharedAudioCache: SimpleCache? = null
+
+        @Volatile
+        private var appInForegroundState: Boolean = true
+
+        fun setAppInForeground(foreground: Boolean) {
+            appInForegroundState = foreground
+            activeService?.islandController?.setAppInForeground(foreground)
+        }
+
+        fun shouldUsePromotedLiveUpdate(sdkInt: Int, canPostPromoted: Boolean): Boolean {
+            return sdkInt >= 36 && canPostPromoted
+        }
+
+        fun formatShortCriticalTitle(rawTitle: String): String {
+            val clean = rawTitle.trim()
+            if (clean.length <= 18) return clean
+            return clean.take(17) + "…"
+        }
 
         fun isActivelyPlaying(): Boolean {
             return activeService?.isCurrentlyActive() == true

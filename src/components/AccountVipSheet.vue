@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { Icon } from '@iconify/vue';
 import iconCheck from '@iconify/icons-tabler/check';
 import iconPlus from '@iconify/icons-tabler/plus';
+import iconMinus from '@iconify/icons-tabler/minus';
 import iconRefresh from '@iconify/icons-tabler/refresh';
 import iconTrash from '@iconify/icons-tabler/trash';
 import iconSparkles from '@iconify/icons-tabler/sparkles';
@@ -22,6 +23,9 @@ import iconLanguage from '@iconify/icons-tabler/language';
 import iconMessageQuote from '@iconify/icons-tabler/blockquote';
 import iconWaveSine from '@iconify/icons-tabler/wave-sine';
 import iconVolume from '@iconify/icons-tabler/volume';
+import iconInfoCircle from '@iconify/icons-tabler/info-circle';
+import iconEye from '@iconify/icons-tabler/eye';
+import iconBroadcast from '@iconify/icons-tabler/broadcast';
 import type { AudioQuality } from '@/types/music';
 import type { EqPresetId } from '@/native/echoPlayer';
 import { useAccountsStore } from '@/stores/accounts';
@@ -78,10 +82,20 @@ const showBackupPanel = ref(false);
 const importJsonText = ref('');
 const importingBackup = ref(false);
 const notifGranted = ref(true);
+const overlayGranted = ref(false);
+const pendingEnableIsland = ref(false);
+const showOemIslandHint = ref(false);
 const cacheUsedMb = ref('0.0');
+const cacheUsedBytes = ref(0);
+const cacheMaxBytes = ref(300 * 1024 * 1024);
 const clearingCache = ref(false);
 const checkingUpdate = ref(false);
 const appVersion = ref(FALLBACK_APP_VERSION);
+
+const cacheUsagePercent = computed(() => {
+  if (cacheMaxBytes.value <= 0) return 0;
+  return Math.min(100, Math.max(0, Math.round((cacheUsedBytes.value / cacheMaxBytes.value) * 100)));
+});
 
 const dragSheet = useDraggableSheet({
   detents: [0.60, 0.92],
@@ -110,15 +124,48 @@ function switchTab(next: ProfileSectionTab) {
 }
 
 async function refreshDeviceStats() {
-  const [perm, cache, ver] = await Promise.all([
+  const [perm, overlay, cache, ver] = await Promise.all([
     echoSystem.checkNotificationPermission(),
+    echoSystem.checkOverlayPermission(),
     echoPlayer.getAudioCacheStats(),
     getCurrentAppVersion(),
   ]);
   notifGranted.value = perm.granted;
+  overlayGranted.value = overlay;
+  cacheUsedBytes.value = cache.usedBytes;
+  cacheMaxBytes.value = cache.maxBytes || 300 * 1024 * 1024;
   cacheUsedMb.value = (cache.usedBytes / (1024 * 1024)).toFixed(1);
   appVersion.value = ver;
 }
+
+async function handleVisibilityResume() {
+  if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+  if (!ui.accountSheetOpen) return;
+  const granted = await echoSystem.checkOverlayPermission();
+  overlayGranted.value = granted;
+  if (granted && pendingEnableIsland.value) {
+    pendingEnableIsland.value = false;
+    settings.dynamicIslandEnabled = true;
+    await echoPlayer.setIslandConfig({
+      enabled: true,
+      showLyric: settings.dynamicIslandShowLyric,
+      offsetYDp: settings.dynamicIslandOffsetYDp,
+    });
+    void echoPlayer.previewIsland(3600);
+  }
+}
+
+onMounted(() => {
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', handleVisibilityResume);
+  }
+});
+
+onUnmounted(() => {
+  if (typeof document !== 'undefined') {
+    document.removeEventListener('visibilitychange', handleVisibilityResume);
+  }
+});
 
 watch(
   () => ui.accountSheetOpen,
@@ -278,6 +325,65 @@ async function handleOpenAppBatterySettings() {
   await echoSystem.openAppDetailsSettings();
 }
 
+async function handleToggleDynamicIsland(ev: Event) {
+  const checked = (ev.target as HTMLInputElement).checked;
+  echoSystem.haptic('selection');
+  if (!checked) {
+    pendingEnableIsland.value = false;
+    settings.dynamicIslandEnabled = false;
+    return;
+  }
+  const granted = await echoSystem.checkOverlayPermission();
+  overlayGranted.value = granted;
+  if (!granted) {
+    settings.dynamicIslandEnabled = false;
+    (ev.target as HTMLInputElement).checked = false;
+    pendingEnableIsland.value = true;
+    ui.showToast(t('settings.dynamicIslandGrantToast'), 3200);
+    await echoSystem.openOverlaySettings();
+    return;
+  }
+  pendingEnableIsland.value = false;
+  settings.dynamicIslandEnabled = true;
+  await echoPlayer.setIslandConfig({
+    enabled: true,
+    showLyric: settings.dynamicIslandShowLyric,
+    offsetYDp: settings.dynamicIslandOffsetYDp,
+  });
+  void echoPlayer.previewIsland(3600);
+}
+
+async function handleGrantOverlayPermission() {
+  echoSystem.haptic('light');
+  pendingEnableIsland.value = true;
+  ui.showToast(t('settings.dynamicIslandGrantToast'), 3200);
+  await echoSystem.openOverlaySettings();
+}
+
+function nudgeIslandOffset(delta: number) {
+  echoSystem.haptic('selection');
+  settings.dynamicIslandOffsetYDp = Math.max(-8, Math.min(28, settings.dynamicIslandOffsetYDp + delta));
+  if (overlayGranted.value) {
+    void echoPlayer.previewIsland(2800);
+  }
+}
+
+async function handlePreviewDynamicIsland() {
+  echoSystem.haptic('light');
+  const granted = await echoSystem.checkOverlayPermission();
+  overlayGranted.value = granted;
+  if (!granted) {
+    await handleGrantOverlayPermission();
+    return;
+  }
+  await echoPlayer.setIslandConfig({
+    enabled: settings.dynamicIslandEnabled,
+    showLyric: settings.dynamicIslandShowLyric,
+    offsetYDp: settings.dynamicIslandOffsetYDp,
+  });
+  await echoPlayer.previewIsland(4200);
+}
+
 async function handleClearAudioCache() {
   if (clearingCache.value) return;
   echoSystem.haptic('medium');
@@ -341,8 +447,10 @@ async function handleCheckUpdate() {
       customMirror: settings.customUpdateMirror,
     });
     if (res && res.hasUpdate) {
+      ui.availableUpdateVersion = res.latestVersion;
       ui.updateReleaseInfo = res;
     } else {
+      ui.availableUpdateVersion = '';
       const via = res?.checkedVia ? ` (${res.checkedVia})` : '';
       ui.showToast(`${t('settings.upToDate', { ver: appVersion.value })}${via}`);
     }
@@ -993,14 +1101,109 @@ async function openAuthorProfile() {
                 </div>
               </section>
 
-              <!-- Group B: Universal Android Media Controls, Transparent OEM Whitelist Note, Cache & Backup -->
+              <!-- Group B: Melune Dynamic Island, System Media Controls, Smart Cache, Backup & Auto-Update -->
               <section class="space-y-2">
                 <div class="text-[12px] font-semibold uppercase tracking-wide text-[var(--text-secondary)] px-2">
                   {{ t('settings.groupSystem') }}
                 </div>
                 <div class="rounded-[22px] bg-[var(--bg-card)] overflow-hidden divide-y divide-[var(--hairline)] shadow-xs">
-                  <div class="px-4 py-3 space-y-2.5">
-                    <div class="flex items-start gap-2">
+                  <!-- 1. Built-in Melune Native Dynamic Island (Floating Cutout Capsule) -->
+                  <div class="px-4 py-3.5 space-y-2.5">
+                    <div class="flex items-start justify-between gap-3">
+                      <div class="flex items-start gap-2.5 min-w-0 flex-1">
+                        <Icon :icon="iconBroadcast" class="w-4 h-4 am-accent-text shrink-0 mt-0.5" />
+                        <div class="min-w-0 flex-1">
+                          <div class="flex items-center gap-1.5 flex-wrap">
+                            <span class="text-[14.5px] font-medium text-[var(--text-primary)] leading-snug">
+                              {{ t('settings.dynamicIsland') }}
+                            </span>
+                            <span
+                              class="px-1.5 py-0.5 rounded-md text-[10px] font-semibold leading-none shrink-0"
+                              :class="
+                                overlayGranted
+                                  ? 'bg-[#34c759]/14 text-[#2fb350]'
+                                  : 'bg-[#ff9500]/14 text-[#e08200]'
+                              "
+                            >
+                              {{ overlayGranted ? t('settings.dynamicIslandReady') : t('settings.dynamicIslandNeedPerm') }}
+                            </span>
+                          </div>
+                          <div class="text-[11px] text-[var(--text-secondary)] leading-relaxed mt-0.5">
+                            {{ t('settings.dynamicIslandSub') }}
+                          </div>
+                        </div>
+                      </div>
+                      <input
+                        type="checkbox"
+                        class="ios-switch mt-0.5"
+                        :checked="settings.dynamicIslandEnabled"
+                        @change="handleToggleDynamicIsland"
+                      />
+                    </div>
+
+                    <div
+                      v-if="settings.dynamicIslandEnabled"
+                      class="rounded-[16px] bg-[var(--bg-subtle)]/55 px-3 py-2.5 space-y-2.5"
+                    >
+                      <button
+                        v-if="!overlayGranted"
+                        type="button"
+                        class="w-full h-8 rounded-xl am-accent-bg text-white text-[12px] font-semibold border-0 am-tap"
+                        @click="handleGrantOverlayPermission"
+                      >
+                        {{ t('settings.dynamicIslandGrant') }}
+                      </button>
+
+                      <label class="flex items-center justify-between gap-3 cursor-pointer">
+                        <div class="min-w-0">
+                          <div class="text-[13px] font-medium text-[var(--text-primary)] leading-snug">
+                            {{ t('settings.dynamicIslandLyric') }}
+                          </div>
+                          <div class="text-[10.5px] text-[var(--text-secondary)] leading-snug mt-0.5">
+                            {{ t('settings.dynamicIslandLyricSub') }}
+                          </div>
+                        </div>
+                        <input v-model="settings.dynamicIslandShowLyric" type="checkbox" class="ios-switch scale-90 origin-right" />
+                      </label>
+
+                      <div class="pt-2 am-hairline-t flex items-center justify-between gap-2">
+                        <span class="text-[12px] font-medium text-[var(--text-secondary)] truncate">
+                          {{ t('settings.dynamicIslandOffset') }}
+                        </span>
+                        <div class="flex items-center gap-1.5 shrink-0">
+                          <button
+                            type="button"
+                            class="w-7 h-7 rounded-full bg-[var(--bg-card)] text-[var(--text-primary)] border-0 inline-flex items-center justify-center am-tap shadow-xs"
+                            @click="nudgeIslandOffset(-2)"
+                          >
+                            <Icon :icon="iconMinus" class="w-3.5 h-3.5" />
+                          </button>
+                          <span class="min-w-[42px] text-center text-[12px] font-semibold text-[var(--text-primary)] tabular-nums">
+                            {{ settings.dynamicIslandOffsetYDp }}dp
+                          </span>
+                          <button
+                            type="button"
+                            class="w-7 h-7 rounded-full bg-[var(--bg-card)] text-[var(--text-primary)] border-0 inline-flex items-center justify-center am-tap shadow-xs"
+                            @click="nudgeIslandOffset(2)"
+                          >
+                            <Icon :icon="iconPlus" class="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            class="ml-1 px-2.5 h-7 rounded-full bg-[var(--bg-card)] am-accent-text text-[11.5px] font-semibold border-0 inline-flex items-center gap-1 am-tap shadow-xs"
+                            @click="handlePreviewDynamicIsland"
+                          >
+                            <Icon :icon="iconEye" class="w-3.5 h-3.5 shrink-0" />
+                            <span>{{ t('settings.dynamicIslandPreview') }}</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- 2. Lock Screen & System Live Media Controls (Compact + Collapsible OEM Note) -->
+                  <div class="px-4 py-3.5 space-y-2.5">
+                    <div class="flex items-start gap-2.5">
                       <Icon :icon="iconDeviceMobile" class="w-4 h-4 am-accent-text shrink-0 mt-0.5" />
                       <div class="min-w-0 flex-1">
                         <div class="flex items-center gap-1.5 text-[14.5px] font-medium text-[var(--text-primary)]">
@@ -1015,7 +1218,7 @@ async function openAuthorProfile() {
                     <div class="grid gap-2" :class="notifGranted ? 'grid-cols-2' : 'grid-cols-1'">
                       <button
                         type="button"
-                        class="h-8 px-3 rounded-xl text-[12px] font-semibold border-0 am-tap truncate"
+                        class="h-8.5 px-3 rounded-xl text-[12px] font-semibold border-0 am-tap truncate"
                         :class="notifGranted ? 'bg-[var(--bg-subtle)] text-[var(--text-primary)]' : 'am-accent-bg text-white'"
                         @click="handleMediaControlAction"
                       >
@@ -1024,48 +1227,76 @@ async function openAuthorProfile() {
                       <button
                         v-if="notifGranted"
                         type="button"
-                        class="h-8 px-3 rounded-xl bg-[var(--bg-subtle)] text-[var(--text-secondary)] text-[12px] font-semibold border-0 am-tap truncate"
+                        class="h-8.5 px-3 rounded-xl bg-[var(--bg-subtle)] text-[var(--text-secondary)] text-[12px] font-semibold border-0 am-tap truncate"
                         @click="handleOpenAppBatterySettings"
                       >
                         {{ t('settings.btnKeepAlive') }}
                       </button>
                     </div>
-                    <p class="m-0 px-2.5 py-2 rounded-xl bg-[var(--bg-subtle)]/55 text-[10.5px] leading-relaxed text-[var(--text-secondary)]">
+                    <button
+                      type="button"
+                      class="w-full flex items-center justify-between gap-2 pt-0.5 bg-transparent border-0 text-[11px] font-medium text-[var(--text-tertiary)] text-left"
+                      @click="echoSystem.haptic('selection'); showOemIslandHint = !showOemIslandHint"
+                    >
+                      <span class="inline-flex items-center gap-1 min-w-0 truncate">
+                        <Icon :icon="iconInfoCircle" class="w-3.5 h-3.5 shrink-0 opacity-75" />
+                        <span class="truncate">{{ t('settings.oemIslandToggle') }}</span>
+                      </span>
+                      <Icon
+                        :icon="iconChevronDown"
+                        class="w-3.5 h-3.5 shrink-0 transition-transform opacity-70"
+                        :class="{ 'rotate-180': showOemIslandHint }"
+                      />
+                    </button>
+                    <p
+                      v-if="showOemIslandHint"
+                      class="m-0 px-3 py-2 rounded-xl bg-[var(--bg-subtle)]/55 text-[11px] leading-relaxed text-[var(--text-secondary)]"
+                    >
                       {{ t('settings.oemIslandHint') }}
                     </p>
                   </div>
 
-                  <div class="px-4 py-3 flex items-center justify-between gap-3">
-                    <div class="flex items-center gap-2 min-w-0">
-                      <Icon :icon="iconDatabase" class="w-4 h-4 am-accent-text shrink-0" />
-                      <div class="min-w-0">
-                        <div class="text-[14.5px] text-[var(--text-primary)] truncate">{{ t('settings.cacheTitle') }}</div>
-                        <div class="text-[11px] text-[var(--text-secondary)] tabular-nums truncate">
-                          {{ t('settings.cacheSub', { mb: cacheUsedMb }) }}
+                  <!-- 3. Local Smart Audio Cache with Visual Progress Bar -->
+                  <div class="px-4 py-3.5 space-y-2">
+                    <div class="flex items-center justify-between gap-3">
+                      <div class="flex items-center gap-2.5 min-w-0">
+                        <Icon :icon="iconDatabase" class="w-4 h-4 am-accent-text shrink-0" />
+                        <div class="min-w-0">
+                          <div class="text-[14.5px] font-medium text-[var(--text-primary)] truncate">{{ t('settings.cacheTitle') }}</div>
+                          <div class="text-[11px] text-[var(--text-secondary)] tabular-nums truncate mt-0.5">
+                            {{ t('settings.cacheSub', { mb: cacheUsedMb }) }}
+                          </div>
                         </div>
                       </div>
+                      <button
+                        type="button"
+                        class="px-3 h-7.5 rounded-full bg-[var(--bg-subtle)] text-[12px] font-semibold text-[var(--text-primary)] border-0 am-tap shrink-0"
+                        :disabled="clearingCache"
+                        @click="handleClearAudioCache"
+                      >
+                        {{ clearingCache ? t('settings.btnClearing') : t('settings.btnClear') }}
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      class="px-3 h-7 rounded-full bg-[var(--bg-subtle)] text-[12px] font-semibold text-[var(--text-primary)] border-0 am-tap shrink-0"
-                      :disabled="clearingCache"
-                      @click="handleClearAudioCache"
-                    >
-                      {{ clearingCache ? t('settings.btnClearing') : t('settings.btnClear') }}
-                    </button>
+                    <div class="h-[5px] rounded-full bg-[var(--bg-subtle)] overflow-hidden">
+                      <div
+                        class="h-full rounded-full am-accent-bg transition-all duration-300"
+                        :style="{ width: `${cacheUsagePercent}%` }"
+                      />
+                    </div>
                   </div>
 
-                  <div class="px-4 py-3 space-y-2.5">
+                  <!-- 4. Stats & Preferences JSON Backup -->
+                  <div class="px-4 py-3.5 space-y-2.5">
                     <div class="flex items-start justify-between gap-2">
                       <div class="min-w-0 flex-1">
-                        <div class="text-[14.5px] text-[var(--text-primary)] leading-snug">{{ t('settings.backupTitle') }}</div>
+                        <div class="text-[14.5px] font-medium text-[var(--text-primary)] leading-snug">{{ t('settings.backupTitle') }}</div>
                         <div class="text-[11px] text-[var(--text-secondary)] leading-snug mt-0.5">{{ t('settings.backupSub') }}</div>
                       </div>
                     </div>
                     <div class="grid grid-cols-2 gap-2">
                       <button
                         type="button"
-                        class="h-8 px-3 rounded-xl bg-[var(--bg-subtle)] text-[12px] font-semibold am-accent-text border-0 inline-flex items-center justify-center gap-1 am-tap truncate"
+                        class="h-8.5 px-3 rounded-xl bg-[var(--bg-subtle)] text-[12px] font-semibold am-accent-text border-0 inline-flex items-center justify-center gap-1 am-tap truncate"
                         @click="handleExportBackup"
                       >
                         <Icon :icon="iconFileExport" class="w-3.5 h-3.5 shrink-0" />
@@ -1073,7 +1304,7 @@ async function openAuthorProfile() {
                       </button>
                       <button
                         type="button"
-                        class="h-8 px-3 rounded-xl bg-[var(--bg-subtle)] text-[12px] font-semibold text-[var(--text-primary)] border-0 inline-flex items-center justify-center gap-1 am-tap truncate"
+                        class="h-8.5 px-3 rounded-xl bg-[var(--bg-subtle)] text-[12px] font-semibold text-[var(--text-primary)] border-0 inline-flex items-center justify-center gap-1 am-tap truncate"
                         @click="showBackupPanel = !showBackupPanel"
                       >
                         <Icon :icon="iconFileImport" class="w-3.5 h-3.5 shrink-0" />
@@ -1098,113 +1329,116 @@ async function openAuthorProfile() {
                       </button>
                     </div>
                   </div>
+
+                  <!-- 5. Auto-Check App Updates on Cold Launch -->
+                  <label class="px-4 py-3.5 flex items-center justify-between gap-3 cursor-pointer">
+                    <div class="flex items-center gap-2.5 min-w-0">
+                      <Icon :icon="iconDownload" class="w-4 h-4 am-accent-text shrink-0" />
+                      <div class="min-w-0">
+                        <div class="text-[14.5px] font-medium text-[var(--text-primary)] leading-snug">
+                          {{ t('settings.autoCheckUpdate') }}
+                        </div>
+                        <div class="text-[11px] text-[var(--text-secondary)] leading-snug mt-0.5">
+                          {{ t('settings.autoCheckUpdateSub') }}
+                        </div>
+                      </div>
+                    </div>
+                    <input v-model="settings.autoCheckUpdate" type="checkbox" class="ios-switch" />
+                  </label>
                 </div>
               </section>
 
-              <!-- Group C: Editorial Minimalist About & Updates (Zero Nested Box Clutter) -->
+              <!-- Group C: Unified Adaptive Light/Dark Brand Flagship Card + Clean Meta List -->
               <section class="space-y-3">
-                <!-- 1. Centered Moonlit Brand Hero -->
-                <div class="relative rounded-[24px] bg-[var(--bg-card)] px-5 pt-6 pb-5 text-center shadow-xs overflow-hidden">
-                  <div
-                    class="pointer-events-none absolute -top-12 left-1/2 -translate-x-1/2 w-48 h-32 rounded-full blur-3xl opacity-22"
-                    style="background: radial-gradient(circle, #5b8cff 0%, #3456be 55%, transparent 100%);"
-                  />
-                  <div class="relative z-10 flex flex-col items-center">
-                    <PureToneMark :size="58" class="shadow-lg rounded-[15px]" />
-                    <div class="mt-3 text-[19px] font-bold tracking-tight text-[var(--text-primary)]">
-                      {{ t('app.fullName') }}
-                    </div>
-                    <p class="mt-1 text-[12.5px] text-[var(--text-secondary)] m-0 leading-relaxed">
-                      {{ t('app.slogan') }}
-                    </p>
-                    <div class="mt-2.5 inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[var(--bg-subtle)] text-[11px] font-semibold text-[var(--text-secondary)] tabular-nums">
-                      <span>v{{ appVersion }}</span>
-                      <span class="opacity-40">·</span>
-                      <span>GPL-3.0</span>
-                    </div>
-
-                    <button
-                      type="button"
-                      class="mt-4 w-full max-w-[230px] h-10 rounded-full am-accent-bg text-white text-[13.5px] font-semibold border-0 inline-flex items-center justify-center gap-1.5 shadow-xs am-tap"
-                      :disabled="checkingUpdate"
-                      @click="handleCheckUpdate"
-                    >
-                      <Icon :icon="checkingUpdate ? iconRefresh : iconDownload" class="w-4 h-4 shrink-0" :class="{ 'animate-spin': checkingUpdate }" />
-                      <span>{{ checkingUpdate ? t('about.checking') : t('about.checkUpdate') }}</span>
-                    </button>
-                  </div>
-                </div>
-
-                <!-- 1.5 Moonlit Starlight Collector Brand Philosophy Card (Zero-Truncation Editorial Design) -->
+                <!-- 1. Unified Adaptive Brand & Philosophy Card (Zero Clashing Blocks, Zero Repeated Copy) -->
                 <div
-                  class="relative rounded-[24px] px-5 py-5 overflow-hidden shadow-md text-white border border-white/12"
-                  style="background: linear-gradient(150deg, #1b2f74 0%, #101c4b 54%, #0a1233 100%);"
+                  class="ml-about-hero relative rounded-[24px] px-5 pt-6 pb-5 overflow-hidden shadow-xs"
                   data-brand-philosophy
                 >
-                  <!-- Ambient Moonlit Halo & Subtle Crescent Watermark (Zero blur-filter stall!) -->
-                  <div
-                    class="pointer-events-none absolute -top-16 -right-12 w-52 h-52 rounded-full"
-                    style="background: radial-gradient(circle, rgba(145, 192, 255, 0.24) 0%, rgba(92, 134, 248, 0.06) 52%, transparent 72%);"
-                  />
-                  <div class="pointer-events-none absolute -top-3 -right-3 opacity-[0.09]">
+                  <div class="ml-about-glow pointer-events-none absolute -top-14 -right-10 w-52 h-52 rounded-full" />
+                  <div class="ml-about-watermark pointer-events-none absolute -top-3 -right-3">
                     <PureToneMark :size="108" />
                   </div>
 
-                  <div class="relative z-10 space-y-4">
-                    <!-- Clean 2-Line Header: Brand Name Never Truncates! -->
-                    <div class="space-y-1 pb-3 border-b border-white/12">
-                      <div class="flex items-center justify-between gap-2">
-                        <span class="text-[17px] font-bold tracking-[0.10em] text-white">
-                          {{ t('app.fullName') }}
-                        </span>
-                        <span class="px-2.5 py-0.5 rounded-full bg-white/12 border border-white/15 text-[10.5px] font-semibold tracking-[0.08em] text-[#d6e7ff] shrink-0">
-                          {{ t('about.philosophyTitle') }}
-                        </span>
+                  <div class="relative z-10">
+                    <!-- Top Identity Header -->
+                    <div class="flex flex-col items-center text-center">
+                      <PureToneMark :size="56" class="shadow-md rounded-[15px]" />
+                      <div class="mt-3 text-[19px] font-bold tracking-[0.06em] ml-about-title">
+                        {{ t('app.fullName') }}
+                      </div>
+                      <div class="mt-1.5 inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full ml-about-meta-pill text-[11px] font-semibold tabular-nums">
+                        <span>v{{ appVersion }}</span>
+                        <span class="opacity-45">·</span>
+                        <span>GPL-3.0</span>
+                        <span class="opacity-45">·</span>
+                        <span>{{ t('about.philosophyTitle') }}</span>
                       </div>
                       <div
                         v-if="effectiveLocale !== 'en'"
-                        class="text-[9.5px] font-medium tracking-[0.20em] uppercase text-[#a6c2f5]/58"
+                        class="mt-1.5 text-[9.5px] font-medium tracking-[0.20em] uppercase ml-about-en"
                       >
                         {{ t('app.sloganEn') }}
                       </div>
+
+                      <!-- Dual Action Pills: Check Update (with new version badge dot) + Replay Splash -->
+                      <div class="mt-4 w-full grid grid-cols-2 gap-2.5">
+                        <button
+                          type="button"
+                          class="relative h-9.5 px-3 rounded-full am-accent-bg text-white text-[13px] font-semibold border-0 inline-flex items-center justify-center gap-1.5 shadow-xs am-tap"
+                          :disabled="checkingUpdate"
+                          @click="handleCheckUpdate"
+                        >
+                          <Icon :icon="checkingUpdate ? iconRefresh : iconDownload" class="w-4 h-4 shrink-0" :class="{ 'animate-spin': checkingUpdate }" />
+                          <span class="truncate">
+                            {{
+                              checkingUpdate
+                                ? t('about.checking')
+                                : ui.availableUpdateVersion
+                                  ? t('update.newBadge', { ver: ui.availableUpdateVersion })
+                                  : t('about.checkUpdate')
+                            }}
+                          </span>
+                          <span
+                            v-if="ui.availableUpdateVersion && !checkingUpdate"
+                            class="w-2 h-2 rounded-full bg-[#ffeb3b] shrink-0"
+                          />
+                        </button>
+                        <button
+                          type="button"
+                          class="h-9.5 px-3 rounded-full ml-about-secondary-btn text-[13px] font-semibold inline-flex items-center justify-center gap-1.5 am-tap"
+                          @click="ui.replaySplash()"
+                        >
+                          <Icon :icon="iconSparkles" class="w-3.5 h-3.5 shrink-0" />
+                          <span class="truncate">{{ t('about.replaySplash') }}</span>
+                        </button>
+                      </div>
                     </div>
 
-                    <!-- Editorial Illuminated Paragraphs -->
-                    <div class="space-y-3">
+                    <!-- Unified Divider + Full Brand Philosophy (Zero Duplicated Headings!) -->
+                    <div class="mt-5 pt-4 ml-about-divider space-y-2.5">
                       <p class="m-0 flex items-start gap-2.5">
-                        <span class="w-[22px] h-[22px] rounded-[7px] bg-white/14 border border-white/18 text-white text-[12px] font-bold inline-flex items-center justify-center shrink-0 mt-[2px]">
+                        <span class="ml-about-char w-[22px] h-[22px] rounded-[7px] text-[12px] font-bold inline-flex items-center justify-center shrink-0 mt-[2px]">
                           {{ t('about.miChar') }}
                         </span>
-                        <span class="text-[13px] leading-[1.72] text-[#e2eeff]/88">
+                        <span class="text-[13px] leading-[1.70] ml-about-copy">
                           {{ t('about.miDesc') }}
                         </span>
                       </p>
                       <p class="m-0 flex items-start gap-2.5">
-                        <span class="w-[22px] h-[22px] rounded-[7px] bg-white/14 border border-white/18 text-white text-[12px] font-bold inline-flex items-center justify-center shrink-0 mt-[2px]">
+                        <span class="ml-about-char w-[22px] h-[22px] rounded-[7px] text-[12px] font-bold inline-flex items-center justify-center shrink-0 mt-[2px]">
                           {{ t('about.yinChar') }}
                         </span>
-                        <span class="text-[13px] leading-[1.72] text-[#e2eeff]/88">
+                        <span class="text-[13px] leading-[1.70] ml-about-copy">
                           {{ t('about.yinDesc') }}
                         </span>
                       </p>
-                      <p class="m-0 pt-0.5 text-[13px] leading-[1.75] text-[#cfe0ff]/80">
+                      <p class="m-0 pt-0.5 text-[12.5px] leading-[1.72] ml-about-vision">
                         {{ t('about.vision') }}
                       </p>
-                    </div>
-
-                    <!-- Closing Manifesto Quote + Full-Width Frosted Replay Pill -->
-                    <div class="pt-3.5 border-t border-white/12 space-y-3">
-                      <p class="text-[14px] font-semibold tracking-[0.06em] text-white leading-relaxed m-0">
+                      <p class="m-0 pt-2 text-[13.5px] font-semibold tracking-[0.04em] ml-about-title text-center">
                         {{ t('about.closing') }}
                       </p>
-                      <button
-                        type="button"
-                        class="w-full h-9 rounded-full bg-white/12 border border-white/18 text-[12px] font-semibold text-[#e6f0ff] inline-flex items-center justify-center gap-1.5 am-tap"
-                        @click="ui.replaySplash()"
-                      >
-                        <Icon :icon="iconSparkles" class="w-3.5 h-3.5 text-[#a8cbff] shrink-0" />
-                        <span>{{ t('about.replaySplash') }}</span>
-                      </button>
                     </div>
                   </div>
                 </div>
@@ -1310,11 +1544,8 @@ async function openAuthorProfile() {
                   </button>
                 </div>
 
-                <!-- 3. Quiet Editorial Footer -->
-                <div class="px-3 pt-1 pb-2 text-center space-y-1">
-                  <div class="text-[10px] font-semibold tracking-[0.14em] uppercase text-[var(--text-tertiary)]/75">
-                    {{ t('app.sloganEn') }}
-                  </div>
+                <!-- 3. Quiet Editorial Footer (No Duplicated English Tagline) -->
+                <div class="px-3 pt-1 pb-2 text-center">
                   <p class="text-[11px] text-[var(--text-tertiary)] leading-relaxed m-0">
                     {{ t('about.thanks') }}
                   </p>
@@ -1329,6 +1560,86 @@ async function openAuthorProfile() {
 </template>
 
 <style scoped>
+.ml-about-hero {
+  background: linear-gradient(158deg, #edf2ff 0%, #f7f9ff 50%, #ffffff 100%);
+  border: 1px solid rgba(52, 86, 190, 0.14);
+}
+.ml-about-glow {
+  background: radial-gradient(circle, rgba(91, 140, 255, 0.16) 0%, rgba(52, 86, 190, 0.04) 55%, transparent 74%);
+}
+.ml-about-watermark {
+  opacity: 0.055;
+}
+.ml-about-title {
+  color: #151c33;
+}
+.ml-about-meta-pill {
+  background: rgba(52, 86, 190, 0.09);
+  color: #3a5296;
+}
+.ml-about-en {
+  color: rgba(52, 86, 190, 0.56);
+}
+.ml-about-secondary-btn {
+  background: rgba(52, 86, 190, 0.09);
+  border: 1px solid rgba(52, 86, 190, 0.16);
+  color: #2b4cb2;
+}
+.ml-about-divider {
+  border-top: 1px solid rgba(52, 86, 190, 0.12);
+}
+.ml-about-char {
+  background: rgba(52, 86, 190, 0.10);
+  border: 1px solid rgba(52, 86, 190, 0.18);
+  color: #2b4cb2;
+}
+.ml-about-copy {
+  color: #36415c;
+}
+.ml-about-vision {
+  color: #57637f;
+}
+
+:global(.dark) .ml-about-hero {
+  background: linear-gradient(158deg, #1b2c68 0%, #121c44 52%, #0e1428 100%);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+:global(.dark) .ml-about-glow {
+  background: radial-gradient(circle, rgba(145, 192, 255, 0.24) 0%, rgba(92, 134, 248, 0.06) 52%, transparent 72%);
+}
+:global(.dark) .ml-about-watermark {
+  opacity: 0.09;
+}
+:global(.dark) .ml-about-title {
+  color: #ffffff;
+}
+:global(.dark) .ml-about-meta-pill {
+  background: rgba(255, 255, 255, 0.12);
+  color: #d6e7ff;
+}
+:global(.dark) .ml-about-en {
+  color: rgba(166, 194, 245, 0.62);
+}
+:global(.dark) .ml-about-secondary-btn {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.18);
+  color: #e6f0ff;
+}
+:global(.dark) .ml-about-divider {
+  border-top-color: rgba(255, 255, 255, 0.12);
+}
+:global(.dark) .ml-about-char {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.18);
+  color: #ffffff;
+}
+:global(.dark) .ml-about-copy {
+  color: rgba(226, 238, 255, 0.88);
+}
+:global(.dark) .ml-about-vision {
+  color: rgba(207, 224, 255, 0.80);
+}
+
 .ios-switch {
   appearance: none;
   -webkit-appearance: none;

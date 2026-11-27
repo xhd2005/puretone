@@ -43,6 +43,8 @@ export interface EchoSystemPluginInterface {
   checkNotificationPermission(): Promise<{ granted: boolean; systemEnabled: boolean; runtimeGranted: boolean }>;
   requestNotificationPermission(): Promise<{ granted: boolean }>;
   openAppNotificationSettings(): Promise<{ opened: boolean }>;
+  checkOverlayPermission(): Promise<{ granted: boolean }>;
+  openOverlaySettings(): Promise<{ opened: boolean }>;
   openAppDetailsSettings(): Promise<{ opened: boolean }>;
   openExternalUrl(options: { url: string }): Promise<{ opened: boolean }>;
   downloadAndInstallApk(options: {
@@ -157,7 +159,7 @@ export const echoSystem = {
     if (Capacitor.isNativePlatform()) {
       return EchoSystemNative.getLaunchFlags();
     }
-    return { openNowPlaying: false, versionName: '2.4.7', versionCode: 14 };
+    return { openNowPlaying: false, versionName: '2.4.8', versionCode: 15 };
   },
 
   async checkNotificationPermission(): Promise<{ granted: boolean; systemEnabled: boolean; runtimeGranted: boolean }> {
@@ -182,6 +184,18 @@ export const echoSystem = {
   async openAppNotificationSettings(): Promise<boolean> {
     if (!Capacitor.isNativePlatform()) return false;
     const res = await EchoSystemNative.openAppNotificationSettings().catch(() => ({ opened: false }));
+    return Boolean(res?.opened);
+  },
+
+  async checkOverlayPermission(): Promise<boolean> {
+    if (!Capacitor.isNativePlatform()) return true;
+    const res = await EchoSystemNative.checkOverlayPermission().catch(() => ({ granted: false }));
+    return Boolean(res?.granted);
+  },
+
+  async openOverlaySettings(): Promise<boolean> {
+    if (!Capacitor.isNativePlatform()) return false;
+    const res = await EchoSystemNative.openOverlaySettings().catch(() => ({ opened: false }));
     return Boolean(res?.opened);
   },
 

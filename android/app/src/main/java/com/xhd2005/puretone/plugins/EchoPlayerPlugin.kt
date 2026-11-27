@@ -278,6 +278,33 @@ class EchoPlayerPlugin : Plugin(), PlayerBridgeListener {
     }
 
     @PluginMethod
+    fun setIslandConfig(call: PluginCall) {
+        val enabled = call.getBoolean("enabled", false) ?: false
+        val showLyric = call.getBoolean("showLyric", false) ?: false
+        val offsetYDp = call.getInt("offsetYDp") ?: 4
+        ensureServiceBound { svc ->
+            svc.setIslandConfig(enabled, showLyric, offsetYDp)
+            call.resolve()
+        }
+    }
+
+    @PluginMethod
+    fun setIslandLyric(call: PluginCall) {
+        val line = call.getString("line") ?: ""
+        EchoPlaybackService.activeService?.setIslandLyric(line)
+        call.resolve()
+    }
+
+    @PluginMethod
+    fun previewIsland(call: PluginCall) {
+        val durationMs = call.getInt("durationMs")?.toLong() ?: 4200L
+        ensureServiceBound { svc ->
+            svc.previewIsland(durationMs)
+            call.resolve()
+        }
+    }
+
+    @PluginMethod
     fun setEqPreset(call: PluginCall) {
         val preset = call.getString("preset") ?: "flat"
         ensureServiceBound { svc ->

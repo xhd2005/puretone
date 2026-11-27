@@ -31,6 +31,10 @@ export interface PersistedSettings {
   showTranslation: boolean;
   showCoverLyricsPreview: boolean;
   showLockScreenLyrics: boolean;
+  autoCheckUpdate: boolean;
+  dynamicIslandEnabled: boolean;
+  dynamicIslandShowLyric: boolean;
+  dynamicIslandOffsetYDp: number;
   updateMirrorMode: UpdateMirrorMode;
   customUpdateMirror: string;
 }
@@ -56,6 +60,10 @@ const DEFAULTS: PersistedSettings = {
   showCoverLyricsPreview: true,
   // Default OFF so lock-screen & live media cards stay rock-solid (no OS rate-limit freeze)
   showLockScreenLyrics: false,
+  autoCheckUpdate: true,
+  dynamicIslandEnabled: false,
+  dynamicIslandShowLyric: false,
+  dynamicIslandOffsetYDp: 4,
   updateMirrorMode: 'auto',
   customUpdateMirror: '',
 };
@@ -68,6 +76,12 @@ function sanitizeFadeMs(raw: unknown): TrackTransitionFadeMs {
 
 function sanitizeMirrorMode(raw: unknown): UpdateMirrorMode {
   return raw === 'direct' ? 'direct' : 'auto';
+}
+
+export function sanitizeIslandOffsetYDp(raw: unknown): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return DEFAULTS.dynamicIslandOffsetYDp;
+  return Math.max(-8, Math.min(28, Math.round(n)));
 }
 
 export const useSettingsStore = defineStore('settings', () => {
@@ -88,6 +102,10 @@ export const useSettingsStore = defineStore('settings', () => {
   const showTranslation = ref<boolean>(DEFAULTS.showTranslation);
   const showCoverLyricsPreview = ref<boolean>(DEFAULTS.showCoverLyricsPreview);
   const showLockScreenLyrics = ref<boolean>(DEFAULTS.showLockScreenLyrics);
+  const autoCheckUpdate = ref<boolean>(DEFAULTS.autoCheckUpdate);
+  const dynamicIslandEnabled = ref<boolean>(DEFAULTS.dynamicIslandEnabled);
+  const dynamicIslandShowLyric = ref<boolean>(DEFAULTS.dynamicIslandShowLyric);
+  const dynamicIslandOffsetYDp = ref<number>(DEFAULTS.dynamicIslandOffsetYDp);
   const updateMirrorMode = ref<UpdateMirrorMode>(DEFAULTS.updateMirrorMode);
   const customUpdateMirror = ref<string>(DEFAULTS.customUpdateMirror);
 
@@ -133,6 +151,16 @@ export const useSettingsStore = defineStore('settings', () => {
   });
   watch(showLockScreenLyrics, (enabled) => {
     if (!enabled) void echoPlayer.setLiveLyric('');
+  });
+  watch([dynamicIslandEnabled, dynamicIslandShowLyric, dynamicIslandOffsetYDp], ([enabled, showLyric, offsetYDp]) => {
+    void echoPlayer.setIslandConfig({
+      enabled,
+      showLyric,
+      offsetYDp: sanitizeIslandOffsetYDp(offsetYDp),
+    });
+    if (!enabled || !showLyric) {
+      void echoPlayer.setIslandLyric('');
+    }
   });
 
   function getLyricOffset(trackKey: string): number {
@@ -192,6 +220,10 @@ export const useSettingsStore = defineStore('settings', () => {
     showTranslation.value = saved.showTranslation ?? DEFAULTS.showTranslation;
     showCoverLyricsPreview.value = saved.showCoverLyricsPreview ?? DEFAULTS.showCoverLyricsPreview;
     showLockScreenLyrics.value = saved.showLockScreenLyrics ?? DEFAULTS.showLockScreenLyrics;
+    autoCheckUpdate.value = saved.autoCheckUpdate ?? DEFAULTS.autoCheckUpdate;
+    dynamicIslandEnabled.value = saved.dynamicIslandEnabled ?? DEFAULTS.dynamicIslandEnabled;
+    dynamicIslandShowLyric.value = saved.dynamicIslandShowLyric ?? DEFAULTS.dynamicIslandShowLyric;
+    dynamicIslandOffsetYDp.value = sanitizeIslandOffsetYDp(saved.dynamicIslandOffsetYDp);
     updateMirrorMode.value = sanitizeMirrorMode(saved.updateMirrorMode);
     customUpdateMirror.value = typeof saved.customUpdateMirror === 'string' ? saved.customUpdateMirror.trim() : '';
     hydrated = true;
@@ -200,6 +232,11 @@ export const useSettingsStore = defineStore('settings', () => {
     void echoPlayer.setEqPreset(eqPreset.value);
     void echoPlayer.setTransitionFadeMs(transitionFadeMs.value);
     void echoPlayer.setVolumeLeveling(volumeLeveling.value);
+    void echoPlayer.setIslandConfig({
+      enabled: dynamicIslandEnabled.value,
+      showLyric: dynamicIslandShowLyric.value,
+      offsetYDp: dynamicIslandOffsetYDp.value,
+    });
   }
 
   async function persist() {
@@ -226,6 +263,10 @@ export const useSettingsStore = defineStore('settings', () => {
       showTranslation,
       showCoverLyricsPreview,
       showLockScreenLyrics,
+      autoCheckUpdate,
+      dynamicIslandEnabled,
+      dynamicIslandShowLyric,
+      dynamicIslandOffsetYDp,
       updateMirrorMode,
       customUpdateMirror,
     ],
@@ -254,6 +295,10 @@ export const useSettingsStore = defineStore('settings', () => {
       showTranslation: showTranslation.value,
       showCoverLyricsPreview: showCoverLyricsPreview.value,
       showLockScreenLyrics: showLockScreenLyrics.value,
+      autoCheckUpdate: autoCheckUpdate.value,
+      dynamicIslandEnabled: dynamicIslandEnabled.value,
+      dynamicIslandShowLyric: dynamicIslandShowLyric.value,
+      dynamicIslandOffsetYDp: sanitizeIslandOffsetYDp(dynamicIslandOffsetYDp.value),
       updateMirrorMode: updateMirrorMode.value,
       customUpdateMirror: customUpdateMirror.value.trim(),
     };
@@ -281,6 +326,12 @@ export const useSettingsStore = defineStore('settings', () => {
     if (typeof saved.showTranslation === 'boolean') showTranslation.value = saved.showTranslation;
     if (typeof saved.showCoverLyricsPreview === 'boolean') showCoverLyricsPreview.value = saved.showCoverLyricsPreview;
     if (typeof saved.showLockScreenLyrics === 'boolean') showLockScreenLyrics.value = saved.showLockScreenLyrics;
+    if (typeof saved.autoCheckUpdate === 'boolean') autoCheckUpdate.value = saved.autoCheckUpdate;
+    if (typeof saved.dynamicIslandEnabled === 'boolean') dynamicIslandEnabled.value = saved.dynamicIslandEnabled;
+    if (typeof saved.dynamicIslandShowLyric === 'boolean') dynamicIslandShowLyric.value = saved.dynamicIslandShowLyric;
+    if (saved.dynamicIslandOffsetYDp !== undefined) {
+      dynamicIslandOffsetYDp.value = sanitizeIslandOffsetYDp(saved.dynamicIslandOffsetYDp);
+    }
     if (saved.updateMirrorMode !== undefined) updateMirrorMode.value = sanitizeMirrorMode(saved.updateMirrorMode);
     if (typeof saved.customUpdateMirror === 'string') customUpdateMirror.value = saved.customUpdateMirror.trim();
     applyThemeClass();
@@ -288,6 +339,11 @@ export const useSettingsStore = defineStore('settings', () => {
     void echoPlayer.setEqPreset(eqPreset.value);
     void echoPlayer.setTransitionFadeMs(transitionFadeMs.value);
     void echoPlayer.setVolumeLeveling(volumeLeveling.value);
+    void echoPlayer.setIslandConfig({
+      enabled: dynamicIslandEnabled.value,
+      showLyric: dynamicIslandShowLyric.value,
+      offsetYDp: dynamicIslandOffsetYDp.value,
+    });
     await echoSystem.kvSetJson(STORAGE_KEY, exportSnapshot());
   }
 
@@ -309,6 +365,10 @@ export const useSettingsStore = defineStore('settings', () => {
     showTranslation,
     showCoverLyricsPreview,
     showLockScreenLyrics,
+    autoCheckUpdate,
+    dynamicIslandEnabled,
+    dynamicIslandShowLyric,
+    dynamicIslandOffsetYDp,
     updateMirrorMode,
     customUpdateMirror,
     isDark,

@@ -4,17 +4,19 @@
 
 # 弥音 · MELUNE
 
-**余音绵延，音乐无界。**  
+**简体中文** | [English](./README.en.md) | [繁體中文](./README.zh-TW.md)
+
+**音乐终会停止，余音却可以绵延。**  
 *Where Music Becomes Memory.*
 
-极简无广告 · iOS 26 Liquid Glass 美学 · 原生 Media3 息屏连播与歌曲过渡 · 简/繁/英三语开源 Android 音乐客户端
+极简无广告 · iOS 26 Liquid Glass 美学 · 原生 Media3 息屏连播 · 内置弥音灵动岛 · 简/繁/英三语开源 Android 音乐客户端
 
 [![Release](https://img.shields.io/github/v/release/xhd2005/puretone?style=flat-square&color=3456be)](https://github.com/xhd2005/puretone/releases/latest)
 [![Android CI](https://img.shields.io/github/actions/workflow/status/xhd2005/puretone/android-apk.yml?branch=main&style=flat-square&label=Android%20APK%20CI)](https://github.com/xhd2005/puretone/actions)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-2fb350?style=flat-square)](https://www.gnu.org/licenses/gpl-3.0)
 [![Platform](https://img.shields.io/badge/Android-10%20~%2017-1a2d70?style=flat-square)](#)
 
-[📥 下载最新正式版 APK](https://github.com/xhd2005/puretone/releases/latest) · [✨ 核心特性](#-核心特性) · [👤 作者介绍](#-作者介绍) · [⚖️ 合规与免责声明](#%EF%B8%8F-合规与完整免责声明)
+[📥 下载最新正式版 APK](https://github.com/xhd2005/puretone/releases/latest) · [✨ 核心特性](#-核心特性) · [🙏 特别鸣谢](#-特别鸣谢) · [👤 作者介绍](#-作者介绍) · [⚖️ 合规与免责声明](#%EF%B8%8F-合规与完整免责声明)
 
 </div>
 
@@ -24,37 +26,53 @@
 
 > **弥**，是绵延，是充盈，也是声音穿越时间后的余韵。  
 > **音**，是旋律，是情感，也是每个人独一无二的精神世界。  
-> **MELUNE**（*Melody* × *Lune*）象征月亮、时间与记忆——**音乐终会停止，余音却可以绵延。**
+> 弥音，希望让每一段旋律都拥有自己的空间，让每一种情绪都能找到共鸣。  
+> **MELUNE**（*Melody* × *Lune*）—— **音乐终会停止，余音却可以绵延。**
 
 ---
 
 ## ✨ 核心特性
 
 ### 🎧 原生息屏连播、丝滑歌曲过渡与零爆音 DSP
-- **原生 3 曲前瞻播放队列**：自动将后续曲目预解析写入 Jetpack Media3 `ExoPlayer` 原生播放列表，锁屏骑行、蓝牙耳机切歌（0ms 响应）与户外弱网抖动均不断播。
-- **丝滑歌曲过渡（Track Fade）**：单引擎余弦曲线曲末淡出 + 新曲柔和淡入（可选关闭 / `1.5s` / `3s` / `5s`），暂停与恢复同样具备 220ms 微淡入淡出，零耗电增量。
-- **响度均衡（Volume Leveling）**：内置 Android `LoudnessEnhancer`，温和拉平不同年代曲目的音量落差，骑行戴耳机无需反复调音量。
-- **专业减法均衡器（Zero-Clip Subtractive EQ）**：全部 5 档（原声 / 人声 / 低音 / 深夜 / 现场）严格遵循 `<= 0 dB` 减法调音，搭配 70ms 柔降 / 120ms 淡入，彻底消除播放中切档爆鸣。
+- **原生 3 曲前瞻播放队列**：自动将后续曲目预解析写入 Jetpack Media3 `ExoPlayer` 原生播放列表，锁屏骑行、蓝牙耳机切歌（0ms 响应）与户外弱网抖动均不断播，附带 300MB LRU 本地智能音频缓存。
+- **丝滑歌曲过渡（Track Fade）**：单引擎余弦曲线曲末淡出 + 新曲柔和淡入（关闭 / `1.5s` / `3s` / `5s`），暂停与恢复同样具备微淡入淡出。
+- **响度均衡（Volume Leveling）与专业减法均衡器（EQ）**：5 档调音（原声 / 人声 / 低音 / 深夜 / 现场）严格遵循 `<= 0 dB` 无削波减法曲线，切档柔降零爆鸣。
 
-### 🎵 深度音乐探索与互动
-- **EchoMusic 风格歌手主页与专辑详情**：高清歌手头像、作品/专辑/粉丝统计、生日、完整简介弹窗、关注/取消关注、热门/最新单曲（支持页内实时筛选）、专辑网格及专辑详情页；支持合唱多歌手选择器。
-- **歌曲「详情 / 评论」双页签面板**：实时评论数角标、全部评论 / 分类评论 / 热词评论三级切换、原地展开楼中楼回复，并支持已登录账号发表评论与回复。
-- **多榜单热搜榜 + 4 页签搜索**：搜索空态呈现 Top 20 多分类热搜榜卡片；搜索结果支持「单曲 / 歌手 / 专辑 / 歌单」4 页签一键直达。
-- **逐字 KRC 歌词 + 时间轴微调 + 副歌标记**：3 档歌词字号、单曲记忆 ±0.5s 词轴微调，以及基于 `song_climax` 的进度条副歌高潮微光标记与一键跳转。
+### 🏝️ 内置「弥音灵动岛」原生悬浮胶囊 & Android 16/17 Live Updates
+- **全机型开箱即用**：基于标准 Android 悬浮窗（`SYSTEM_ALERT_WINDOW`）打造的原生 Kotlin 悬浮灵动岛，无需 Root、无需 Shizuku、绝不伪装任何第三方包名，兼容 vivo OriginOS、OPPO ColorOS、小米 HyperOS、三星 OneUI 与原生 Pixel。
+- **双形态 + 动态取色展开卡**：默认**经典双翼挖孔胶囊**（左圆形专辑封面 + 中间挖孔留白 + 右三柱动态波形），设置内可选开启**「胶囊显示当前歌词」**单行滚动模式与挖孔垂直微调（附 4 秒一键实时预览）；轻触胶囊展开动态取色播控卡，回到弥音前台或暂停时自动隐身。
+- **修复并完整适配 Android 16/17 官方 Live Updates** 与 **4×2 动态取色桌面小组件**（含红心联动）。
 
-### 💎 iOS 26 Liquid Glass 交互与海报工坊
-- **月夜流光无缝开屏页**：Android 12–17 系统底色 `#0B1336` 与应用内月光晕开动画零闪屏衔接，并行水合、轻点即跳。
-- **5 套策展级 1080P 分享海报工坊**：月夜玻璃 / 黑胶唱片（同心纹路与唱针）/ 拍立得留白 / 电影字幕 / 弥音月色，100% 所见即所得 Canvas 渲染、支持双语翻译与日期戳开关。
-- **简中 / 繁中 / 英文三语全量适配**：动态 `<html lang>` 与三语专属字族栈、双行防溢出设置布局、全本地化 iOS 屏幕时间风格听歌统计图表。
-- **Android 16/17 官方 Live Updates 与动态 4×2 桌面小组件**：遵循 Media3 与 `POST_PROMOTED_NOTIFICATIONS` 标准，并附带随封面动态取色的 4×2 桌面播控小组件（含红心联动）。
+### 🎵 零闪烁播放页、逐字 KRC 歌词与深度互动
+- **单常驻封面层 + 单调时钟逐字歌词**：彻底消除页面切换与歌词播放闪烁；支持 3 档字号、单曲记忆词轴微调（`±0.5s` / `±1s`）与副歌高潮（`song_climax`）进度条微光标记及一键跳转。
+- **120fps 直绘 5 模板歌词海报工坊**：月夜玻璃 / 黑胶唱片 / 拍立得 / 电影字幕 / 弥音月色，LRU 封面缓存 + 离屏柔焦，滑动与换模如丝般顺滑，1080P 高清保存或系统分享。
+- **歌曲详情与 4 模式评论系统**：支持推荐 / 最热 / 最新 / 热词筛选、楼中楼智能去重清洗、百余种酷狗表情原生 Emoji 映射，以及已登录账号实时点赞与回复。
+- **云端歌单全套管理 & 底部批量接管栏**：新建、编辑、删除、收藏/取消收藏、批量加歌与批量移出；配合歌手主页、专辑详情与多榜单热搜畅听全库。
+
+### 🚀 自动检查更新、大陆多路加速与旧机型全兼容
+- **冷启动自动检查更新**：每次打开应用在开屏退场后静默检测新版并平滑弹出更新卡片，明确区分「稍后提醒」与「忽略此版本」，内置多组大陆加速节点与 SHA-256 完整性校验。
+- **Android 11 / ColorOS 11.1 旧版 WebView 全量兼容管线**：全链静态样式门禁消除老版本 Chrome 内核渲染异常，简 / 繁 / 英三语与日夜主题自然自适应。
 
 ---
 
 ## 📥 安装与无损覆盖升级
 
-1. 前往 [GitHub Releases](https://github.com/xhd2005/puretone/releases/latest) 下载 **`PureTone-v2.4.0-release.apk`**（底层保留包名 `com.xhd2005.puretone` 与永久正式签名证书，已安装 `v2.2.1` / `v2.3.0` 的设备可**直接覆盖安装，免重新登录、数据 100% 保留**）。
-2. 为保证息屏骑行连播与锁屏播控体验，请在系统设置中为「弥音 / MELUNE」开启**允许通知**并关闭电池后台限制。
-3. **关于部分定制 ROM 顶部音乐原子岛说明**：如 OriginOS 等系统对顶部音乐原子岛实行硬编码商业包名白名单，弥音坚持 100% 开源合规绝不伪装他人包名；推荐添加「**弥音 4×2 动态桌面小组件**」以获得同样精致的桌面快捷播控。
+1. 前往 [GitHub Releases](https://github.com/xhd2005/puretone/releases/latest) 下载 **`MELUNE-v2.4.8-release.apk`**（底层永久保留包名 `com.xhd2005.puretone` 与 50 年正式签名证书，旧版本可**直接无损覆盖安装，免重新登录、数据 100% 保留**）。
+2. 为保证息屏连播与锁屏播控体验，请在系统设置中为「弥音 · MELUNE」开启**允许通知**并关闭电池后台限制。
+3. **关于开启顶部灵动岛**：前往「个人中心 → 偏好设置 → **弥音灵动岛**」开启开关并授予悬浮窗权限，即可在 OriginOS / ColorOS / HyperOS 等任意机型体验贴合前摄挖孔的悬浮灵动岛（弥音坚持 100% 开源合规，不伪装商业包名绕过厂商原子岛白名单）。
+
+---
+
+## 🙏 特别鸣谢
+
+弥音 · MELUNE 的诞生与持续打磨，离不开以下优秀开源项目、设计灵感与热心伙伴的支持：
+
+| 致谢对象 | 贡献与启发 |
+| --- | --- |
+| [**MakcRe/KuGouMusicApi**](https://github.com/MakcRe/KuGouMusicApi) | 提供完整详尽的酷狗概念版端侧接口协议与加密签名技术参考，是本项目纯端侧直连架构的重要基石。 |
+| [**EchoMusic**](https://github.com/EchoMusicApp) | 带来极具启发的移动端播放器交互思路、歌手主页编排与极简音乐产品美学灵感。 |
+| **核心开源技术社区** | 感谢 [Android Jetpack Media3](https://developer.android.com/media/media3)、[Capacitor](https://capacitorjs.com/)、[Vue 3](https://vuejs.org/)、[Pinia](https://pinia.vuejs.org/)、[Tailwind CSS](https://tailwindcss.com/)、[Iconify](https://iconify.design/)、[OkHttp](https://square.github.io/okhttp/) 与 [Vitest](https://vitest.dev/) 维护者们的卓越工程基建。 |
+| **真机测试伙伴与早期用户** | 衷心感谢每一位协助在 **Android 11 / ColorOS 11.1**、**vivo OriginOS**、**小米 HyperOS** 等多款真机上反复实测、截图定位闪烁/卡顿/评论与原子岛细节并提出宝贵建议的朋友与用户，每一次迭代都凝聚着大家的真实反馈！ |
 
 ---
 
@@ -68,7 +86,7 @@
 ## 🛠️ 技术栈与本地构建
 
 - **前端与跨端**：Vue 3 + TypeScript + Pinia + Vue Router + Tailwind CSS v4 + Capacitor 7
-- **原生音频层**：Kotlin + Android Jetpack Media3 (`ExoPlayer` 1.5.1 + `MediaSessionService` + 300MB LRU 磁盘缓存 + `Equalizer` / `LoudnessEnhancer`)
+- **原生音频与悬浮层**：Kotlin + Android Jetpack Media3（`ExoPlayer` 1.5.1 + `MediaSessionService` + 300MB LRU 磁盘缓存 + `Equalizer` / `LoudnessEnhancer`）+ 原生 `WindowManager` 灵动岛引擎
 - **本地构建命令**：
   ```bash
   pnpm install

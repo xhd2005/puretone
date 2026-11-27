@@ -96,6 +96,9 @@ export interface EchoPlayerPluginInterface {
   setFavoriteState(options: { favorite: boolean }): Promise<void>;
   setPlayModeState(options: { mode: string }): Promise<void>;
   setLiveLyric(options: { line: string }): Promise<void>;
+  setIslandConfig(options: { enabled: boolean; showLyric: boolean; offsetYDp: number }): Promise<void>;
+  setIslandLyric(options: { line: string }): Promise<void>;
+  previewIsland(options?: { durationMs?: number }): Promise<void>;
   setEqPreset(options: { preset: EqPresetId }): Promise<void>;
   setTransitionFadeMs(options: { fadeMs: number }): Promise<void>;
   setVolumeLeveling(options: { enabled: boolean }): Promise<void>;
@@ -355,6 +358,15 @@ export const echoPlayer = {
   },
   async setLiveLyric(line: string) {
     if (Capacitor.isNativePlatform()) return EchoPlayerNative.setLiveLyric({ line }).catch(() => {});
+  },
+  async setIslandConfig(config: { enabled: boolean; showLyric: boolean; offsetYDp: number }) {
+    if (Capacitor.isNativePlatform()) return EchoPlayerNative.setIslandConfig(config).catch(() => {});
+  },
+  async setIslandLyric(line: string) {
+    if (Capacitor.isNativePlatform()) return EchoPlayerNative.setIslandLyric({ line }).catch(() => {});
+  },
+  async previewIsland(durationMs = 4200) {
+    if (Capacitor.isNativePlatform()) return EchoPlayerNative.previewIsland({ durationMs }).catch(() => {});
   },
   async setEqPreset(preset: EqPresetId) {
     if (Capacitor.isNativePlatform()) return EchoPlayerNative.setEqPreset({ preset }).catch(() => {});

@@ -63,6 +63,7 @@ export const usePlayerStore = defineStore('player', () => {
   let prefetchTimer: ReturnType<typeof setTimeout> | null = null;
   let shuffleNextIndexCache = -1;
   let lastLiveLyricSent = '';
+  let lastIslandLyricSent = '';
   let lastStatSampleAt = 0;
 
   const settingsStore = useSettingsStore();
@@ -145,7 +146,9 @@ export const usePlayerStore = defineStore('player', () => {
   }
 
   function syncLockScreenLyricLine(posMs: number) {
-    if (!settingsStore.showLockScreenLyrics || !isPlaying.value) return;
+    const needLock = settingsStore.showLockScreenLyrics;
+    const needIsland = settingsStore.dynamicIslandEnabled && settingsStore.dynamicIslandShowLyric;
+    if ((!needLock && !needIsland) || !isPlaying.value) return;
     const lines = lyrics.value.lines;
     if (!lines.length) return;
     let lo = 0;
@@ -161,9 +164,14 @@ export const usePlayerStore = defineStore('player', () => {
       }
     }
     const text = ans >= 0 ? lines[ans].text.trim() : '';
-    if (text && text !== lastLiveLyricSent) {
+    if (!text) return;
+    if (needLock && text !== lastLiveLyricSent) {
       lastLiveLyricSent = text;
       void echoPlayer.setLiveLyric(text);
+    }
+    if (needIsland && text !== lastIslandLyricSent) {
+      lastIslandLyricSent = text;
+      void echoPlayer.setIslandLyric(text);
     }
   }
 
@@ -412,6 +420,7 @@ export const usePlayerStore = defineStore('player', () => {
       }
       shuffleNextIndexCache = -1;
       lastLiveLyricSent = '';
+      lastIslandLyricSent = '';
       lastStatSampleAt = 0;
       currentTimeMs.value = 0;
       isPlaying.value = true;
@@ -501,6 +510,7 @@ export const usePlayerStore = defineStore('player', () => {
 
     const seq = ++trackSeq;
     lastLiveLyricSent = '';
+    lastIslandLyricSent = '';
     lastStatSampleAt = 0;
     isResolving.value = true;
     isBuffering.value = true;

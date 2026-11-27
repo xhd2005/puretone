@@ -1,6 +1,7 @@
 package com.xhd2005.puretone
 
 import com.xhd2005.puretone.player.EchoPlaybackService
+import com.xhd2005.puretone.player.MeluneIslandController
 import com.xhd2005.puretone.plugins.EchoHttpPlugin
 import com.xhd2005.puretone.plugins.EchoSystemPlugin
 import org.junit.Assert.assertEquals
@@ -71,5 +72,42 @@ class PureTonePluginUnitTest {
         assertTrue("Midpoint fade should be roughly half volume ($mid)", mid in 0.45f..0.60f)
         val tail = EchoPlaybackService.computeTrackFadeFactor(0L, 3000L)
         assertEquals(0.08f, tail, 0.001f)
+    }
+
+    @Test
+    fun meluneIslandHelpers_enforceZeroIntrusionVisibilityAndBounds() {
+        // Hidden when disabled or missing overlay permission
+        assertFalse(MeluneIslandController.shouldShowIsland(false, true, false, true, false))
+        assertFalse(MeluneIslandController.shouldShowIsland(true, false, false, true, false))
+        // Hidden while MELUNE is in foreground unless explicit preview is active
+        assertFalse(MeluneIslandController.shouldShowIsland(true, true, true, true, false))
+        assertTrue(MeluneIslandController.shouldShowIsland(true, true, true, false, true))
+        // Visible in background only when actively playing
+        assertTrue(MeluneIslandController.shouldShowIsland(true, true, false, true, false))
+        assertFalse(MeluneIslandController.shouldShowIsland(true, true, false, false, false))
+
+        assertEquals(-8, MeluneIslandController.clampOffsetYDp(-40))
+        assertEquals(28, MeluneIslandController.clampOffsetYDp(99))
+        assertEquals(10, MeluneIslandController.clampOffsetYDp(10))
+
+        assertEquals(140, MeluneIslandController.computeCompactWidthDp(false))
+        assertEquals(226, MeluneIslandController.computeCompactWidthDp(true))
+
+        assertEquals("0:00", MeluneIslandController.formatIslandTime(0L))
+        assertEquals("3:45", MeluneIslandController.formatIslandTime(225_000L))
+    }
+
+    @Test
+    fun liveUpdatesPromotion_avoidsMutualExclusionOnAndroid16Plus() {
+        assertFalse(EchoPlaybackService.shouldUsePromotedLiveUpdate(35, true))
+        assertFalse(EchoPlaybackService.shouldUsePromotedLiveUpdate(36, false))
+        assertTrue(EchoPlaybackService.shouldUsePromotedLiveUpdate(36, true))
+        assertTrue(EchoPlaybackService.shouldUsePromotedLiveUpdate(37, true))
+
+        assertEquals("月光奏鸣曲", EchoPlaybackService.formatShortCriticalTitle("  月光奏鸣曲  "))
+        val longTitle = "A Very Long Track Title That Exceeds Status Chip Width"
+        val shortened = EchoPlaybackService.formatShortCriticalTitle(longTitle)
+        assertEquals(18, shortened.length)
+        assertTrue(shortened.endsWith("…"))
     }
 }
