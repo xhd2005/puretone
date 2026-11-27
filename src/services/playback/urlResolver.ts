@@ -1,4 +1,5 @@
 import type { AudioQuality, Song } from '@/types/music';
+import { echoPlayer } from '@/native/echoPlayer';
 import { kugouApi } from '@/services/kugou/kugouEngine';
 import { extractUrlsFromPayload, getPinnedSource, getTrackKey, resolveUnblockedUrl } from './unblockEngine';
 
@@ -69,6 +70,22 @@ function isTrialSnippet(body: any, expectedDurationSec: number): boolean {
   return Boolean(body?.is_try_listen === 1 || body?.free_part === 1);
 }
 
+async function tryResolveLocalCachedStream(
+  song: Song,
+  preferredQuality: AudioQuality,
+): Promise<ResolvedStream | null> {
+  const cacheKey = getTrackKey(song);
+  if (!cacheKey) return null;
+  const cached = await echoPlayer.isTrackCached(cacheKey).catch(() => false);
+  if (!cached) return null;
+  return {
+    url: `https://melune.local.cache/${encodeURIComponent(cacheKey)}`,
+    quality: preferredQuality,
+    sourceTag: '本地缓存',
+    isUnblocked: false,
+  };
+}
+
 export async function resolvePlayableStream(
   song: Song,
   preferredQuality: AudioQuality = '320',
@@ -80,6 +97,12 @@ export async function resolvePlayableStream(
   if (!options.bypassCache) {
     const cached = getCachedResolvedStream(song, preferredQuality);
     if (cached) return cached;
+  }
+
+  // 0a-offline. When device is strictly offline, immediately serve local Media3 SimpleCache audio!
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    const offlineLocal = await tryResolveLocalCachedStream(song, preferredQuality);
+    if (offlineLocal) return offlineLocal;
   }
 
   // 0b. Pinned unblock source always wins
@@ -158,6 +181,12 @@ export async function resolvePlayableStream(
       setCachedResolvedStream(song, preferredQuality, res);
       return res;
     }
+  }
+
+  // 3. Offline / weak-network local cache fallback (Media3 SimpleCache up to 2GB+!)
+  const offlineFallback = await tryResolveLocalCachedStream(song, preferredQuality);
+  if (offlineFallback) {
+    return offlineFallback;
   }
 
   if (fallbackTrial) {

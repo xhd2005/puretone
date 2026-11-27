@@ -64,6 +64,7 @@ export type EqPresetId = 'flat' | 'vocal' | 'bass' | 'night' | 'live';
 export interface AudioCacheStats {
   usedBytes: number;
   maxBytes: number;
+  maxMb: number;
 }
 
 export interface EchoPlayerPluginInterface {
@@ -96,14 +97,13 @@ export interface EchoPlayerPluginInterface {
   setFavoriteState(options: { favorite: boolean }): Promise<void>;
   setPlayModeState(options: { mode: string }): Promise<void>;
   setLiveLyric(options: { line: string }): Promise<void>;
-  setIslandConfig(options: { enabled: boolean; showLyric: boolean; offsetYDp: number }): Promise<void>;
-  setIslandLyric(options: { line: string }): Promise<void>;
-  previewIsland(options?: { durationMs?: number }): Promise<void>;
   setEqPreset(options: { preset: EqPresetId }): Promise<void>;
   setTransitionFadeMs(options: { fadeMs: number }): Promise<void>;
   setVolumeLeveling(options: { enabled: boolean }): Promise<void>;
   updateMetadata(options: PlayerTrackMetadata): Promise<void>;
   getAudioCacheStats(): Promise<AudioCacheStats>;
+  setAudioCacheMaxMb(options: { maxMb: number }): Promise<AudioCacheStats>;
+  isTrackCached(options: { cacheKey: string }): Promise<{ cached: boolean }>;
   clearAudioCache(): Promise<{ cleared: boolean }>;
   getState(): Promise<PlayerStateSnapshot>;
   addListener(eventName: 'timeUpdate', listener: (ev: PlayerTimeEvent) => void): Promise<PluginListenerHandle>;
@@ -359,15 +359,6 @@ export const echoPlayer = {
   async setLiveLyric(line: string) {
     if (Capacitor.isNativePlatform()) return EchoPlayerNative.setLiveLyric({ line }).catch(() => {});
   },
-  async setIslandConfig(config: { enabled: boolean; showLyric: boolean; offsetYDp: number }) {
-    if (Capacitor.isNativePlatform()) return EchoPlayerNative.setIslandConfig(config).catch(() => {});
-  },
-  async setIslandLyric(line: string) {
-    if (Capacitor.isNativePlatform()) return EchoPlayerNative.setIslandLyric({ line }).catch(() => {});
-  },
-  async previewIsland(durationMs = 4200) {
-    if (Capacitor.isNativePlatform()) return EchoPlayerNative.previewIsland({ durationMs }).catch(() => {});
-  },
   async setEqPreset(preset: EqPresetId) {
     if (Capacitor.isNativePlatform()) return EchoPlayerNative.setEqPreset({ preset }).catch(() => {});
   },
@@ -383,9 +374,30 @@ export const echoPlayer = {
   },
   async getAudioCacheStats(): Promise<AudioCacheStats> {
     if (Capacitor.isNativePlatform()) {
-      return EchoPlayerNative.getAudioCacheStats().catch(() => ({ usedBytes: 0, maxBytes: 300 * 1024 * 1024 }));
+      return EchoPlayerNative.getAudioCacheStats().catch(() => ({
+        usedBytes: 0,
+        maxBytes: 2048 * 1024 * 1024,
+        maxMb: 2048,
+      }));
     }
-    return { usedBytes: 0, maxBytes: 300 * 1024 * 1024 };
+    return { usedBytes: 0, maxBytes: 2048 * 1024 * 1024, maxMb: 2048 };
+  },
+  async setAudioCacheMaxMb(maxMb: number): Promise<AudioCacheStats> {
+    const clean = maxMb === 0 || maxMb === 500 || maxMb === 1024 || maxMb === 2048 || maxMb === 4096 ? maxMb : 2048;
+    const maxBytes = clean <= 0 ? 0 : clean * 1024 * 1024;
+    if (Capacitor.isNativePlatform()) {
+      return EchoPlayerNative.setAudioCacheMaxMb({ maxMb: clean }).catch(() => ({
+        usedBytes: 0,
+        maxBytes,
+        maxMb: clean,
+      }));
+    }
+    return { usedBytes: 0, maxBytes, maxMb: clean };
+  },
+  async isTrackCached(cacheKey: string): Promise<boolean> {
+    if (!cacheKey || !Capacitor.isNativePlatform()) return false;
+    const res = await EchoPlayerNative.isTrackCached({ cacheKey }).catch(() => ({ cached: false }));
+    return Boolean(res?.cached);
   },
   async clearAudioCache(): Promise<boolean> {
     if (Capacitor.isNativePlatform()) {

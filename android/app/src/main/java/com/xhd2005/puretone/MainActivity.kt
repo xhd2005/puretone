@@ -32,14 +32,8 @@ class MainActivity : BridgeActivity() {
         })
     }
 
-    override fun onResume() {
-        super.onResume()
-        EchoPlaybackService.setAppInForeground(true)
-    }
-
     override fun onPause() {
         super.onPause()
-        EchoPlaybackService.setAppInForeground(false)
         // Keep lightweight WebView JS timers alive while music is actively playing in background
         // (e.g. screen-off pocket playback during cycling) so upcoming tracks keep pre-resolving.
         if (EchoPlaybackService.isActivelyPlaying()) {

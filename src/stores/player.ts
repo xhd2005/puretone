@@ -8,6 +8,11 @@ import { clearCachedResolvedStream, resolvePlayableStream } from '@/services/pla
 import { fetchLyricsForSong } from '@/services/playback/krcParser';
 import { DEFAULT_APPLE_PALETTE, extractPaletteFromCoverUrl } from '@/services/playback/coverPalette';
 import { getTrackKey, pinSourceForSong, resolveCandidateUrl } from '@/services/playback/unblockEngine';
+import {
+  prependSongsToPlaylistSnapshot,
+  removeSongsFromPlaylistSnapshot,
+  stampPlaylistSnapshotVersion,
+} from '@/services/playback/playlistSnapshotCache';
 import { useSettingsStore } from './settings';
 import { useStatsStore } from './stats';
 import { useUiStore } from './ui';
@@ -63,7 +68,6 @@ export const usePlayerStore = defineStore('player', () => {
   let prefetchTimer: ReturnType<typeof setTimeout> | null = null;
   let shuffleNextIndexCache = -1;
   let lastLiveLyricSent = '';
-  let lastIslandLyricSent = '';
   let lastStatSampleAt = 0;
 
   const settingsStore = useSettingsStore();
@@ -146,9 +150,7 @@ export const usePlayerStore = defineStore('player', () => {
   }
 
   function syncLockScreenLyricLine(posMs: number) {
-    const needLock = settingsStore.showLockScreenLyrics;
-    const needIsland = settingsStore.dynamicIslandEnabled && settingsStore.dynamicIslandShowLyric;
-    if ((!needLock && !needIsland) || !isPlaying.value) return;
+    if (!settingsStore.showLockScreenLyrics || !isPlaying.value) return;
     const lines = lyrics.value.lines;
     if (!lines.length) return;
     let lo = 0;
@@ -164,14 +166,9 @@ export const usePlayerStore = defineStore('player', () => {
       }
     }
     const text = ans >= 0 ? lines[ans].text.trim() : '';
-    if (!text) return;
-    if (needLock && text !== lastLiveLyricSent) {
+    if (text && text !== lastLiveLyricSent) {
       lastLiveLyricSent = text;
       void echoPlayer.setLiveLyric(text);
-    }
-    if (needIsland && text !== lastIslandLyricSent) {
-      lastIslandLyricSent = text;
-      void echoPlayer.setIslandLyric(text);
     }
   }
 
@@ -420,7 +417,6 @@ export const usePlayerStore = defineStore('player', () => {
       }
       shuffleNextIndexCache = -1;
       lastLiveLyricSent = '';
-      lastIslandLyricSent = '';
       lastStatSampleAt = 0;
       currentTimeMs.value = 0;
       isPlaying.value = true;
@@ -510,7 +506,6 @@ export const usePlayerStore = defineStore('player', () => {
 
     const seq = ++trackSeq;
     lastLiveLyricSent = '';
-    lastIslandLyricSent = '';
     lastStatSampleAt = 0;
     isResolving.value = true;
     isBuffering.value = true;
@@ -855,6 +850,19 @@ export const usePlayerStore = defineStore('player', () => {
     }
   }
 
+  function syncFavoriteSnapshotVersion(favKey: string) {
+    if (!favKey) return;
+    void kugouApi
+      .getUserPlaylists()
+      .then((pls) => {
+        const fav = pls.find((p) => p.isFavorite || p.listId === favoriteListId.value);
+        if (fav?.totalVer) {
+          void stampPlaylistSnapshotVersion(favKey, fav.totalVer, fav.trackCount);
+        }
+      })
+      .catch(() => {});
+  }
+
   async function toggleFavorite(song: Song) {
     const ui = useUiStore();
     const key = song.hash?.toLowerCase();
@@ -863,6 +871,7 @@ export const usePlayerStore = defineStore('player', () => {
       ui.showToast('请先登录并加载“我喜欢”歌单');
       return;
     }
+    const favSnapKey = favoriteGlobalId.value || favoriteListId.value;
 
     if (favoriteHashes.value.has(key)) {
       echoSystem.haptic('selection');
@@ -878,6 +887,8 @@ export const usePlayerStore = defineStore('player', () => {
         favoriteHashes.value.delete(key);
         favoriteFileIds.value.delete(key);
         favoriteHashes.value = new Set(favoriteHashes.value);
+        await removeSongsFromPlaylistSnapshot(favSnapKey, [{ ...song, fileId }]);
+        syncFavoriteSnapshotVersion(favSnapKey);
         ui.showToast(fileId ? '已从“我喜欢”移除' : '已取消红心标记');
       } catch {
         ui.showToast('取消收藏失败，请检查网络');
@@ -890,8 +901,10 @@ export const usePlayerStore = defineStore('player', () => {
       await kugouApi.addTracksToPlaylist(favoriteListId.value, [song]);
       favoriteHashes.value.add(key);
       favoriteHashes.value = new Set(favoriteHashes.value);
+      await prependSongsToPlaylistSnapshot(favSnapKey, [song]);
       ui.showToast('已收藏到“我喜欢”');
       void refreshFavoriteFileId(key);
+      syncFavoriteSnapshotVersion(favSnapKey);
     } catch {
       ui.showToast('收藏失败，请检查登录状态');
     }

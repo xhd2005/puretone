@@ -2,13 +2,21 @@ import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import type { PlaylistSummary, Song } from '@/types/music';
 import { kugouApi } from '@/services/kugou/kugouEngine';
+import { echoSystem } from '@/native/echoSystem';
 import {
   backfillMissingPlaylistCovers,
   getPlaylistCacheKey,
 } from '@/services/playback/playlistCoverResolver';
-import { deletePlaylistSnapshot } from '@/services/playback/playlistSnapshotCache';
+import {
+  deletePlaylistSnapshot,
+  prependSongsToPlaylistSnapshot,
+  removeSongsFromPlaylistSnapshot,
+  stampPlaylistSnapshotVersion,
+} from '@/services/playback/playlistSnapshotCache';
 import { useAccountsStore } from './accounts';
 import { usePlayerStore } from './player';
+
+const PLAYLISTS_LIST_PREFIX = 'playlists.list.v1:';
 
 export const usePlaylistsStore = defineStore('playlists', () => {
   const playlists = ref<PlaylistSummary[]>([]);
@@ -64,16 +72,34 @@ export const usePlaylistsStore = defineStore('playlists', () => {
       reset();
       return [];
     }
+
+    // 1. Instant 0ms SQLite cache hydration on cold start / account switch (zero skeleton wait!)
+    if (loadedUserId.value !== uid || playlists.value.length === 0) {
+      const cached = await echoSystem.kvGetJson<PlaylistSummary[]>(`${PLAYLISTS_LIST_PREFIX}${uid}`, []);
+      if (Array.isArray(cached) && cached.length > 0) {
+        playlists.value = cached;
+        loadedUserId.value = uid;
+      }
+    }
+
     if (!force && loadedUserId.value === uid && playlists.value.length > 0) {
       return playlists.value;
     }
-    loading.value = true;
+
+    const hadLocal = playlists.value.length > 0;
+    if (!hadLocal) loading.value = true;
     try {
       const list = await kugouApi.getUserPlaylists();
-      playlists.value = list;
-      loadedUserId.value = uid;
-      void backfillMissingPlaylistCovers(list);
-      return list;
+      if (list.length > 0 || !hadLocal) {
+        playlists.value = list;
+        loadedUserId.value = uid;
+        void echoSystem.kvSetJson(`${PLAYLISTS_LIST_PREFIX}${uid}`, list);
+        void backfillMissingPlaylistCovers(list);
+      }
+      return playlists.value;
+    } catch {
+      // Offline / weak network: gracefully keep cached playlist list
+      return playlists.value;
     } finally {
       loading.value = false;
     }
@@ -168,7 +194,8 @@ export const usePlaylistsStore = defineStore('playlists', () => {
     if (found) {
       found.trackCount += validSongs.length;
     }
-    void deletePlaylistSnapshot(getPlaylistCacheKey(playlist));
+    const cacheKey = getPlaylistCacheKey(playlist);
+    await prependSongsToPlaylistSnapshot(cacheKey, validSongs);
     if (playlist.isFavorite) {
       const nextFav = new Set(player.favoriteHashes);
       for (const s of validSongs) {
@@ -176,11 +203,18 @@ export const usePlaylistsStore = defineStore('playlists', () => {
       }
       player.favoriteHashes = nextFav;
     }
+    // Lightweight metadata refresh stamps the new cloud totalVer so next open stays 0-sync!
+    void fetchPlaylists(true).then((freshList) => {
+      const fresh = freshList.find((p) => p.listId === targetListId || p.id === playlist.id);
+      if (fresh?.totalVer) {
+        void stampPlaylistSnapshotVersion(cacheKey, fresh.totalVer, fresh.trackCount);
+      }
+    });
     return validSongs.length;
   }
 
   async function removeSongsFromPlaylist(
-    playlist: Pick<PlaylistSummary, 'id' | 'listId' | 'isFavorite'>,
+    playlist: Pick<PlaylistSummary, 'id' | 'listId' | 'isFavorite'> & { globalCollectionId?: string },
     songs: Song[],
   ): Promise<number> {
     const targetListId = playlist.listId || playlist.id;
@@ -196,6 +230,12 @@ export const usePlaylistsStore = defineStore('playlists', () => {
     if (found) {
       found.trackCount = Math.max(0, found.trackCount - fileIds.length);
     }
+    const cacheKey = getPlaylistCacheKey({
+      id: playlist.id,
+      listId: playlist.listId,
+      globalCollectionId: playlist.globalCollectionId || found?.globalCollectionId || '',
+    });
+    await removeSongsFromPlaylistSnapshot(cacheKey, songs);
     if (playlist.isFavorite) {
       const nextFav = new Set(player.favoriteHashes);
       for (const s of songs) {
@@ -203,6 +243,12 @@ export const usePlaylistsStore = defineStore('playlists', () => {
       }
       player.favoriteHashes = nextFav;
     }
+    void fetchPlaylists(true).then((freshList) => {
+      const fresh = freshList.find((p) => p.listId === targetListId || p.id === playlist.id);
+      if (fresh?.totalVer) {
+        void stampPlaylistSnapshotVersion(cacheKey, fresh.totalVer, fresh.trackCount);
+      }
+    });
     return fileIds.length;
   }
 

@@ -1,7 +1,6 @@
 package com.xhd2005.puretone
 
 import com.xhd2005.puretone.player.EchoPlaybackService
-import com.xhd2005.puretone.player.MeluneIslandController
 import com.xhd2005.puretone.plugins.EchoHttpPlugin
 import com.xhd2005.puretone.plugins.EchoSystemPlugin
 import org.junit.Assert.assertEquals
@@ -75,26 +74,18 @@ class PureTonePluginUnitTest {
     }
 
     @Test
-    fun meluneIslandHelpers_enforceZeroIntrusionVisibilityAndBounds() {
-        // Hidden when disabled or missing overlay permission
-        assertFalse(MeluneIslandController.shouldShowIsland(false, true, false, true, false))
-        assertFalse(MeluneIslandController.shouldShowIsland(true, false, false, true, false))
-        // Hidden while MELUNE is in foreground unless explicit preview is active
-        assertFalse(MeluneIslandController.shouldShowIsland(true, true, true, true, false))
-        assertTrue(MeluneIslandController.shouldShowIsland(true, true, true, false, true))
-        // Visible in background only when actively playing
-        assertTrue(MeluneIslandController.shouldShowIsland(true, true, false, true, false))
-        assertFalse(MeluneIslandController.shouldShowIsland(true, true, false, false, false))
+    fun audioCacheLimitHelpers_defaultTo2GbAndValidateAllTiers() {
+        assertEquals(2048, EchoPlaybackService.DEFAULT_AUDIO_CACHE_MAX_MB)
+        assertEquals(500, EchoPlaybackService.sanitizeAudioCacheMaxMb(500))
+        assertEquals(1024, EchoPlaybackService.sanitizeAudioCacheMaxMb(1024))
+        assertEquals(2048, EchoPlaybackService.sanitizeAudioCacheMaxMb(2048))
+        assertEquals(4096, EchoPlaybackService.sanitizeAudioCacheMaxMb(4096))
+        assertEquals(0, EchoPlaybackService.sanitizeAudioCacheMaxMb(0))
+        assertEquals(2048, EchoPlaybackService.sanitizeAudioCacheMaxMb(777))
 
-        assertEquals(-8, MeluneIslandController.clampOffsetYDp(-40))
-        assertEquals(28, MeluneIslandController.clampOffsetYDp(99))
-        assertEquals(10, MeluneIslandController.clampOffsetYDp(10))
-
-        assertEquals(140, MeluneIslandController.computeCompactWidthDp(false))
-        assertEquals(226, MeluneIslandController.computeCompactWidthDp(true))
-
-        assertEquals("0:00", MeluneIslandController.formatIslandTime(0L))
-        assertEquals("3:45", MeluneIslandController.formatIslandTime(225_000L))
+        assertEquals(0L, EchoPlaybackService.audioCacheMbToBytes(0))
+        assertEquals(2048L * 1024L * 1024L, EchoPlaybackService.audioCacheMbToBytes(2048))
+        assertEquals(4096L * 1024L * 1024L, EchoPlaybackService.audioCacheMbToBytes(4096))
     }
 
     @Test

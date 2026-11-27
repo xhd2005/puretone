@@ -9,7 +9,7 @@
 **音乐终会停止，余音却可以绵延。**  
 *Where Music Becomes Memory.*
 
-极简无广告 · iOS 26 Liquid Glass 美学 · 原生 Media3 息屏连播 · 内置弥音灵动岛 · 简/繁/英三语开源 Android 音乐客户端
+极简无广告 · iOS 26 Liquid Glass 美学 · 原生 Media3 息屏连播与 2 GB 可调离线缓存 · 简/繁/英三语开源 Android 音乐客户端
 
 [![Release](https://img.shields.io/github/v/release/xhd2005/puretone?style=flat-square&color=3456be)](https://github.com/xhd2005/puretone/releases/latest)
 [![Android CI](https://img.shields.io/github/actions/workflow/status/xhd2005/puretone/android-apk.yml?branch=main&style=flat-square&label=Android%20APK%20CI)](https://github.com/xhd2005/puretone/actions)
@@ -34,14 +34,14 @@
 ## ✨ 核心特性
 
 ### 🎧 原生息屏连播、丝滑歌曲过渡与零爆音 DSP
-- **原生 3 曲前瞻播放队列**：自动将后续曲目预解析写入 Jetpack Media3 `ExoPlayer` 原生播放列表，锁屏骑行、蓝牙耳机切歌（0ms 响应）与户外弱网抖动均不断播，附带 300MB LRU 本地智能音频缓存。
+- **原生 3 曲前瞻播放队列**：自动将后续曲目预解析写入 Jetpack Media3 `ExoPlayer` 原生播放列表，锁屏骑行、蓝牙耳机切歌（0ms 响应）与户外弱网抖动均不断播。
 - **丝滑歌曲过渡（Track Fade）**：单引擎余弦曲线曲末淡出 + 新曲柔和淡入（关闭 / `1.5s` / `3s` / `5s`），暂停与恢复同样具备微淡入淡出。
 - **响度均衡（Volume Leveling）与专业减法均衡器（EQ）**：5 档调音（原声 / 人声 / 低音 / 深夜 / 现场）严格遵循 `<= 0 dB` 无削波减法曲线，切档柔降零爆鸣。
 
-### 🏝️ 内置「弥音灵动岛」原生悬浮胶囊 & Android 16/17 Live Updates
-- **全机型开箱即用**：基于标准 Android 悬浮窗（`SYSTEM_ALERT_WINDOW`）打造的原生 Kotlin 悬浮灵动岛，无需 Root、无需 Shizuku、绝不伪装任何第三方包名，兼容 vivo OriginOS、OPPO ColorOS、小米 HyperOS、三星 OneUI 与原生 Pixel。
-- **双形态 + 动态取色展开卡**：默认**经典双翼挖孔胶囊**（左圆形专辑封面 + 中间挖孔留白 + 右三柱动态波形），设置内可选开启**「胶囊显示当前歌词」**单行滚动模式与挖孔垂直微调（附 4 秒一键实时预览）；轻触胶囊展开动态取色播控卡，回到弥音前台或暂停时自动隐身。
-- **修复并完整适配 Android 16/17 官方 Live Updates** 与 **4×2 动态取色桌面小组件**（含红心联动）。
+### 💾 2 GB 可调本地智能缓存、离线直放与歌单 0 秒秒开
+- **5 档可调音频缓存 + 弱网离线直放**：默认 **2 GB**（支持 `500 MB / 1 GB / 2 GB / 4 GB / 无上限` 实时热调节，调低上限自动按 LRU 淘汰最久未听曲目）；地铁弱网或飞行模式下自动直放本地已缓存歌曲，零流量零报错。
+- **歌单智能版本校验与原地增量快照**：本地 SQLite 快照自动比对云端 `totalVer` 与曲目数，未变动时 **0 网络请求瞬间打开「我喜欢」与全部歌单**；本机点红心或加歌原地增量写入快照，不再触发全量重拉；同时支持首页每日推荐与歌单目录持久化秒开与存储空间分项透明清理。
+- **Android 16/17 官方 Live Updates** 与 **4×2 动态取色桌面小组件**（含红心联动）。
 
 ### 🎵 零闪烁播放页、逐字 KRC 歌词与深度互动
 - **单常驻封面层 + 单调时钟逐字歌词**：彻底消除页面切换与歌词播放闪烁；支持 3 档字号、单曲记忆词轴微调（`±0.5s` / `±1s`）与副歌高潮（`song_climax`）进度条微光标记及一键跳转。
@@ -57,9 +57,9 @@
 
 ## 📥 安装与无损覆盖升级
 
-1. 前往 [GitHub Releases](https://github.com/xhd2005/puretone/releases/latest) 下载 **`MELUNE-v2.4.8-release.apk`**（底层永久保留包名 `com.xhd2005.puretone` 与 50 年正式签名证书，旧版本可**直接无损覆盖安装，免重新登录、数据 100% 保留**）。
+1. 前往 [GitHub Releases](https://github.com/xhd2005/puretone/releases/latest) 下载 **`MELUNE-v2.4.9-release.apk`**（底层永久保留包名 `com.xhd2005.puretone` 与 50 年正式签名证书，旧版本可**直接无损覆盖安装，免重新登录、数据 100% 保留**）。
 2. 为保证息屏连播与锁屏播控体验，请在系统设置中为「弥音 · MELUNE」开启**允许通知**并关闭电池后台限制。
-3. **关于开启顶部灵动岛**：前往「个人中心 → 偏好设置 → **弥音灵动岛**」开启开关并授予悬浮窗权限，即可在 OriginOS / ColorOS / HyperOS 等任意机型体验贴合前摄挖孔的悬浮灵动岛（弥音坚持 100% 开源合规，不伪装商业包名绕过厂商原子岛白名单）。
+3. **关于部分定制 ROM 顶部音乐原子岛说明**：如 vivo OriginOS 等系统对顶部音乐胶囊实行硬编码商业包名白名单，弥音坚持 100% 开源合规绝不伪装他人包名；推荐添加「**弥音 4×2 动态桌面小组件**」获取随封面取色的快捷播控。
 
 ---
 
@@ -86,7 +86,7 @@
 ## 🛠️ 技术栈与本地构建
 
 - **前端与跨端**：Vue 3 + TypeScript + Pinia + Vue Router + Tailwind CSS v4 + Capacitor 7
-- **原生音频与悬浮层**：Kotlin + Android Jetpack Media3（`ExoPlayer` 1.5.1 + `MediaSessionService` + 300MB LRU 磁盘缓存 + `Equalizer` / `LoudnessEnhancer`）+ 原生 `WindowManager` 灵动岛引擎
+- **原生音频层**：Kotlin + Android Jetpack Media3（`ExoPlayer` 1.5.1 + `MediaSessionService` + 动态可调 2 GB 默认 LRU 磁盘缓存 + `Equalizer` / `LoudnessEnhancer`）
 - **本地构建命令**：
   ```bash
   pnpm install

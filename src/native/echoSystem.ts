@@ -30,11 +30,18 @@ export interface UpdateDownloadProgressEvent {
   error?: string;
 }
 
+export interface SnapshotCacheStats {
+  usedBytes: number;
+  playlistCount: number;
+}
+
 export interface EchoSystemPluginInterface {
   kvGet(options: { key: string }): Promise<{ value: string | null }>;
   kvSet(options: { key: string; value: string }): Promise<void>;
   kvDelete(options: { key: string }): Promise<void>;
   kvKeys(options: { prefix?: string }): Promise<{ keys: string[] }>;
+  getSnapshotCacheStats(): Promise<SnapshotCacheStats>;
+  clearSnapshotCache(): Promise<{ cleared: boolean }>;
   getInsets(): Promise<SafeAreaInsets>;
   setStatusBarStyle(options: { darkIcons: boolean }): Promise<void>;
   haptic(options: { style?: HapticStyle }): Promise<void>;
@@ -43,8 +50,6 @@ export interface EchoSystemPluginInterface {
   checkNotificationPermission(): Promise<{ granted: boolean; systemEnabled: boolean; runtimeGranted: boolean }>;
   requestNotificationPermission(): Promise<{ granted: boolean }>;
   openAppNotificationSettings(): Promise<{ opened: boolean }>;
-  checkOverlayPermission(): Promise<{ granted: boolean }>;
-  openOverlaySettings(): Promise<{ opened: boolean }>;
   openAppDetailsSettings(): Promise<{ opened: boolean }>;
   openExternalUrl(options: { url: string }): Promise<{ opened: boolean }>;
   downloadAndInstallApk(options: {
@@ -159,7 +164,7 @@ export const echoSystem = {
     if (Capacitor.isNativePlatform()) {
       return EchoSystemNative.getLaunchFlags();
     }
-    return { openNowPlaying: false, versionName: '2.4.8', versionCode: 15 };
+    return { openNowPlaying: false, versionName: '2.4.9', versionCode: 16 };
   },
 
   async checkNotificationPermission(): Promise<{ granted: boolean; systemEnabled: boolean; runtimeGranted: boolean }> {
@@ -187,16 +192,50 @@ export const echoSystem = {
     return Boolean(res?.opened);
   },
 
-  async checkOverlayPermission(): Promise<boolean> {
-    if (!Capacitor.isNativePlatform()) return true;
-    const res = await EchoSystemNative.checkOverlayPermission().catch(() => ({ granted: false }));
-    return Boolean(res?.granted);
+  async getSnapshotCacheStats(): Promise<SnapshotCacheStats> {
+    if (Capacitor.isNativePlatform()) {
+      return EchoSystemNative.getSnapshotCacheStats().catch(() => ({ usedBytes: 0, playlistCount: 0 }));
+    }
+    const store = getWebStorage();
+    if (!store) return { usedBytes: 0, playlistCount: 0 };
+    let usedBytes = 0;
+    let playlistCount = 0;
+    const prefixes = [
+      `${STORAGE_PREFIX}playlist.snap.v1:`,
+      `${STORAGE_PREFIX}playlists.list.v1:`,
+      `${STORAGE_PREFIX}daily.recommend.v1:`,
+      `${STORAGE_PREFIX}playlist.covers.`,
+    ];
+    for (let i = 0; i < store.length; i += 1) {
+      const k = store.key(i);
+      if (!k || !prefixes.some((p) => k.startsWith(p))) continue;
+      const v = store.getItem(k) || '';
+      usedBytes += v.length * 2;
+      if (k.startsWith(`${STORAGE_PREFIX}playlist.snap.v1:`)) playlistCount += 1;
+    }
+    return { usedBytes, playlistCount };
   },
 
-  async openOverlaySettings(): Promise<boolean> {
-    if (!Capacitor.isNativePlatform()) return false;
-    const res = await EchoSystemNative.openOverlaySettings().catch(() => ({ opened: false }));
-    return Boolean(res?.opened);
+  async clearSnapshotCache(): Promise<boolean> {
+    if (Capacitor.isNativePlatform()) {
+      const res = await EchoSystemNative.clearSnapshotCache().catch(() => ({ cleared: false }));
+      return Boolean(res?.cleared);
+    }
+    const store = getWebStorage();
+    if (!store) return true;
+    const prefixes = [
+      `${STORAGE_PREFIX}playlist.snap.v1:`,
+      `${STORAGE_PREFIX}playlists.list.v1:`,
+      `${STORAGE_PREFIX}daily.recommend.v1:`,
+      `${STORAGE_PREFIX}playlist.covers.`,
+    ];
+    const toRemove: string[] = [];
+    for (let i = 0; i < store.length; i += 1) {
+      const k = store.key(i);
+      if (k && prefixes.some((p) => k.startsWith(p))) toRemove.push(k);
+    }
+    for (const k of toRemove) store.removeItem(k);
+    return true;
   },
 
   async openAppDetailsSettings(): Promise<boolean> {

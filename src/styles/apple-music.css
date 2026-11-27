@@ -37,6 +37,25 @@
   --lg-active-pill-shadow: 0 4px 14px rgba(15, 23, 42, 0.09), inset 0 1px 0 rgba(255, 255, 255, 1);
   --lg-scrim: rgba(12, 16, 28, 0.36);
 
+  /* Unified About Brand Flagship Card (Light) */
+  --ml-about-bg: linear-gradient(158deg, #edf2ff 0%, #f7f9ff 50%, #ffffff 100%);
+  --ml-about-border: rgba(52, 86, 190, 0.14);
+  --ml-about-glow: radial-gradient(circle, rgba(91, 140, 255, 0.16) 0%, rgba(52, 86, 190, 0.04) 55%, transparent 74%);
+  --ml-about-watermark-opacity: 0.055;
+  --ml-about-title: #151c33;
+  --ml-about-meta-bg: rgba(52, 86, 190, 0.09);
+  --ml-about-meta-fg: #3a5296;
+  --ml-about-en: rgba(52, 86, 190, 0.56);
+  --ml-about-btn-bg: rgba(52, 86, 190, 0.09);
+  --ml-about-btn-border: rgba(52, 86, 190, 0.16);
+  --ml-about-btn-fg: #2b4cb2;
+  --ml-about-divider: rgba(52, 86, 190, 0.12);
+  --ml-about-char-bg: rgba(52, 86, 190, 0.10);
+  --ml-about-char-border: rgba(52, 86, 190, 0.18);
+  --ml-about-char-fg: #2b4cb2;
+  --ml-about-copy: #36415c;
+  --ml-about-vision: #57637f;
+
   --spring-ease: cubic-bezier(0.22, 1, 0.36, 1);
   --spring-bounce: cubic-bezier(0.32, 1.22, 0.42, 1);
   --ios-curve: cubic-bezier(0.28, 0.84, 0.42, 1);
@@ -68,6 +87,25 @@
   --lg-active-pill: linear-gradient(180deg, rgba(255, 255, 255, 0.20) 0%, rgba(255, 255, 255, 0.10) 100%);
   --lg-active-pill-shadow: 0 4px 14px rgba(0, 0, 0, 0.36), inset 0 1px 0 rgba(255, 255, 255, 0.28);
   --lg-scrim: rgba(0, 0, 0, 0.56);
+
+  /* Unified About Brand Flagship Card (Dark) */
+  --ml-about-bg: linear-gradient(158deg, #1b2c68 0%, #121c44 52%, #0e1428 100%);
+  --ml-about-border: rgba(255, 255, 255, 0.12);
+  --ml-about-glow: radial-gradient(circle, rgba(145, 192, 255, 0.24) 0%, rgba(92, 134, 248, 0.06) 52%, transparent 72%);
+  --ml-about-watermark-opacity: 0.09;
+  --ml-about-title: #ffffff;
+  --ml-about-meta-bg: rgba(255, 255, 255, 0.12);
+  --ml-about-meta-fg: #d6e7ff;
+  --ml-about-en: rgba(166, 194, 245, 0.62);
+  --ml-about-btn-bg: rgba(255, 255, 255, 0.12);
+  --ml-about-btn-border: rgba(255, 255, 255, 0.18);
+  --ml-about-btn-fg: #e6f0ff;
+  --ml-about-divider: rgba(255, 255, 255, 0.12);
+  --ml-about-char-bg: rgba(255, 255, 255, 0.14);
+  --ml-about-char-border: rgba(255, 255, 255, 0.18);
+  --ml-about-char-fg: #ffffff;
+  --ml-about-copy: rgba(226, 238, 255, 0.88);
+  --ml-about-vision: rgba(207, 224, 255, 0.80);
 }
 
 * {

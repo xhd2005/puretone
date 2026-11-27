@@ -1,9 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { Icon } from '@iconify/vue';
 import iconCheck from '@iconify/icons-tabler/check';
 import iconPlus from '@iconify/icons-tabler/plus';
-import iconMinus from '@iconify/icons-tabler/minus';
 import iconRefresh from '@iconify/icons-tabler/refresh';
 import iconTrash from '@iconify/icons-tabler/trash';
 import iconSparkles from '@iconify/icons-tabler/sparkles';
@@ -24,8 +23,7 @@ import iconMessageQuote from '@iconify/icons-tabler/blockquote';
 import iconWaveSine from '@iconify/icons-tabler/wave-sine';
 import iconVolume from '@iconify/icons-tabler/volume';
 import iconInfoCircle from '@iconify/icons-tabler/info-circle';
-import iconEye from '@iconify/icons-tabler/eye';
-import iconBroadcast from '@iconify/icons-tabler/broadcast';
+import iconFolder from '@iconify/icons-tabler/folder';
 import type { AudioQuality } from '@/types/music';
 import type { EqPresetId } from '@/native/echoPlayer';
 import { useAccountsStore } from '@/stores/accounts';
@@ -35,6 +33,7 @@ import {
   type AccentThemeMode,
   type AppearanceMode,
   type AppLocale,
+  type AudioCacheLimitMb,
   type LyricFontSize,
   type TrackTransitionFadeMs,
   type UpdateMirrorMode,
@@ -82,20 +81,43 @@ const showBackupPanel = ref(false);
 const importJsonText = ref('');
 const importingBackup = ref(false);
 const notifGranted = ref(true);
-const overlayGranted = ref(false);
-const pendingEnableIsland = ref(false);
 const showOemIslandHint = ref(false);
-const cacheUsedMb = ref('0.0');
 const cacheUsedBytes = ref(0);
-const cacheMaxBytes = ref(300 * 1024 * 1024);
+const cacheMaxBytes = ref(2048 * 1024 * 1024);
 const clearingCache = ref(false);
+const snapshotUsedBytes = ref(0);
+const snapshotPlaylistCount = ref(0);
+const clearingSnapshots = ref(false);
 const checkingUpdate = ref(false);
 const appVersion = ref(FALLBACK_APP_VERSION);
 
+function formatStorageSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 MB';
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  const mb = bytes / (1024 * 1024);
+  if (mb >= 1024) return `${(mb / 1024).toFixed(2)} GB`;
+  return `${mb.toFixed(1)} MB`;
+}
+
+const cacheUsedLabel = computed(() => formatStorageSize(cacheUsedBytes.value));
+const cacheLimitLabel = computed(() => {
+  const mb = settings.audioCacheMaxMb;
+  if (mb <= 0) return t('settings.cacheUnlimited');
+  return mb >= 1024 ? `${mb / 1024} GB` : `${mb} MB`;
+});
 const cacheUsagePercent = computed(() => {
-  if (cacheMaxBytes.value <= 0) return 0;
+  if (settings.audioCacheMaxMb <= 0 || cacheMaxBytes.value <= 0) return 0;
   return Math.min(100, Math.max(0, Math.round((cacheUsedBytes.value / cacheMaxBytes.value) * 100)));
 });
+const snapshotUsedLabel = computed(() => formatStorageSize(snapshotUsedBytes.value));
+
+const audioCacheOptions = computed<Array<{ mb: AudioCacheLimitMb; label: string }>>(() => [
+  { mb: 500, label: '500M' },
+  { mb: 1024, label: '1G' },
+  { mb: 2048, label: '2G' },
+  { mb: 4096, label: '4G' },
+  { mb: 0, label: t('settings.cacheUnlimitedShort') },
+]);
 
 const dragSheet = useDraggableSheet({
   detents: [0.60, 0.92],
@@ -124,48 +146,19 @@ function switchTab(next: ProfileSectionTab) {
 }
 
 async function refreshDeviceStats() {
-  const [perm, overlay, cache, ver] = await Promise.all([
+  const [perm, cache, snapStats, ver] = await Promise.all([
     echoSystem.checkNotificationPermission(),
-    echoSystem.checkOverlayPermission(),
     echoPlayer.getAudioCacheStats(),
+    echoSystem.getSnapshotCacheStats(),
     getCurrentAppVersion(),
   ]);
   notifGranted.value = perm.granted;
-  overlayGranted.value = overlay;
   cacheUsedBytes.value = cache.usedBytes;
-  cacheMaxBytes.value = cache.maxBytes || 300 * 1024 * 1024;
-  cacheUsedMb.value = (cache.usedBytes / (1024 * 1024)).toFixed(1);
+  cacheMaxBytes.value = cache.maxBytes;
+  snapshotUsedBytes.value = snapStats.usedBytes;
+  snapshotPlaylistCount.value = snapStats.playlistCount;
   appVersion.value = ver;
 }
-
-async function handleVisibilityResume() {
-  if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
-  if (!ui.accountSheetOpen) return;
-  const granted = await echoSystem.checkOverlayPermission();
-  overlayGranted.value = granted;
-  if (granted && pendingEnableIsland.value) {
-    pendingEnableIsland.value = false;
-    settings.dynamicIslandEnabled = true;
-    await echoPlayer.setIslandConfig({
-      enabled: true,
-      showLyric: settings.dynamicIslandShowLyric,
-      offsetYDp: settings.dynamicIslandOffsetYDp,
-    });
-    void echoPlayer.previewIsland(3600);
-  }
-}
-
-onMounted(() => {
-  if (typeof document !== 'undefined') {
-    document.addEventListener('visibilitychange', handleVisibilityResume);
-  }
-});
-
-onUnmounted(() => {
-  if (typeof document !== 'undefined') {
-    document.removeEventListener('visibilitychange', handleVisibilityResume);
-  }
-});
 
 watch(
   () => ui.accountSheetOpen,
@@ -325,63 +318,12 @@ async function handleOpenAppBatterySettings() {
   await echoSystem.openAppDetailsSettings();
 }
 
-async function handleToggleDynamicIsland(ev: Event) {
-  const checked = (ev.target as HTMLInputElement).checked;
+async function handleSelectCacheLimit(mb: AudioCacheLimitMb) {
   echoSystem.haptic('selection');
-  if (!checked) {
-    pendingEnableIsland.value = false;
-    settings.dynamicIslandEnabled = false;
-    return;
-  }
-  const granted = await echoSystem.checkOverlayPermission();
-  overlayGranted.value = granted;
-  if (!granted) {
-    settings.dynamicIslandEnabled = false;
-    (ev.target as HTMLInputElement).checked = false;
-    pendingEnableIsland.value = true;
-    ui.showToast(t('settings.dynamicIslandGrantToast'), 3200);
-    await echoSystem.openOverlaySettings();
-    return;
-  }
-  pendingEnableIsland.value = false;
-  settings.dynamicIslandEnabled = true;
-  await echoPlayer.setIslandConfig({
-    enabled: true,
-    showLyric: settings.dynamicIslandShowLyric,
-    offsetYDp: settings.dynamicIslandOffsetYDp,
-  });
-  void echoPlayer.previewIsland(3600);
-}
-
-async function handleGrantOverlayPermission() {
-  echoSystem.haptic('light');
-  pendingEnableIsland.value = true;
-  ui.showToast(t('settings.dynamicIslandGrantToast'), 3200);
-  await echoSystem.openOverlaySettings();
-}
-
-function nudgeIslandOffset(delta: number) {
-  echoSystem.haptic('selection');
-  settings.dynamicIslandOffsetYDp = Math.max(-8, Math.min(28, settings.dynamicIslandOffsetYDp + delta));
-  if (overlayGranted.value) {
-    void echoPlayer.previewIsland(2800);
-  }
-}
-
-async function handlePreviewDynamicIsland() {
-  echoSystem.haptic('light');
-  const granted = await echoSystem.checkOverlayPermission();
-  overlayGranted.value = granted;
-  if (!granted) {
-    await handleGrantOverlayPermission();
-    return;
-  }
-  await echoPlayer.setIslandConfig({
-    enabled: settings.dynamicIslandEnabled,
-    showLyric: settings.dynamicIslandShowLyric,
-    offsetYDp: settings.dynamicIslandOffsetYDp,
-  });
-  await echoPlayer.previewIsland(4200);
+  settings.audioCacheMaxMb = mb;
+  const statsRes = await echoPlayer.setAudioCacheMaxMb(mb);
+  cacheUsedBytes.value = statsRes.usedBytes;
+  cacheMaxBytes.value = statsRes.maxBytes;
 }
 
 async function handleClearAudioCache() {
@@ -391,9 +333,22 @@ async function handleClearAudioCache() {
   try {
     await echoPlayer.clearAudioCache();
     await refreshDeviceStats();
-    ui.showToast(t('settings.btnClear'));
+    ui.showToast(t('settings.audioCacheCleared'));
   } finally {
     clearingCache.value = false;
+  }
+}
+
+async function handleClearSnapshotCache() {
+  if (clearingSnapshots.value) return;
+  echoSystem.haptic('medium');
+  clearingSnapshots.value = true;
+  try {
+    await echoSystem.clearSnapshotCache();
+    await refreshDeviceStats();
+    ui.showToast(t('settings.snapshotCleared'));
+  } finally {
+    clearingSnapshots.value = false;
   }
 }
 
@@ -1101,107 +1056,13 @@ async function openAuthorProfile() {
                 </div>
               </section>
 
-              <!-- Group B: Melune Dynamic Island, System Media Controls, Smart Cache, Backup & Auto-Update -->
+              <!-- Group B: System Media Controls, Smart 2GB Audio Cache, Playlist Snapshots, Backup & Auto-Update -->
               <section class="space-y-2">
                 <div class="text-[12px] font-semibold uppercase tracking-wide text-[var(--text-secondary)] px-2">
                   {{ t('settings.groupSystem') }}
                 </div>
                 <div class="rounded-[22px] bg-[var(--bg-card)] overflow-hidden divide-y divide-[var(--hairline)] shadow-xs">
-                  <!-- 1. Built-in Melune Native Dynamic Island (Floating Cutout Capsule) -->
-                  <div class="px-4 py-3.5 space-y-2.5">
-                    <div class="flex items-start justify-between gap-3">
-                      <div class="flex items-start gap-2.5 min-w-0 flex-1">
-                        <Icon :icon="iconBroadcast" class="w-4 h-4 am-accent-text shrink-0 mt-0.5" />
-                        <div class="min-w-0 flex-1">
-                          <div class="flex items-center gap-1.5 flex-wrap">
-                            <span class="text-[14.5px] font-medium text-[var(--text-primary)] leading-snug">
-                              {{ t('settings.dynamicIsland') }}
-                            </span>
-                            <span
-                              class="px-1.5 py-0.5 rounded-md text-[10px] font-semibold leading-none shrink-0"
-                              :class="
-                                overlayGranted
-                                  ? 'bg-[#34c759]/14 text-[#2fb350]'
-                                  : 'bg-[#ff9500]/14 text-[#e08200]'
-                              "
-                            >
-                              {{ overlayGranted ? t('settings.dynamicIslandReady') : t('settings.dynamicIslandNeedPerm') }}
-                            </span>
-                          </div>
-                          <div class="text-[11px] text-[var(--text-secondary)] leading-relaxed mt-0.5">
-                            {{ t('settings.dynamicIslandSub') }}
-                          </div>
-                        </div>
-                      </div>
-                      <input
-                        type="checkbox"
-                        class="ios-switch mt-0.5"
-                        :checked="settings.dynamicIslandEnabled"
-                        @change="handleToggleDynamicIsland"
-                      />
-                    </div>
-
-                    <div
-                      v-if="settings.dynamicIslandEnabled"
-                      class="rounded-[16px] bg-[var(--bg-subtle)]/55 px-3 py-2.5 space-y-2.5"
-                    >
-                      <button
-                        v-if="!overlayGranted"
-                        type="button"
-                        class="w-full h-8 rounded-xl am-accent-bg text-white text-[12px] font-semibold border-0 am-tap"
-                        @click="handleGrantOverlayPermission"
-                      >
-                        {{ t('settings.dynamicIslandGrant') }}
-                      </button>
-
-                      <label class="flex items-center justify-between gap-3 cursor-pointer">
-                        <div class="min-w-0">
-                          <div class="text-[13px] font-medium text-[var(--text-primary)] leading-snug">
-                            {{ t('settings.dynamicIslandLyric') }}
-                          </div>
-                          <div class="text-[10.5px] text-[var(--text-secondary)] leading-snug mt-0.5">
-                            {{ t('settings.dynamicIslandLyricSub') }}
-                          </div>
-                        </div>
-                        <input v-model="settings.dynamicIslandShowLyric" type="checkbox" class="ios-switch scale-90 origin-right" />
-                      </label>
-
-                      <div class="pt-2 am-hairline-t flex items-center justify-between gap-2">
-                        <span class="text-[12px] font-medium text-[var(--text-secondary)] truncate">
-                          {{ t('settings.dynamicIslandOffset') }}
-                        </span>
-                        <div class="flex items-center gap-1.5 shrink-0">
-                          <button
-                            type="button"
-                            class="w-7 h-7 rounded-full bg-[var(--bg-card)] text-[var(--text-primary)] border-0 inline-flex items-center justify-center am-tap shadow-xs"
-                            @click="nudgeIslandOffset(-2)"
-                          >
-                            <Icon :icon="iconMinus" class="w-3.5 h-3.5" />
-                          </button>
-                          <span class="min-w-[42px] text-center text-[12px] font-semibold text-[var(--text-primary)] tabular-nums">
-                            {{ settings.dynamicIslandOffsetYDp }}dp
-                          </span>
-                          <button
-                            type="button"
-                            class="w-7 h-7 rounded-full bg-[var(--bg-card)] text-[var(--text-primary)] border-0 inline-flex items-center justify-center am-tap shadow-xs"
-                            @click="nudgeIslandOffset(2)"
-                          >
-                            <Icon :icon="iconPlus" class="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            class="ml-1 px-2.5 h-7 rounded-full bg-[var(--bg-card)] am-accent-text text-[11.5px] font-semibold border-0 inline-flex items-center gap-1 am-tap shadow-xs"
-                            @click="handlePreviewDynamicIsland"
-                          >
-                            <Icon :icon="iconEye" class="w-3.5 h-3.5 shrink-0" />
-                            <span>{{ t('settings.dynamicIslandPreview') }}</span>
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <!-- 2. Lock Screen & System Live Media Controls (Compact + Collapsible OEM Note) -->
+                  <!-- 1. Lock Screen & System Live Media Controls (Compact + Collapsible OEM Note) -->
                   <div class="px-4 py-3.5 space-y-2.5">
                     <div class="flex items-start gap-2.5">
                       <Icon :icon="iconDeviceMobile" class="w-4 h-4 am-accent-text shrink-0 mt-0.5" />
@@ -1256,15 +1117,15 @@ async function openAuthorProfile() {
                     </p>
                   </div>
 
-                  <!-- 3. Local Smart Audio Cache with Visual Progress Bar -->
-                  <div class="px-4 py-3.5 space-y-2">
+                  <!-- 2. Configurable Local Smart Audio Cache (Default 2 GB + 5-Step Selector + Offline Ready) -->
+                  <div class="px-4 py-3.5 space-y-2.5">
                     <div class="flex items-center justify-between gap-3">
                       <div class="flex items-center gap-2.5 min-w-0">
                         <Icon :icon="iconDatabase" class="w-4 h-4 am-accent-text shrink-0" />
                         <div class="min-w-0">
                           <div class="text-[14.5px] font-medium text-[var(--text-primary)] truncate">{{ t('settings.cacheTitle') }}</div>
                           <div class="text-[11px] text-[var(--text-secondary)] tabular-nums truncate mt-0.5">
-                            {{ t('settings.cacheSub', { mb: cacheUsedMb }) }}
+                            {{ t('settings.cacheSub', { used: cacheUsedLabel, limit: cacheLimitLabel }) }}
                           </div>
                         </div>
                       </div>
@@ -1277,12 +1138,54 @@ async function openAuthorProfile() {
                         {{ clearingCache ? t('settings.btnClearing') : t('settings.btnClear') }}
                       </button>
                     </div>
-                    <div class="h-[5px] rounded-full bg-[var(--bg-subtle)] overflow-hidden">
+                    <div
+                      v-if="settings.audioCacheMaxMb > 0"
+                      class="h-[5px] rounded-full bg-[var(--bg-subtle)] overflow-hidden"
+                    >
                       <div
                         class="h-full rounded-full am-accent-bg transition-all duration-300"
                         :style="{ width: `${cacheUsagePercent}%` }"
                       />
                     </div>
+                    <div class="pt-seg-group grid-cols-5">
+                      <button
+                        v-for="opt in audioCacheOptions"
+                        :key="opt.mb"
+                        type="button"
+                        class="pt-seg-btn tabular-nums"
+                        :class="
+                          settings.audioCacheMaxMb === opt.mb
+                            ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-xs'
+                            : 'bg-transparent text-[var(--text-secondary)]'
+                        "
+                        @click="handleSelectCacheLimit(opt.mb)"
+                      >
+                        {{ opt.label }}
+                      </button>
+                    </div>
+                  </div>
+
+                  <!-- 3. Transparent Playlist & Home Local Snapshot Cache (Independent Clear) -->
+                  <div class="px-4 py-3.5 flex items-center justify-between gap-3">
+                    <div class="flex items-center gap-2.5 min-w-0">
+                      <Icon :icon="iconFolder" class="w-4 h-4 am-accent-text shrink-0" />
+                      <div class="min-w-0">
+                        <div class="text-[14.5px] font-medium text-[var(--text-primary)] truncate">
+                          {{ t('settings.snapshotCacheTitle') }}
+                        </div>
+                        <div class="text-[11px] text-[var(--text-secondary)] tabular-nums truncate mt-0.5">
+                          {{ t('settings.snapshotCacheSub', { count: snapshotPlaylistCount, size: snapshotUsedLabel }) }}
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      class="px-3 h-7.5 rounded-full bg-[var(--bg-subtle)] text-[12px] font-semibold text-[var(--text-primary)] border-0 am-tap shrink-0"
+                      :disabled="clearingSnapshots"
+                      @click="handleClearSnapshotCache"
+                    >
+                      {{ clearingSnapshots ? t('settings.btnClearing') : t('settings.btnClear') }}
+                    </button>
                   </div>
 
                   <!-- 4. Stats & Preferences JSON Backup -->
@@ -1561,83 +1464,43 @@ async function openAuthorProfile() {
 
 <style scoped>
 .ml-about-hero {
-  background: linear-gradient(158deg, #edf2ff 0%, #f7f9ff 50%, #ffffff 100%);
-  border: 1px solid rgba(52, 86, 190, 0.14);
+  background: var(--ml-about-bg);
+  border: 1px solid var(--ml-about-border);
 }
 .ml-about-glow {
-  background: radial-gradient(circle, rgba(91, 140, 255, 0.16) 0%, rgba(52, 86, 190, 0.04) 55%, transparent 74%);
+  background: var(--ml-about-glow);
 }
 .ml-about-watermark {
-  opacity: 0.055;
+  opacity: var(--ml-about-watermark-opacity);
 }
 .ml-about-title {
-  color: #151c33;
+  color: var(--ml-about-title);
 }
 .ml-about-meta-pill {
-  background: rgba(52, 86, 190, 0.09);
-  color: #3a5296;
+  background: var(--ml-about-meta-bg);
+  color: var(--ml-about-meta-fg);
 }
 .ml-about-en {
-  color: rgba(52, 86, 190, 0.56);
+  color: var(--ml-about-en);
 }
 .ml-about-secondary-btn {
-  background: rgba(52, 86, 190, 0.09);
-  border: 1px solid rgba(52, 86, 190, 0.16);
-  color: #2b4cb2;
+  background: var(--ml-about-btn-bg);
+  border: 1px solid var(--ml-about-btn-border);
+  color: var(--ml-about-btn-fg);
 }
 .ml-about-divider {
-  border-top: 1px solid rgba(52, 86, 190, 0.12);
+  border-top: 1px solid var(--ml-about-divider);
 }
 .ml-about-char {
-  background: rgba(52, 86, 190, 0.10);
-  border: 1px solid rgba(52, 86, 190, 0.18);
-  color: #2b4cb2;
+  background: var(--ml-about-char-bg);
+  border: 1px solid var(--ml-about-char-border);
+  color: var(--ml-about-char-fg);
 }
 .ml-about-copy {
-  color: #36415c;
+  color: var(--ml-about-copy);
 }
 .ml-about-vision {
-  color: #57637f;
-}
-
-:global(.dark) .ml-about-hero {
-  background: linear-gradient(158deg, #1b2c68 0%, #121c44 52%, #0e1428 100%);
-  border-color: rgba(255, 255, 255, 0.12);
-}
-:global(.dark) .ml-about-glow {
-  background: radial-gradient(circle, rgba(145, 192, 255, 0.24) 0%, rgba(92, 134, 248, 0.06) 52%, transparent 72%);
-}
-:global(.dark) .ml-about-watermark {
-  opacity: 0.09;
-}
-:global(.dark) .ml-about-title {
-  color: #ffffff;
-}
-:global(.dark) .ml-about-meta-pill {
-  background: rgba(255, 255, 255, 0.12);
-  color: #d6e7ff;
-}
-:global(.dark) .ml-about-en {
-  color: rgba(166, 194, 245, 0.62);
-}
-:global(.dark) .ml-about-secondary-btn {
-  background: rgba(255, 255, 255, 0.12);
-  border-color: rgba(255, 255, 255, 0.18);
-  color: #e6f0ff;
-}
-:global(.dark) .ml-about-divider {
-  border-top-color: rgba(255, 255, 255, 0.12);
-}
-:global(.dark) .ml-about-char {
-  background: rgba(255, 255, 255, 0.14);
-  border-color: rgba(255, 255, 255, 0.18);
-  color: #ffffff;
-}
-:global(.dark) .ml-about-copy {
-  color: rgba(226, 238, 255, 0.88);
-}
-:global(.dark) .ml-about-vision {
-  color: rgba(207, 224, 255, 0.80);
+  color: var(--ml-about-vision);
 }
 
 .ios-switch {

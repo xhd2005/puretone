@@ -33,10 +33,14 @@ import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.database.StandaloneDatabaseProvider
+import androidx.media3.datasource.cache.Cache
 import androidx.media3.datasource.cache.CacheDataSource
-import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
+import androidx.media3.datasource.cache.CacheEvictor
+import androidx.media3.datasource.cache.CacheSpan
+import androidx.media3.datasource.cache.ContentMetadata
 import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.datasource.okhttp.OkHttpDataSource
+import java.util.TreeSet
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.CommandButton
@@ -275,6 +279,71 @@ private class PureToneAudioEffects {
 }
 
 @OptIn(UnstableApi::class)
+private class DynamicLruCacheEvictor(initialMaxBytes: Long) : CacheEvictor {
+    private val leastRecentlyUsed = TreeSet<CacheSpan> { lhs, rhs ->
+        val d = lhs.lastTouchTimestamp - rhs.lastTouchTimestamp
+        if (d == 0L) lhs.compareTo(rhs) else if (d < 0L) -1 else 1
+    }
+
+    @Volatile
+    private var maxBytes: Long = initialMaxBytes.coerceAtLeast(0L)
+    private var currentSize: Long = 0L
+
+    override fun requiresCacheSpanTouches(): Boolean = true
+
+    override fun onCacheInitialized() = Unit
+
+    @Synchronized
+    override fun onStartFile(cache: Cache, key: String, position: Long, length: Long) {
+        if (length != C.LENGTH_UNSET.toLong()) {
+            evictCache(cache, length)
+        }
+    }
+
+    @Synchronized
+    override fun onSpanAdded(cache: Cache, span: CacheSpan) {
+        leastRecentlyUsed.add(span)
+        currentSize += span.length
+        evictCache(cache, 0L)
+    }
+
+    @Synchronized
+    override fun onSpanRemoved(cache: Cache, span: CacheSpan) {
+        leastRecentlyUsed.remove(span)
+        currentSize = (currentSize - span.length).coerceAtLeast(0L)
+    }
+
+    @Synchronized
+    override fun onSpanTouched(cache: Cache, oldSpan: CacheSpan, newSpan: CacheSpan) {
+        onSpanRemoved(cache, oldSpan)
+        onSpanAdded(cache, newSpan)
+    }
+
+    @Synchronized
+    fun setMaxBytes(newMaxBytes: Long, cache: Cache?) {
+        maxBytes = newMaxBytes.coerceAtLeast(0L)
+        if (cache != null) {
+            evictCache(cache, 0L)
+        }
+    }
+
+    private fun evictCache(cache: Cache, requiredSpace: Long) {
+        val limit = maxBytes
+        // limit == 0L represents Unlimited cache mode
+        if (limit <= 0L) return
+        while (currentSize + requiredSpace > limit && leastRecentlyUsed.isNotEmpty()) {
+            val oldest = leastRecentlyUsed.first()
+            try {
+                cache.removeSpan(oldest)
+            } catch (_: Exception) {
+                leastRecentlyUsed.remove(oldest)
+                currentSize = (currentSize - oldest.length).coerceAtLeast(0L)
+            }
+        }
+    }
+}
+
+@OptIn(UnstableApi::class)
 class EchoPlaybackService : MediaSessionService() {
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -292,9 +361,6 @@ class EchoPlaybackService : MediaSessionService() {
     private var mediaSession: MediaSession? = null
     private val audioEffects = PureToneAudioEffects()
     private var transitionWakeLock: PowerManager.WakeLock? = null
-    private var islandController: MeluneIslandController? = null
-    private var currentIslandLyric: String = ""
-    private var lastIslandLyricUpdatedAt: Long = 0L
 
     private fun isCurrentlyActive(): Boolean {
         return try {
@@ -368,7 +434,6 @@ class EchoPlaybackService : MediaSessionService() {
                     }
                 }
                 bridgeListener?.onTimeUpdate(pos, dur, true, currentTrackSeq)
-                islandController?.updateProgress(pos, dur)
             }
             mainHandler.postDelayed(this, 160L)
         }
@@ -422,19 +487,6 @@ class EchoPlaybackService : MediaSessionService() {
             ),
         )
 
-        islandController = MeluneIslandController(
-            context = applicationContext,
-            callbacks = object : IslandCallbacks {
-                override fun onTogglePlay() = handleWidgetTogglePlay()
-                override fun onNext() = handleWidgetNext()
-                override fun onPrev() = handleWidgetPrev()
-                override fun onToggleFavorite() = handleWidgetToggleFav()
-                override fun onOffsetYChanged(offsetYDp: Int) = Unit
-            },
-        ).also { controller ->
-            controller.setAppInForeground(appInForegroundState)
-        }
-
         upstreamFactory = OkHttpDataSource.Factory(okHttpClient)
             .setUserAgent("MELUNE-Android/2.4 (Linux; Android 16)")
 
@@ -480,9 +532,6 @@ class EchoPlaybackService : MediaSessionService() {
                 currentArtworkBitmap = null
                 currentLiveLyric = ""
                 lastLiveLyricUpdatedAt = 0L
-                currentIslandLyric = ""
-                lastIslandLyricUpdatedAt = 0L
-                islandController?.updateLiveLyric("")
                 currentAccentColor = DEFAULT_NOTIFICATION_ACCENT
                 upstreamFactory.setDefaultRequestProperties(matched.headers)
 
@@ -682,8 +731,6 @@ class EchoPlaybackService : MediaSessionService() {
         cancelRetry()
         releaseTransitionWakeLock()
         mainHandler.removeCallbacks(timeTicker)
-        islandController?.destroy()
-        islandController = null
         audioEffects.release()
         try {
             unregisterReceiver(noisyReceiver)
@@ -840,9 +887,6 @@ class EchoPlaybackService : MediaSessionService() {
                 currentArtworkBitmap = null
                 currentLiveLyric = ""
                 lastLiveLyricUpdatedAt = 0L
-                currentIslandLyric = ""
-                lastIslandLyricUpdatedAt = 0L
-                islandController?.updateLiveLyric("")
                 currentAccentColor = DEFAULT_NOTIFICATION_ACCENT
                 upstreamFactory.setDefaultRequestProperties(headers)
 
@@ -1055,29 +1099,6 @@ class EchoPlaybackService : MediaSessionService() {
         applyMetadataToActiveItem(meta, currentArtworkBytes)
     }
 
-    fun setIslandConfig(enabled: Boolean, showLyric: Boolean, offsetYDp: Int) = mainHandler.post {
-        islandController?.updateConfig(enabled, showLyric, offsetYDp)
-        syncIslandState()
-    }
-
-    fun setIslandLyric(lyricLine: String) = mainHandler.post {
-        val clean = lyricLine.trim()
-        if (clean == currentIslandLyric) return@post
-        if (clean.isNotEmpty()) {
-            if (!isScreenInteractive()) return@post
-            val now = System.currentTimeMillis()
-            if (now - lastIslandLyricUpdatedAt < 250L) return@post
-            lastIslandLyricUpdatedAt = now
-        }
-        currentIslandLyric = clean
-        islandController?.updateLiveLyric(clean)
-    }
-
-    fun previewIsland(durationMs: Long = 4200L) = mainHandler.post {
-        syncIslandState()
-        islandController?.triggerPreview(durationMs)
-    }
-
     fun updateMetadata(metadata: TrackMetadataPayload) {
         mainHandler.post {
             currentMetadata = metadata
@@ -1145,25 +1166,6 @@ class EchoPlaybackService : MediaSessionService() {
         }
     }
 
-    private fun syncIslandState() {
-        val meta = currentMetadata
-        val playing = if (::exoPlayer.isInitialized) exoPlayer.isPlaying else false
-        val dur = if (::exoPlayer.isInitialized) {
-            exoPlayer.duration.takeIf { it != C.TIME_UNSET && it > 0L } ?: (meta?.durationMs ?: 0L)
-        } else {
-            meta?.durationMs ?: 0L
-        }
-        islandController?.updateTrack(
-            title = meta?.title ?: getString(R.string.app_name),
-            artist = meta?.artist ?: getString(R.string.widget_idle_subtitle),
-            artwork = currentArtworkBitmap,
-            accentColor = currentAccentColor,
-            isPlaying = playing,
-            isFavorite = isCurrentFavorite,
-            durationMs = dur,
-        )
-    }
-
     private fun syncWidgetState() {
         val meta = currentMetadata
         val playing = if (::exoPlayer.isInitialized) exoPlayer.isPlaying else false
@@ -1176,7 +1178,6 @@ class EchoPlaybackService : MediaSessionService() {
             accentColor = currentAccentColor,
             isFavorite = isCurrentFavorite,
         )
-        syncIslandState()
     }
 
     fun snapshotState(): Map<String, Any> {
@@ -1278,7 +1279,10 @@ class EchoPlaybackService : MediaSessionService() {
 
     companion object {
         const val MEDIA_CHANNEL_ID = "puretone_media_playback_v2"
-        const val MAX_AUDIO_CACHE_BYTES = 300L * 1024L * 1024L
+        const val DEFAULT_AUDIO_CACHE_MAX_MB = 2048
+        const val MAX_AUDIO_CACHE_BYTES = DEFAULT_AUDIO_CACHE_MAX_MB.toLong() * 1024L * 1024L
+        private const val CACHE_PREFS_NAME = "melune_cache_prefs"
+        private const val KEY_AUDIO_CACHE_MAX_MB = "audio_cache_max_mb"
         const val ACTION_TOGGLE_FAVORITE = "com.xhd2005.puretone.ACTION_TOGGLE_FAVORITE"
         const val ACTION_CYCLE_PLAY_MODE = "com.xhd2005.puretone.ACTION_CYCLE_PLAY_MODE"
         private const val DEFAULT_NOTIFICATION_ACCENT = 0xFF1A2D70.toInt()
@@ -1296,11 +1300,34 @@ class EchoPlaybackService : MediaSessionService() {
         private var sharedAudioCache: SimpleCache? = null
 
         @Volatile
-        private var appInForegroundState: Boolean = true
+        private var sharedCacheEvictor: DynamicLruCacheEvictor? = null
 
-        fun setAppInForeground(foreground: Boolean) {
-            appInForegroundState = foreground
-            activeService?.islandController?.setAppInForeground(foreground)
+        fun sanitizeAudioCacheMaxMb(rawMb: Int): Int {
+            return when (rawMb) {
+                0, 500, 1024, 2048, 4096 -> rawMb
+                else -> DEFAULT_AUDIO_CACHE_MAX_MB
+            }
+        }
+
+        fun audioCacheMbToBytes(maxMb: Int): Long {
+            val clean = sanitizeAudioCacheMaxMb(maxMb)
+            return if (clean <= 0) 0L else clean.toLong() * 1024L * 1024L
+        }
+
+        fun getAudioCacheMaxMb(appContext: Context): Int {
+            val prefs = appContext.getSharedPreferences(CACHE_PREFS_NAME, Context.MODE_PRIVATE)
+            return sanitizeAudioCacheMaxMb(prefs.getInt(KEY_AUDIO_CACHE_MAX_MB, DEFAULT_AUDIO_CACHE_MAX_MB))
+        }
+
+        fun setAudioCacheMaxMb(appContext: Context, maxMb: Int): Long {
+            val cleanMb = sanitizeAudioCacheMaxMb(maxMb)
+            val maxBytes = audioCacheMbToBytes(cleanMb)
+            appContext.getSharedPreferences(CACHE_PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putInt(KEY_AUDIO_CACHE_MAX_MB, cleanMb)
+                .apply()
+            sharedCacheEvictor?.setMaxBytes(maxBytes, sharedAudioCache)
+            return maxBytes
         }
 
         fun shouldUsePromotedLiveUpdate(sdkInt: Int, canPostPromoted: Boolean): Boolean {
@@ -1422,10 +1449,29 @@ class EchoPlaybackService : MediaSessionService() {
             sharedAudioCache?.let { return it }
             val cacheDir = File(appContext.cacheDir, "puretone_audio_cache")
             if (!cacheDir.exists()) cacheDir.mkdirs()
-            val evictor = LeastRecentlyUsedCacheEvictor(MAX_AUDIO_CACHE_BYTES)
+            val maxBytes = audioCacheMbToBytes(getAudioCacheMaxMb(appContext))
+            val evictor = DynamicLruCacheEvictor(maxBytes)
+            sharedCacheEvictor = evictor
             val dbProvider = StandaloneDatabaseProvider(appContext)
             return SimpleCache(cacheDir, evictor, dbProvider).also {
                 sharedAudioCache = it
+            }
+        }
+
+        fun isTrackCached(appContext: Context, cacheKey: String): Boolean {
+            val cleanKey = cacheKey.trim()
+            if (cleanKey.isEmpty()) return false
+            return try {
+                val cache = getOrCreateAudioCache(appContext)
+                val contentLen = ContentMetadata.getContentLength(cache.getContentMetadata(cleanKey))
+                if (contentLen > 0L) {
+                    cache.isCached(cleanKey, 0L, contentLen)
+                } else {
+                    val spans = cache.getCachedSpans(cleanKey)
+                    spans.sumOf { it.length } >= 256L * 1024L
+                }
+            } catch (_: Exception) {
+                false
             }
         }
 

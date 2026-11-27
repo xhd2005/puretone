@@ -278,33 +278,6 @@ class EchoPlayerPlugin : Plugin(), PlayerBridgeListener {
     }
 
     @PluginMethod
-    fun setIslandConfig(call: PluginCall) {
-        val enabled = call.getBoolean("enabled", false) ?: false
-        val showLyric = call.getBoolean("showLyric", false) ?: false
-        val offsetYDp = call.getInt("offsetYDp") ?: 4
-        ensureServiceBound { svc ->
-            svc.setIslandConfig(enabled, showLyric, offsetYDp)
-            call.resolve()
-        }
-    }
-
-    @PluginMethod
-    fun setIslandLyric(call: PluginCall) {
-        val line = call.getString("line") ?: ""
-        EchoPlaybackService.activeService?.setIslandLyric(line)
-        call.resolve()
-    }
-
-    @PluginMethod
-    fun previewIsland(call: PluginCall) {
-        val durationMs = call.getInt("durationMs")?.toLong() ?: 4200L
-        ensureServiceBound { svc ->
-            svc.previewIsland(durationMs)
-            call.resolve()
-        }
-    }
-
-    @PluginMethod
     fun setEqPreset(call: PluginCall) {
         val preset = call.getString("preset") ?: "flat"
         ensureServiceBound { svc ->
@@ -340,12 +313,43 @@ class EchoPlayerPlugin : Plugin(), PlayerBridgeListener {
 
     @PluginMethod
     fun getAudioCacheStats(call: PluginCall) {
-        val bytes = EchoPlaybackService.getAudioCacheSizeBytes(context.applicationContext)
+        val appCtx = context.applicationContext
+        val bytes = EchoPlaybackService.getAudioCacheSizeBytes(appCtx)
+        val maxMb = EchoPlaybackService.getAudioCacheMaxMb(appCtx)
+        val maxBytes = EchoPlaybackService.audioCacheMbToBytes(maxMb)
         call.resolve(
             JSObject()
                 .put("usedBytes", bytes)
-                .put("maxBytes", EchoPlaybackService.MAX_AUDIO_CACHE_BYTES),
+                .put("maxBytes", maxBytes)
+                .put("maxMb", maxMb),
         )
+    }
+
+    @PluginMethod
+    fun setAudioCacheMaxMb(call: PluginCall) {
+        val rawMb = call.getInt("maxMb") ?: EchoPlaybackService.DEFAULT_AUDIO_CACHE_MAX_MB
+        val appCtx = context.applicationContext
+        Thread {
+            val maxBytes = EchoPlaybackService.setAudioCacheMaxMb(appCtx, rawMb)
+            val usedBytes = EchoPlaybackService.getAudioCacheSizeBytes(appCtx)
+            val cleanMb = EchoPlaybackService.sanitizeAudioCacheMaxMb(rawMb)
+            call.resolve(
+                JSObject()
+                    .put("usedBytes", usedBytes)
+                    .put("maxBytes", maxBytes)
+                    .put("maxMb", cleanMb),
+            )
+        }.start()
+    }
+
+    @PluginMethod
+    fun isTrackCached(call: PluginCall) {
+        val cacheKey = call.getString("cacheKey")?.trim() ?: ""
+        val appCtx = context.applicationContext
+        Thread {
+            val cached = EchoPlaybackService.isTrackCached(appCtx, cacheKey)
+            call.resolve(JSObject().put("cached", cached))
+        }.start()
     }
 
     @PluginMethod

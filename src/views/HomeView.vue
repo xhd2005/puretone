@@ -13,7 +13,11 @@ import {
   backfillMissingPlaylistCovers,
   getPlaylistCacheKey,
 } from '@/services/playback/playlistCoverResolver';
-import { readPlaylistSnapshot } from '@/services/playback/playlistSnapshotCache';
+import {
+  readDailyRecommendSnapshot,
+  readPlaylistSnapshot,
+  writeDailyRecommendSnapshot,
+} from '@/services/playback/playlistSnapshotCache';
 import { useAccountsStore } from '@/stores/accounts';
 import { usePlayerStore } from '@/stores/player';
 import { usePlaylistsStore } from '@/stores/playlists';
@@ -73,13 +77,27 @@ async function loadHomeData() {
     playlistsStore.reset();
     return;
   }
-  loading.value = true;
+  const uid = accounts.activeAccount?.userid || '';
+
+  // 1. Instant 0ms local hydration for today's Daily Mix & cached playlists (zero skeleton wait!)
+  if (uid) {
+    const cachedDaily = await readDailyRecommendSnapshot(uid);
+    if (cachedDaily?.length) {
+      dailySongs.value = cachedDaily;
+    }
+  }
+  const hadDaily = dailySongs.value.length > 0;
+  if (!hadDaily) loading.value = true;
+
   try {
     const [daily, pls] = await Promise.all([
       kugouApi.getEverydayRecommend().catch(() => []),
-      playlistsStore.fetchPlaylists(true).catch(() => []),
+      playlistsStore.fetchPlaylists(true).catch(() => playlistsStore.playlists),
     ]);
-    dailySongs.value = daily;
+    if (daily.length > 0) {
+      dailySongs.value = daily;
+      if (uid) void writeDailyRecommendSnapshot(uid, daily);
+    }
 
     void backfillMissingPlaylistCovers(pls);
 

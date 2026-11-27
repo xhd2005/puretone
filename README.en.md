@@ -9,7 +9,7 @@
 **Music fades in time, yet echoes linger on.**  
 *Where Music Becomes Memory.*
 
-Minimalist & Ad-Free · iOS 26 Liquid Glass Craftsmanship · Native Media3 Background Playback · Built-in MELUNE Dynamic Island · Trilingual Open-Source Android Music Client
+Minimalist & Ad-Free · iOS 26 Liquid Glass Craftsmanship · Native Media3 Engine & Configurable 2 GB Offline Cache · Trilingual Open-Source Android Music Client
 
 [![Release](https://img.shields.io/github/v/release/xhd2005/puretone?style=flat-square&color=3456be)](https://github.com/xhd2005/puretone/releases/latest)
 [![Android CI](https://img.shields.io/github/actions/workflow/status/xhd2005/puretone/android-apk.yml?branch=main&style=flat-square&label=Android%20APK%20CI)](https://github.com/xhd2005/puretone/actions)
@@ -34,14 +34,14 @@ Minimalist & Ad-Free · iOS 26 Liquid Glass Craftsmanship · Native Media3 Backg
 ## ✨ Highlights
 
 ### 🎧 Native Background Media3 Engine, Smooth Transitions & Zero-Clip DSP
-- **3-Track Native Lookahead Queue**: Automatically pre-resolves upcoming tracks directly into Jetpack Media3 `ExoPlayer` with a 300MB LRU audio cache for zero-drop screen-off playback and instant Bluetooth headset skipping.
+- **3-Track Native Lookahead Queue**: Automatically pre-resolves upcoming tracks directly into Jetpack Media3 `ExoPlayer` for zero-drop screen-off playback and instant Bluetooth headset skipping.
 - **Cosine Track Transition Fade**: Single-engine fade-out & gentle entry (`Off` / `1.5s` / `3s` / `5s`) plus soft pause/resume volume ramps.
 - **Volume Leveling & Subtractive Zero-Clip EQ**: 5 studio-safe presets (`Flat`, `Vocal`, `Bass`, `Night`, `Live`) strictly kept `<= 0 dB` with duck-and-ramp switching so tracks never clip or pop.
 
-### 🏝️ Built-in "MELUNE Dynamic Island" & Android 16/17 Live Updates
-- **Universal Stock Android Support**: A 100% native Kotlin floating capsule built on standard `SYSTEM_ALERT_WINDOW` — works out-of-the-box on stock unrooted vivo OriginOS, ColorOS, HyperOS, OneUI, and Pixel with zero root, zero Shizuku, and zero package spoofing.
-- **Dual Modes & Dynamic Album-Colored Card**: Defaults to a sleek **dual-wing punch-hole capsule** (circular cover + centered cutout gap + animated 3-bar waveform), with an optional **live single-line lyric capsule** toggle, vertical Y-offset alignment, and a 4-second live preview right inside Settings. Tap to expand into full playback controls; automatically hides when returning to MELUNE or pausing.
-- **Fixed Android 16/17 Official Live Updates** (properly separating `EXTRA_COLORIZED` from `requestPromotedOngoing`) plus a **4×2 Dynamic Album-Colored Home Widget**.
+### 💾 Configurable 2 GB Smart Cache, Offline Playback & Instant Playlists
+- **5-Step Audio Cache Limit + Seamless Offline Playback**: Defaults to **2 GB** (`500 MB / 1 GB / 2 GB / 4 GB / Unlimited`, live LRU trimming when lowered); cached tracks automatically play offline in subways or airplane mode with zero network requests.
+- **Version-Checked Playlist & Home Snapshots**: Compares cloud `totalVer` and track counts so opening *Liked Songs* and large playlists is 0ms / 0-sync when unchanged; local likes/additions update snapshots in-place without forcing full re-syncs; transparent split storage breakdown in Settings.
+- **Android 16/17 Official Live Updates** plus a **4×2 Dynamic Album-Colored Home Widget**.
 
 ### 🎵 Zero-Flicker Player, Word-by-Word KRC Lyrics & Deep Discovery
 - **Persistent Artwork Stage & Monotonic Lyric Clock**: Zero playback flicker during word-by-word karaoke sweep; 3 font sizes, per-song lyric sync offset (`±0.5s` / `±1s`), and chorus highlight (`song_climax`) markers on the scrub bar.
@@ -57,9 +57,9 @@ Minimalist & Ad-Free · iOS 26 Liquid Glass Craftsmanship · Native Media3 Backg
 
 ## 📥 Installation & Lossless Overwrite Upgrade
 
-1. Download **`MELUNE-v2.4.8-release.apk`** from [GitHub Releases](https://github.com/xhd2005/puretone/releases/latest). The permanent `com.xhd2005.puretone` package ID and 50-year release certificate ensure **100% lossless overwrite upgrades** from any earlier release without re-logging in.
+1. Download **`MELUNE-v2.4.9-release.apk`** from [GitHub Releases](https://github.com/xhd2005/puretone/releases/latest). The permanent `com.xhd2005.puretone` package ID and 50-year release certificate ensure **100% lossless overwrite upgrades** from any earlier release without re-logging in.
 2. Enable **Notifications** and disable aggressive battery restriction in Android settings for reliable screen-off playback.
-3. **Enabling MELUNE Dynamic Island**: Open *Account & Settings → Preferences → **MELUNE Dynamic Island***, toggle it on, grant the standard overlay permission, and use the `- / +` offset & 4s preview to hug your camera cutout seamlessly.
+3. **About OEM Atomic Island whitelists**: Some ROMs (such as vivo OriginOS) restrict top music capsules via hard-coded commercial whitelists. MELUNE remains 100% open-source compliant without package spoofing; add the **MELUNE 4×2 Home Widget** for dynamic album-colored controls.
 
 ---
 
@@ -86,7 +86,7 @@ Indie developer and enthusiast of music & interaction aesthetics, committed to b
 ## 🛠️ Tech Stack & Local Build
 
 - **Frontend & Cross-Platform**: Vue 3 + TypeScript + Pinia + Vue Router + Tailwind CSS v4 + Capacitor 7
-- **Native Audio & Overlay**: Kotlin + Android Jetpack Media3 (`ExoPlayer` 1.5.1 + `MediaSessionService` + 300MB LRU disk cache + `Equalizer` / `LoudnessEnhancer`) + native `WindowManager` Dynamic Island controller
+- **Native Audio Layer**: Kotlin + Android Jetpack Media3 (`ExoPlayer` 1.5.1 + `MediaSessionService` + dynamic 2 GB default LRU disk cache + `Equalizer` / `LoudnessEnhancer`)
 - **Build Commands**:
   ```bash
   pnpm install

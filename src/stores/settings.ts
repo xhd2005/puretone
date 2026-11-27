@@ -12,6 +12,7 @@ export type AppLocale = 'system' | 'zh-CN' | 'zh-TW' | 'en';
 export type LyricFontSize = 'standard' | 'large' | 'xlarge';
 export type TrackTransitionFadeMs = 0 | 1500 | 3000 | 5000;
 export type UpdateMirrorMode = 'auto' | 'direct';
+export type AudioCacheLimitMb = 500 | 1024 | 2048 | 4096 | 0;
 
 export interface PersistedSettings {
   appearance: AppearanceMode;
@@ -32,9 +33,7 @@ export interface PersistedSettings {
   showCoverLyricsPreview: boolean;
   showLockScreenLyrics: boolean;
   autoCheckUpdate: boolean;
-  dynamicIslandEnabled: boolean;
-  dynamicIslandShowLyric: boolean;
-  dynamicIslandOffsetYDp: number;
+  audioCacheMaxMb: AudioCacheLimitMb;
   updateMirrorMode: UpdateMirrorMode;
   customUpdateMirror: string;
 }
@@ -61,9 +60,7 @@ const DEFAULTS: PersistedSettings = {
   // Default OFF so lock-screen & live media cards stay rock-solid (no OS rate-limit freeze)
   showLockScreenLyrics: false,
   autoCheckUpdate: true,
-  dynamicIslandEnabled: false,
-  dynamicIslandShowLyric: false,
-  dynamicIslandOffsetYDp: 4,
+  audioCacheMaxMb: 2048,
   updateMirrorMode: 'auto',
   customUpdateMirror: '',
 };
@@ -78,10 +75,10 @@ function sanitizeMirrorMode(raw: unknown): UpdateMirrorMode {
   return raw === 'direct' ? 'direct' : 'auto';
 }
 
-export function sanitizeIslandOffsetYDp(raw: unknown): number {
+export function sanitizeAudioCacheLimitMb(raw: unknown): AudioCacheLimitMb {
   const n = Number(raw);
-  if (!Number.isFinite(n)) return DEFAULTS.dynamicIslandOffsetYDp;
-  return Math.max(-8, Math.min(28, Math.round(n)));
+  if (n === 0 || n === 500 || n === 1024 || n === 2048 || n === 4096) return n;
+  return DEFAULTS.audioCacheMaxMb;
 }
 
 export const useSettingsStore = defineStore('settings', () => {
@@ -103,9 +100,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const showCoverLyricsPreview = ref<boolean>(DEFAULTS.showCoverLyricsPreview);
   const showLockScreenLyrics = ref<boolean>(DEFAULTS.showLockScreenLyrics);
   const autoCheckUpdate = ref<boolean>(DEFAULTS.autoCheckUpdate);
-  const dynamicIslandEnabled = ref<boolean>(DEFAULTS.dynamicIslandEnabled);
-  const dynamicIslandShowLyric = ref<boolean>(DEFAULTS.dynamicIslandShowLyric);
-  const dynamicIslandOffsetYDp = ref<number>(DEFAULTS.dynamicIslandOffsetYDp);
+  const audioCacheMaxMb = ref<AudioCacheLimitMb>(DEFAULTS.audioCacheMaxMb);
   const updateMirrorMode = ref<UpdateMirrorMode>(DEFAULTS.updateMirrorMode);
   const customUpdateMirror = ref<string>(DEFAULTS.customUpdateMirror);
 
@@ -152,15 +147,8 @@ export const useSettingsStore = defineStore('settings', () => {
   watch(showLockScreenLyrics, (enabled) => {
     if (!enabled) void echoPlayer.setLiveLyric('');
   });
-  watch([dynamicIslandEnabled, dynamicIslandShowLyric, dynamicIslandOffsetYDp], ([enabled, showLyric, offsetYDp]) => {
-    void echoPlayer.setIslandConfig({
-      enabled,
-      showLyric,
-      offsetYDp: sanitizeIslandOffsetYDp(offsetYDp),
-    });
-    if (!enabled || !showLyric) {
-      void echoPlayer.setIslandLyric('');
-    }
+  watch(audioCacheMaxMb, (mb) => {
+    void echoPlayer.setAudioCacheMaxMb(sanitizeAudioCacheLimitMb(mb));
   });
 
   function getLyricOffset(trackKey: string): number {
@@ -221,9 +209,7 @@ export const useSettingsStore = defineStore('settings', () => {
     showCoverLyricsPreview.value = saved.showCoverLyricsPreview ?? DEFAULTS.showCoverLyricsPreview;
     showLockScreenLyrics.value = saved.showLockScreenLyrics ?? DEFAULTS.showLockScreenLyrics;
     autoCheckUpdate.value = saved.autoCheckUpdate ?? DEFAULTS.autoCheckUpdate;
-    dynamicIslandEnabled.value = saved.dynamicIslandEnabled ?? DEFAULTS.dynamicIslandEnabled;
-    dynamicIslandShowLyric.value = saved.dynamicIslandShowLyric ?? DEFAULTS.dynamicIslandShowLyric;
-    dynamicIslandOffsetYDp.value = sanitizeIslandOffsetYDp(saved.dynamicIslandOffsetYDp);
+    audioCacheMaxMb.value = sanitizeAudioCacheLimitMb(saved.audioCacheMaxMb);
     updateMirrorMode.value = sanitizeMirrorMode(saved.updateMirrorMode);
     customUpdateMirror.value = typeof saved.customUpdateMirror === 'string' ? saved.customUpdateMirror.trim() : '';
     hydrated = true;
@@ -232,11 +218,7 @@ export const useSettingsStore = defineStore('settings', () => {
     void echoPlayer.setEqPreset(eqPreset.value);
     void echoPlayer.setTransitionFadeMs(transitionFadeMs.value);
     void echoPlayer.setVolumeLeveling(volumeLeveling.value);
-    void echoPlayer.setIslandConfig({
-      enabled: dynamicIslandEnabled.value,
-      showLyric: dynamicIslandShowLyric.value,
-      offsetYDp: dynamicIslandOffsetYDp.value,
-    });
+    void echoPlayer.setAudioCacheMaxMb(audioCacheMaxMb.value);
   }
 
   async function persist() {
@@ -264,9 +246,7 @@ export const useSettingsStore = defineStore('settings', () => {
       showCoverLyricsPreview,
       showLockScreenLyrics,
       autoCheckUpdate,
-      dynamicIslandEnabled,
-      dynamicIslandShowLyric,
-      dynamicIslandOffsetYDp,
+      audioCacheMaxMb,
       updateMirrorMode,
       customUpdateMirror,
     ],
@@ -296,9 +276,7 @@ export const useSettingsStore = defineStore('settings', () => {
       showCoverLyricsPreview: showCoverLyricsPreview.value,
       showLockScreenLyrics: showLockScreenLyrics.value,
       autoCheckUpdate: autoCheckUpdate.value,
-      dynamicIslandEnabled: dynamicIslandEnabled.value,
-      dynamicIslandShowLyric: dynamicIslandShowLyric.value,
-      dynamicIslandOffsetYDp: sanitizeIslandOffsetYDp(dynamicIslandOffsetYDp.value),
+      audioCacheMaxMb: sanitizeAudioCacheLimitMb(audioCacheMaxMb.value),
       updateMirrorMode: updateMirrorMode.value,
       customUpdateMirror: customUpdateMirror.value.trim(),
     };
@@ -327,10 +305,8 @@ export const useSettingsStore = defineStore('settings', () => {
     if (typeof saved.showCoverLyricsPreview === 'boolean') showCoverLyricsPreview.value = saved.showCoverLyricsPreview;
     if (typeof saved.showLockScreenLyrics === 'boolean') showLockScreenLyrics.value = saved.showLockScreenLyrics;
     if (typeof saved.autoCheckUpdate === 'boolean') autoCheckUpdate.value = saved.autoCheckUpdate;
-    if (typeof saved.dynamicIslandEnabled === 'boolean') dynamicIslandEnabled.value = saved.dynamicIslandEnabled;
-    if (typeof saved.dynamicIslandShowLyric === 'boolean') dynamicIslandShowLyric.value = saved.dynamicIslandShowLyric;
-    if (saved.dynamicIslandOffsetYDp !== undefined) {
-      dynamicIslandOffsetYDp.value = sanitizeIslandOffsetYDp(saved.dynamicIslandOffsetYDp);
+    if (saved.audioCacheMaxMb !== undefined) {
+      audioCacheMaxMb.value = sanitizeAudioCacheLimitMb(saved.audioCacheMaxMb);
     }
     if (saved.updateMirrorMode !== undefined) updateMirrorMode.value = sanitizeMirrorMode(saved.updateMirrorMode);
     if (typeof saved.customUpdateMirror === 'string') customUpdateMirror.value = saved.customUpdateMirror.trim();
@@ -339,11 +315,7 @@ export const useSettingsStore = defineStore('settings', () => {
     void echoPlayer.setEqPreset(eqPreset.value);
     void echoPlayer.setTransitionFadeMs(transitionFadeMs.value);
     void echoPlayer.setVolumeLeveling(volumeLeveling.value);
-    void echoPlayer.setIslandConfig({
-      enabled: dynamicIslandEnabled.value,
-      showLyric: dynamicIslandShowLyric.value,
-      offsetYDp: dynamicIslandOffsetYDp.value,
-    });
+    void echoPlayer.setAudioCacheMaxMb(audioCacheMaxMb.value);
     await echoSystem.kvSetJson(STORAGE_KEY, exportSnapshot());
   }
 
@@ -366,9 +338,7 @@ export const useSettingsStore = defineStore('settings', () => {
     showCoverLyricsPreview,
     showLockScreenLyrics,
     autoCheckUpdate,
-    dynamicIslandEnabled,
-    dynamicIslandShowLyric,
-    dynamicIslandOffsetYDp,
+    audioCacheMaxMb,
     updateMirrorMode,
     customUpdateMirror,
     isDark,

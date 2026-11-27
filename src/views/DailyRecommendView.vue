@@ -7,11 +7,17 @@ import iconPlayerPlayFilled from '@iconify/icons-tabler/player-play-filled';
 import iconArrowsShuffle from '@iconify/icons-tabler/arrows-shuffle';
 import type { Song } from '@/types/music';
 import { kugouApi } from '@/services/kugou/kugouEngine';
+import {
+  readDailyRecommendSnapshot,
+  writeDailyRecommendSnapshot,
+} from '@/services/playback/playlistSnapshotCache';
+import { useAccountsStore } from '@/stores/accounts';
 import { usePlayerStore } from '@/stores/player';
 import { useI18n } from '@/i18n';
 import SongRow from '@/components/SongRow.vue';
 
 const router = useRouter();
+const accounts = useAccountsStore();
 const player = usePlayerStore();
 const { t } = useI18n();
 const songs = ref<Song[]>([]);
@@ -20,8 +26,22 @@ const loading = ref(true);
 const todayLabel = `${new Date().getMonth() + 1}月${new Date().getDate()}日`;
 
 onMounted(async () => {
+  const uid = accounts.activeAccount?.userid || '';
+  if (uid) {
+    const cached = await readDailyRecommendSnapshot(uid);
+    if (cached?.length) {
+      songs.value = cached;
+      loading.value = false;
+    }
+  }
   try {
-    songs.value = await kugouApi.getEverydayRecommend();
+    const fresh = await kugouApi.getEverydayRecommend();
+    if (fresh.length > 0) {
+      songs.value = fresh;
+      if (uid) void writeDailyRecommendSnapshot(uid, fresh);
+    }
+  } catch {
+    // keep cached today picks when offline
   } finally {
     loading.value = false;
   }

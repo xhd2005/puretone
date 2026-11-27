@@ -17,6 +17,7 @@ import iconChecklist from '@iconify/icons-tabler/checklist';
 import iconBookmark from '@iconify/icons-tabler/bookmark';
 import iconBookmarkFilled from '@iconify/icons-tabler/bookmark-filled';
 import iconLock from '@iconify/icons-tabler/lock';
+import iconRefresh from '@iconify/icons-tabler/refresh';
 import type { PlaylistActionContext, PlaylistSortMode, Song } from '@/types/music';
 import { kugouApi } from '@/services/kugou/kugouEngine';
 import {
@@ -25,7 +26,9 @@ import {
 } from '@/services/playback/playlistCoverResolver';
 import {
   readPlaylistSnapshot,
+  shouldSyncPlaylistSnapshot,
   sortPlaylistSongs,
+  stampPlaylistSnapshotVersion,
   writePlaylistSnapshot,
 } from '@/services/playback/playlistSnapshotCache';
 import { useAccountsStore } from '@/stores/accounts';
@@ -200,7 +203,15 @@ function removeSongsLocally(removed: Song[]) {
     return !removedKeys.has(songKey(s));
   });
   totalCount.value = Math.max(0, songs.value.length);
-  void writePlaylistSnapshot(cacheKey.value, songs.value, totalCount.value);
+  void writePlaylistSnapshot(cacheKey.value, songs.value, totalCount.value, storePlaylist.value?.totalVer);
+  if (listId.value) {
+    void playlistsStore.fetchPlaylists(true).then(() => {
+      const fresh = storePlaylist.value;
+      if (fresh?.totalVer) {
+        void stampPlaylistSnapshotVersion(cacheKey.value, fresh.totalVer, fresh.trackCount);
+      }
+    });
+  }
 }
 
 const playlistContext = computed<PlaylistActionContext | null>(() => {
@@ -278,7 +289,7 @@ async function handleBatchRemove() {
   batchBusy.value = true;
   try {
     const removed = await playlistsStore.removeSongsFromPlaylist(
-      { id: listId.value, listId: listId.value, isFavorite: isFavorite.value },
+      { id: listId.value, listId: listId.value, globalCollectionId: id.value, isFavorite: isFavorite.value },
       targets,
     );
     if (removed > 0) {
@@ -411,9 +422,68 @@ function locateCurrentSong() {
   }
 }
 
+async function syncFromCloud(manual = false) {
+  if (syncing.value) return;
+  const key = cacheKey.value;
+  const hadLocal = songs.value.length > 0;
+  syncing.value = true;
+  syncProgressCount.value = 0;
+  try {
+    if (manual && accounts.isLoggedIn) {
+      await playlistsStore.fetchPlaylists(true).catch(() => {});
+    }
+    const cloudCount = Math.max(storePlaylist.value?.trackCount || 0, expectedCount.value, totalCount.value);
+    const result = await kugouApi.fetchAllPlaylistTracks({
+      globalCollectionId: id.value,
+      listId: listId.value || undefined,
+      expectedCount: cloudCount,
+      signal: abortSignal,
+      onProgress(batch, total, done) {
+        if (abortSignal.aborted) return;
+        syncProgressCount.value = batch.length;
+        if (total > totalCount.value) totalCount.value = total;
+
+        if (!hadLocal) {
+          songs.value = batch;
+          loading.value = false;
+        }
+        if (batch.length >= 4 || done) {
+          recordPlaylistCoversFromSongs(key, batch);
+        }
+      },
+    });
+
+    if (!abortSignal.aborted && result.songs.length > 0) {
+      songs.value = result.songs;
+      totalCount.value = result.total;
+      recordPlaylistCoversFromSongs(key, result.songs);
+      void writePlaylistSnapshot(key, result.songs, result.total, storePlaylist.value?.totalVer);
+      if (isFavorite.value && listId.value) {
+        void player.syncFavoritesFromPlaylist(listId.value, result.songs, id.value);
+      }
+      if (manual) {
+        echoSystem.haptic('success');
+        ui.showToast(t('playlist.syncedToast', { count: result.songs.length }));
+      }
+    }
+  } catch {
+    if (manual) {
+      ui.showToast(t('playlist.actionFailed'));
+    }
+  } finally {
+    loading.value = false;
+    syncing.value = false;
+  }
+}
+
+function handleManualSync() {
+  echoSystem.haptic('light');
+  void syncFromCloud(true);
+}
+
 onMounted(async () => {
   if (accounts.isLoggedIn && !playlistsStore.playlists.length) {
-    void playlistsStore.fetchPlaylists(false);
+    await playlistsStore.fetchPlaylists(false);
   }
   const key = cacheKey.value;
 
@@ -430,41 +500,15 @@ onMounted(async () => {
     }
   }
 
-  // 2. Full progressive v3 pagination sync (commits cleanly to avoid mid-sync flicker)
-  syncing.value = true;
-  try {
-    const result = await kugouApi.fetchAllPlaylistTracks({
-      globalCollectionId: id.value,
-      listId: listId.value || undefined,
-      expectedCount: Math.max(expectedCount.value, totalCount.value),
-      signal: abortSignal,
-      onProgress(batch, total, done) {
-        if (abortSignal.aborted) return;
-        syncProgressCount.value = batch.length;
-        if (total > totalCount.value) totalCount.value = total;
-
-        if (!hadSnapshot) {
-          songs.value = batch;
-          loading.value = false;
-        }
-        if (batch.length >= 4 || done) {
-          recordPlaylistCoversFromSongs(key, batch);
-        }
-      },
-    });
-
-    if (!abortSignal.aborted && result.songs.length > 0) {
-      songs.value = result.songs;
-      totalCount.value = result.total;
-      recordPlaylistCoversFromSongs(key, result.songs);
-      void writePlaylistSnapshot(key, result.songs, result.total);
-      if (isFavorite.value && listId.value) {
-        void player.syncFavoritesFromPlaylist(listId.value, result.songs, id.value);
-      }
-    }
-  } finally {
+  // 2. Smart version-checked sync: skip redundant full re-sync when cloud totalVer & count match!
+  const cloudMeta = {
+    totalVer: storePlaylist.value?.totalVer,
+    trackCount: Math.max(storePlaylist.value?.trackCount || 0, expectedCount.value),
+  };
+  if (shouldSyncPlaylistSnapshot(snap, cloudMeta)) {
+    await syncFromCloud(false);
+  } else {
     loading.value = false;
-    syncing.value = false;
   }
 });
 
@@ -508,6 +552,15 @@ onUnmounted(() => {
         </div>
 
         <div v-else class="flex items-center gap-0.5 shrink-0">
+          <button
+            type="button"
+            class="w-9 h-9 rounded-full bg-transparent border-0 flex items-center justify-center am-accent-text am-tap"
+            :aria-label="t('library.syncNow')"
+            :disabled="syncing"
+            @click="handleManualSync"
+          >
+            <Icon :icon="iconRefresh" class="w-4.5 h-4.5" :class="{ 'animate-spin': syncing }" />
+          </button>
           <button
             type="button"
             class="w-9 h-9 rounded-full bg-transparent border-0 flex items-center justify-center am-accent-text am-tap"

@@ -226,15 +226,15 @@ class EchoSystemPlugin : Plugin() {
         pendingOpenNowPlaying = false
 
         val versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            pkgInfo?.longVersionCode?.toInt() ?: 15
+            pkgInfo?.longVersionCode?.toInt() ?: 16
         } else {
             @Suppress("DEPRECATION")
-            pkgInfo?.versionCode ?: 15
+            pkgInfo?.versionCode ?: 16
         }
         call.resolve(
             JSObject()
                 .put("openNowPlaying", openNowPlaying)
-                .put("versionName", pkgInfo?.versionName ?: "2.4.8")
+                .put("versionName", pkgInfo?.versionName ?: "2.4.9")
                 .put("versionCode", versionCode),
         )
     }
@@ -302,39 +302,49 @@ class EchoSystemPlugin : Plugin() {
     }
 
     @PluginMethod
-    fun checkOverlayPermission(call: PluginCall) {
-        val granted = Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(context)
-        call.resolve(JSObject().put("granted", granted))
+    fun getSnapshotCacheStats(call: PluginCall) {
+        var totalBytes = 0L
+        var playlistCount = 0
+        try {
+            val sql = """
+                SELECT k, LENGTH(CAST(v AS BLOB)) AS sz
+                FROM kv_store
+                WHERE k LIKE 'playlist.snap.v1:%'
+                   OR k LIKE 'playlists.list.v1:%'
+                   OR k LIKE 'daily.recommend.v1:%'
+                   OR k LIKE 'playlist.covers.%'
+            """.trimIndent()
+            dbHelper.readableDatabase.rawQuery(sql, null).use { c ->
+                while (c.moveToNext()) {
+                    val key = c.getString(0) ?: ""
+                    totalBytes += c.getLong(1).coerceAtLeast(0L)
+                    if (key.startsWith("playlist.snap.v1:")) {
+                        playlistCount += 1
+                    }
+                }
+            }
+        } catch (_: Exception) {
+        }
+        call.resolve(
+            JSObject()
+                .put("usedBytes", totalBytes)
+                .put("playlistCount", playlistCount),
+        )
     }
 
     @PluginMethod
-    fun openOverlaySettings(call: PluginCall) {
-        try {
-            val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                Intent(
-                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    Uri.parse("package:${context.packageName}"),
-                )
-            } else {
-                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                    data = Uri.fromParts("package", context.packageName, null)
-                }
-            }
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            context.startActivity(intent)
-            call.resolve(JSObject().put("opened", true))
+    fun clearSnapshotCache(call: PluginCall) {
+        val cleared = try {
+            dbHelper.writableDatabase.delete(
+                "kv_store",
+                "k LIKE 'playlist.snap.v1:%' OR k LIKE 'playlists.list.v1:%' OR k LIKE 'daily.recommend.v1:%' OR k LIKE 'playlist.covers.%'",
+                null,
+            )
+            true
         } catch (_: Exception) {
-            try {
-                val fallback = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                    data = Uri.fromParts("package", context.packageName, null)
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                }
-                context.startActivity(fallback)
-                call.resolve(JSObject().put("opened", true))
-            } catch (_: Exception) {
-                call.resolve(JSObject().put("opened", false))
-            }
+            false
         }
+        call.resolve(JSObject().put("cleared", cleared))
     }
 
     @PluginMethod
@@ -434,7 +444,7 @@ class EchoSystemPlugin : Plugin() {
                 try {
                     val req = Request.Builder()
                         .url(targetUrl)
-                        .header("User-Agent", "MELUNE-Android/2.4.8")
+                        .header("User-Agent", "MELUNE-Android/2.4.9")
                         .build()
                     val downloadedOk = updateHttpClient.newCall(req).execute().use { res ->
                         if (!res.isSuccessful) {
