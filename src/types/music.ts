@@ -234,11 +234,35 @@ export interface ArtistSummary {
   isFollow?: boolean;
 }
 
+export interface ArtistBioSection {
+  title: string;
+  content: string;
+}
+
 export interface ArtistDetail extends ArtistSummary {
   mvCount: number;
   birthday?: string;
   intro: string;
   longIntro: string;
+  bioSections?: ArtistBioSection[];
+}
+
+export interface SongQualitySpec {
+  quality: string;
+  label: string;
+  bitrate: number;
+  sizeText: string;
+  extname: string;
+  needVip: boolean;
+  obtainable: boolean;
+}
+
+export interface SongEnrichedMeta {
+  albumId?: string;
+  albumName?: string;
+  durationSec?: number;
+  coverUrl?: string;
+  qualities: SongQualitySpec[];
 }
 
 export interface AlbumSummary {

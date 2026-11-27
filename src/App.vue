@@ -84,11 +84,6 @@ onMounted(async () => {
     }
   });
 
-  await echoSystem.onAutoClaimIntent(() => {
-    ui.accountSheetOpen = true;
-    void vip.maybeAutoClaimOnLaunch(true);
-  });
-
   await echoSystem.onOpenNowPlayingIntent(() => {
     if (player.currentSong) {
       ui.openNowPlaying('cover');
@@ -98,19 +93,19 @@ onMounted(async () => {
   if (launchFlags.openNowPlaying && player.currentSong) {
     ui.openNowPlaying('cover');
   }
-  if (launchFlags.autoClaim) {
-    ui.accountSheetOpen = true;
-    void vip.maybeAutoClaimOnLaunch(true);
-  } else {
-    setTimeout(() => {
-      void vip.maybeAutoClaimOnLaunch(false);
-    }, 2000);
-  }
+  setTimeout(() => {
+    void vip.maybeAutoClaimOnLaunch(false);
+  }, 2000);
 
-  // Silent daily update check (non-intrusive; only pops modal if a newer GitHub Release exists)
+  // Silent daily update check (non-intrusive; China-friendly multi-mirror auto-fallback)
   setTimeout(async () => {
     try {
-      const update = await checkForAppUpdate({ silent: true, currentVersion });
+      const update = await checkForAppUpdate({
+        silent: true,
+        currentVersion,
+        mirrorMode: settings.updateMirrorMode,
+        customMirror: settings.customUpdateMirror,
+      });
       if (update?.hasUpdate) {
         ui.updateReleaseInfo = update;
       }

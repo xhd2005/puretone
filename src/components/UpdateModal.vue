@@ -5,6 +5,7 @@ import iconDownload from '@iconify/icons-tabler/download';
 import iconExternalLink from '@iconify/icons-tabler/external-link';
 import iconX from '@iconify/icons-tabler/x';
 import iconSparkles from '@iconify/icons-tabler/sparkles';
+import iconShieldCheck from '@iconify/icons-tabler/shield-check';
 import { useUiStore } from '@/stores/ui';
 import { useI18n } from '@/i18n';
 import { echoSystem } from '@/native/echoSystem';
@@ -18,6 +19,7 @@ const info = computed(() => ui.updateReleaseInfo);
 const downloading = ref(false);
 const progressPct = ref(0);
 const downloadedText = ref('');
+const activeNodeLabel = ref('');
 const errorText = ref('');
 let unsubProgress: (() => void) | null = null;
 
@@ -47,9 +49,11 @@ watch(info, async (val) => {
   errorText.value = '';
   progressPct.value = 0;
   downloadedText.value = '';
+  activeNodeLabel.value = '';
   downloading.value = false;
   if (val && !unsubProgress) {
     unsubProgress = await echoSystem.onUpdateDownloadProgress((ev) => {
+      if (ev.sourceLabel) activeNodeLabel.value = ev.sourceLabel;
       if (ev.error) {
         downloading.value = false;
         errorText.value = ev.error;
@@ -63,7 +67,7 @@ watch(info, async (val) => {
       }
       if (ev.done) {
         downloading.value = false;
-        ui.showToast('安装包已就绪，请在系统弹窗中确认安装');
+        ui.showToast('安装包校验通过，请在系统弹窗中确认安装');
       }
     });
   }
@@ -84,14 +88,26 @@ async function handleDownloadInstall() {
   echoSystem.haptic('medium');
   errorText.value = '';
 
-  if (!info.value.apkUrl) {
+  const candidates = info.value.downloadCandidates?.length
+    ? info.value.downloadCandidates
+    : info.value.apkUrl
+      ? [{ url: info.value.apkUrl, label: 'GitHub' }]
+      : [];
+
+  if (!candidates.length) {
     await echoSystem.openExternalUrl(info.value.htmlUrl);
     return;
   }
 
   downloading.value = true;
   progressPct.value = 2;
-  const res = await echoSystem.downloadAndInstallApk(info.value.apkUrl, info.value.apkFileName);
+  activeNodeLabel.value = candidates[0].label;
+  const res = await echoSystem.downloadAndInstallApk({
+    url: candidates[0].url,
+    candidates,
+    fileName: info.value.apkFileName,
+    expectedSha256: info.value.apkSha256,
+  });
   if (!res.started) {
     downloading.value = false;
     if (res.message) {
@@ -104,7 +120,8 @@ async function handleDownloadInstall() {
 async function handleOpenBrowser() {
   if (!info.value) return;
   echoSystem.haptic('light');
-  await echoSystem.openExternalUrl(info.value.apkUrl || info.value.htmlUrl);
+  const preferredUrl = info.value.downloadCandidates?.[0]?.url || info.value.apkUrl || info.value.htmlUrl;
+  await echoSystem.openExternalUrl(preferredUrl);
 }
 
 async function handleSkip() {
@@ -137,10 +154,17 @@ async function handleSkip() {
                   v{{ info.latestVersion }}
                 </span>
               </div>
-              <div class="text-[12px] text-[var(--text-secondary)] mt-0.5 tabular-nums">
+              <div class="text-[12px] text-[var(--text-secondary)] mt-0.5 tabular-nums truncate">
                 {{ t('update.current', { ver: info.currentVersion }) }}
                 <template v-if="info.apkSizeBytes"> · {{ formatBytes(info.apkSizeBytes) }}</template>
                 <template v-if="info.publishedAt"> · {{ info.publishedAt }}</template>
+              </div>
+              <div
+                v-if="info.checkedVia"
+                class="mt-1 inline-flex items-center gap-1 text-[10.5px] font-semibold am-accent-text"
+              >
+                <Icon :icon="iconShieldCheck" class="w-3 h-3 shrink-0" />
+                <span class="truncate">{{ t('update.checkedVia', { node: info.checkedVia }) }}</span>
               </div>
             </div>
           </div>
@@ -175,13 +199,16 @@ async function handleSkip() {
             </template>
           </div>
 
-          <!-- Download Progress Bar -->
-          <div v-if="downloading || progressPct > 0" class="rounded-[16px] bg-[var(--bg-card)] p-3.5">
-            <div class="flex items-center justify-between text-[12px] font-semibold mb-2">
+          <!-- Download Progress Bar + Active Mirror Node -->
+          <div v-if="downloading || progressPct > 0" class="rounded-[16px] bg-[var(--bg-card)] p-3.5 space-y-1.5">
+            <div class="flex items-center justify-between text-[12px] font-semibold">
               <span class="text-[var(--text-primary)]">
-                {{ progressPct >= 100 ? '下载完成，正在拉起安装…' : '正在下载安装包…' }}
+                {{ progressPct >= 100 ? '校验通过，正在拉起安装…' : '正在下载安装包…' }}
               </span>
               <span class="am-accent-text tabular-nums">{{ progressPct }}% {{ downloadedText ? `(${downloadedText})` : '' }}</span>
+            </div>
+            <div v-if="activeNodeLabel" class="text-[11px] text-[var(--text-secondary)] truncate">
+              {{ t('update.sourceNode', { node: activeNodeLabel }) }}
             </div>
             <div class="h-2 rounded-full bg-[var(--bg-subtle)] overflow-hidden">
               <div
@@ -212,8 +239,8 @@ async function handleSkip() {
               class="h-10 rounded-[12px] bg-[var(--bg-subtle)] text-[var(--text-primary)] text-[13px] font-semibold border-0 flex items-center justify-center gap-1.5 am-tap"
               @click="handleOpenBrowser"
             >
-              <Icon :icon="iconExternalLink" class="w-4 h-4" />
-              <span>{{ t('update.browserDownload') }}</span>
+              <Icon :icon="iconExternalLink" class="w-4 h-4 shrink-0" />
+              <span class="truncate">{{ t('update.browserDownload') }}</span>
             </button>
             <button
               type="button"

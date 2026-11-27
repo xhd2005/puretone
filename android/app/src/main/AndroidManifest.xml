@@ -19,9 +19,9 @@
     <application
         android:allowBackup="true"
         android:appCategory="audio"
-        android:icon="@mipmap/ic_launcher"
+        android:icon="@mipmap/ic_launcher_melune"
         android:label="@string/app_name"
-        android:roundIcon="@mipmap/ic_launcher_round"
+        android:roundIcon="@mipmap/ic_launcher_melune_round"
         android:supportsRtl="true"
         android:usesCleartextTraffic="true"
         android:theme="@style/AppTheme">
@@ -33,13 +33,21 @@
             android:label="@string/title_activity_main"
             android:launchMode="singleTask"
             android:theme="@style/AppTheme.NoActionBarLaunch"
-            android:windowSoftInputMode="adjustResize">
+            android:windowSoftInputMode="adjustResize" />
 
+        <activity-alias
+            android:name="com.xhd2005.puretone.MeluneLauncher"
+            android:enabled="true"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_melune"
+            android:label="@string/app_name"
+            android:roundIcon="@mipmap/ic_launcher_melune_round"
+            android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-        </activity>
+        </activity-alias>
 
         <service
             android:name=".player.EchoPlaybackService"
@@ -58,10 +66,6 @@
                 <action android:name="android.intent.action.MEDIA_BUTTON" />
             </intent-filter>
         </receiver>
-
-        <receiver
-            android:name=".plugins.VipReminderReceiver"
-            android:exported="false" />
 
         <receiver
             android:name=".widget.PureToneWidgetProvider"

@@ -12,7 +12,20 @@ import iconDisc from '@iconify/icons-tabler/disc';
 import iconUser from '@iconify/icons-tabler/user';
 import iconPhoto from '@iconify/icons-tabler/photo';
 import iconCopy from '@iconify/icons-tabler/copy';
-import type { CommentClassifyTag, CommentHotwordTag, SongComment } from '@/types/music';
+import iconHeart from '@iconify/icons-tabler/heart';
+import iconHeartFilled from '@iconify/icons-tabler/heart-filled';
+import iconPlaylistAdd from '@iconify/icons-tabler/playlist-add';
+import iconSparkles from '@iconify/icons-tabler/sparkles';
+import iconPlayerPlayFilled from '@iconify/icons-tabler/player-play-filled';
+import iconWaveSine from '@iconify/icons-tabler/wave-sine';
+import type {
+  AlbumDetail,
+  CommentHotwordTag,
+  Song,
+  SongClimaxRange,
+  SongComment,
+  SongEnrichedMeta,
+} from '@/types/music';
 import { formatCompactCount, kugouApi } from '@/services/kugou/kugouEngine';
 import {
   extractArtistRefsFromSong,
@@ -26,7 +39,7 @@ import { useI18n } from '@/i18n';
 import { useDraggableSheet } from '@/composables/useDraggableSheet';
 import { echoSystem } from '@/native/echoSystem';
 
-type CommentSubMode = 'all' | 'classify' | 'hotword';
+type CommentSubMode = 'all' | 'hot' | 'newest' | 'hotword';
 
 interface FloorState {
   open: boolean;
@@ -52,14 +65,14 @@ const hasMore = ref(false);
 const page = ref(1);
 const specialId = ref('');
 
-const classifies = ref<CommentClassifyTag[]>([]);
-const selectedClassifyId = ref('');
-const classifySort = ref<1 | 2>(1);
-
 const hotwords = ref<CommentHotwordTag[]>([]);
 const selectedHotword = ref('');
-
 const floorStates = ref<Record<string, FloorState>>({});
+
+// Enriched track details state
+const enrichedMeta = ref<SongEnrichedMeta | null>(null);
+const albumDetail = ref<AlbumDetail | null>(null);
+const climaxRange = ref<SongClimaxRange | null>(null);
 
 // Composer state
 const composerText = ref('');
@@ -67,7 +80,67 @@ const sending = ref(false);
 const replyTarget = ref<SongComment | null>(null);
 
 const song = computed(() => ui.commentsSheetSong);
+const isCurrentPlayingSong = computed(() => {
+  const s = song.value;
+  const cur = player.currentSong;
+  if (!s || !cur) return false;
+  return s.id === cur.id || (Boolean(s.hash && cur.hash) && s.hash.toLowerCase() === cur.hash.toLowerCase());
+});
+const isFavoriteSong = computed(() => {
+  const h = song.value?.hash?.toLowerCase();
+  return Boolean(h && player.favoriteHashes.has(h));
+});
 const artistRefs = computed(() => (song.value ? extractArtistRefsFromSong(song.value) : []));
+
+const resolvedDurationSec = computed(() => {
+  const s = song.value;
+  if (!s) return 0;
+  if (enrichedMeta.value?.durationSec && enrichedMeta.value.durationSec > 0) return enrichedMeta.value.durationSec;
+  if (s.duration && s.duration > 0) return s.duration;
+  if (isCurrentPlayingSong.value && player.durationMs > 0) return Math.round(player.durationMs / 1000);
+  return 0;
+});
+
+const resolvedAlbumName = computed(
+  () => albumDetail.value?.name || enrichedMeta.value?.albumName || song.value?.album || '',
+);
+const resolvedAlbumId = computed(() => {
+  const cand = albumDetail.value?.id || enrichedMeta.value?.albumId || song.value?.albumId || '';
+  return cand && cand !== '0' ? cand : '';
+});
+const resolvedAlbumCover = computed(
+  () => albumDetail.value?.coverUrl || enrichedMeta.value?.coverUrl || song.value?.coverUrl || '',
+);
+
+const peakQualityLabel = computed(() => {
+  const specs = enrichedMeta.value?.qualities || [];
+  if (specs.length) {
+    const order = ['viper_atmos', 'high', 'flac', '320', '128'];
+    for (const q of order) {
+      const hit = specs.find((item) => item.quality === q);
+      if (hit) {
+        if (q === 'high') return 'Hi-Res';
+        if (q === 'flac') return 'FLAC';
+        if (q === 'viper_atmos') return 'Atmos';
+        if (q === '320') return '320K';
+        return '128K';
+      }
+    }
+  }
+  const s = song.value;
+  if (isCurrentPlayingSong.value && /flac|无损|hi-res/i.test(player.sourceTag)) return 'FLAC';
+  if (s?.hashFlac) return 'FLAC';
+  if (s?.hash320) return '320K';
+  return '128K';
+});
+
+const albumPreviewTracks = computed<Song[]>(() => {
+  const list = albumDetail.value?.songs || [];
+  if (!list.length) return [];
+  const curHash = song.value?.hash?.toLowerCase();
+  const others = list.filter((item) => !curHash || item.hash.toLowerCase() !== curHash);
+  return (others.length ? others : list).slice(0, 5);
+});
 
 const dragSheet = useDraggableSheet({
   detents: [0.74, 0.94],
@@ -80,24 +153,19 @@ const dragSheet = useDraggableSheet({
 
 function formatDuration(sec: number): string {
   const s = Math.max(0, Math.floor(sec || 0));
+  if (s <= 0) return '--:--';
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
-const qualityBadges = computed(() => {
-  const s = song.value;
-  if (!s) return [];
-  const badges: string[] = [];
-  if (s.hashFlac) badges.push('FLAC');
-  if (s.hash320) badges.push('320K');
-  if (s.hash) badges.push('128K');
-  return badges;
-});
+function formatMsShort(ms: number): string {
+  const sec = Math.max(0, Math.floor(ms / 1000));
+  return `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`;
+}
 
 async function resolveMixSongId(): Promise<number | null> {
   const s = song.value;
   if (!s) return null;
   if (s.mixSongId && s.mixSongId > 0) return s.mixSongId;
-  // Fallback search by title+artist to resolve mixSongId for external/cached tracks
   const found = await kugouApi.searchSongs(`${s.title} ${s.artist}`, 1, 5).catch(() => ({ songs: [], total: 0 }));
   const matched =
     found.songs.find((item) => item.hash && s.hash && item.hash.toLowerCase() === s.hash.toLowerCase()) ||
@@ -106,10 +174,36 @@ async function resolveMixSongId(): Promise<number | null> {
 }
 
 let activeMixSongId = 0;
+let sheetSessionSeq = 0;
+
+async function loadEnrichedTrackDetails(s: Song, seq: number) {
+  enrichedMeta.value = null;
+  albumDetail.value = null;
+  climaxRange.value = null;
+
+  const [meta, climax] = await Promise.all([
+    kugouApi.getSongEnrichedMeta(s).catch(() => null),
+    s.hash ? kugouApi.getSongClimax(s.hash, (s.duration || 0) * 1000).catch(() => null) : Promise.resolve(null),
+  ]);
+  if (seq !== sheetSessionSeq) return;
+  enrichedMeta.value = meta;
+  climaxRange.value = climax;
+
+  const alId =
+    (meta?.albumId && meta.albumId !== '0' ? meta.albumId : '') ||
+    (s.albumId && s.albumId !== '0' ? s.albumId : '');
+  if (alId) {
+    const al = await kugouApi.getAlbumDetail(alId).catch(() => null);
+    if (seq === sheetSessionSeq && al) {
+      albumDetail.value = al;
+    }
+  }
+}
 
 async function fetchComments(reset = true) {
   const s = song.value;
   if (!s) return;
+  const reqSeq = sheetSessionSeq;
   if (reset) {
     loading.value = true;
     page.value = 1;
@@ -124,6 +218,7 @@ async function fetchComments(reset = true) {
   try {
     if (!activeMixSongId) {
       const resolved = await resolveMixSongId();
+      if (reqSeq !== sheetSessionSeq) return;
       if (!resolved) {
         totalCount.value = 0;
         hasMore.value = false;
@@ -133,34 +228,31 @@ async function fetchComments(reset = true) {
     }
 
     let res;
-    if (subMode.value === 'classify' && selectedClassifyId.value) {
-      res = await kugouApi.getSongCommentsByClassify(
-        activeMixSongId,
-        selectedClassifyId.value,
-        classifySort.value,
-        page.value,
-      );
-    } else if (subMode.value === 'hotword' && selectedHotword.value) {
+    if (subMode.value === 'hot') {
+      res = await kugouApi.getSongCommentsRanked(activeMixSongId, 'hot', page.value);
+    } else if (subMode.value === 'newest') {
+      res = await kugouApi.getSongCommentsRanked(activeMixSongId, 'newest', page.value);
+    } else if (subMode.value === 'hotword') {
+      if (!selectedHotword.value) {
+        comments.value = [];
+        hasMore.value = false;
+        return;
+      }
       res = await kugouApi.getSongCommentsByHotword(activeMixSongId, selectedHotword.value, page.value);
     } else {
       res = await kugouApi.getSongComments(activeMixSongId, page.value);
       if (reset) {
-        classifies.value = res.classifies;
         hotwords.value = res.hotwords;
-        if (!selectedClassifyId.value && res.classifies.length) {
-          selectedClassifyId.value = res.classifies[0].id;
-        }
         if (!selectedHotword.value && res.hotwords.length) {
           selectedHotword.value = res.hotwords[0].word;
         }
       }
     }
 
+    if (reqSeq !== sheetSessionSeq) return;
     if (res.specialId) specialId.value = res.specialId;
-    if (res.total > 0 || reset) {
-      if (subMode.value === 'all' || !totalCount.value) {
-        totalCount.value = res.total;
-      }
+    if (res.total > 0 && (subMode.value === 'all' || !totalCount.value)) {
+      totalCount.value = res.total;
     }
     hasMore.value = res.hasMore;
     if (reset) {
@@ -170,11 +262,13 @@ async function fetchComments(reset = true) {
       comments.value = [...comments.value, ...res.comments.filter((c) => !existing.has(c.id))];
     }
   } catch {
-    if (reset) comments.value = [];
+    if (reqSeq === sheetSessionSeq && reset) comments.value = [];
     hasMore.value = false;
   } finally {
-    loading.value = false;
-    loadingMore.value = false;
+    if (reqSeq === sheetSessionSeq) {
+      loading.value = false;
+      loadingMore.value = false;
+    }
   }
 }
 
@@ -182,11 +276,10 @@ watch(
   () => ui.commentsSheetSong,
   (next) => {
     if (!next) return;
+    const seq = ++sheetSessionSeq;
     dragSheet.reset();
     subMode.value = 'all';
-    selectedClassifyId.value = '';
     selectedHotword.value = '';
-    classifies.value = [];
     hotwords.value = [];
     replyTarget.value = null;
     composerText.value = '';
@@ -194,6 +287,7 @@ watch(
     activeMixSongId = next.mixSongId || 0;
     totalCount.value = 0;
     void fetchComments(true);
+    void loadEnrichedTrackDetails(next, seq);
   },
 );
 
@@ -201,34 +295,19 @@ function switchSubMode(next: CommentSubMode) {
   if (subMode.value === next) return;
   echoSystem.haptic('selection');
   subMode.value = next;
-  if (next === 'classify' && !selectedClassifyId.value && classifies.value.length) {
-    selectedClassifyId.value = classifies.value[0].id;
-  }
   if (next === 'hotword' && !selectedHotword.value && hotwords.value.length) {
     selectedHotword.value = hotwords.value[0].word;
   }
   void fetchComments(true);
 }
 
-function selectClassify(id: string) {
-  if (selectedClassifyId.value === id) return;
-  echoSystem.haptic('selection');
-  selectedClassifyId.value = id;
-  void fetchComments(true);
-}
-
-function toggleClassifySort(sort: 1 | 2) {
-  if (classifySort.value === sort) return;
-  echoSystem.haptic('selection');
-  classifySort.value = sort;
-  void fetchComments(true);
-}
-
 function selectHotword(word: string) {
-  if (selectedHotword.value === word) return;
   echoSystem.haptic('selection');
+  const changed = selectedHotword.value !== word || subMode.value !== 'hotword';
   selectedHotword.value = word;
-  void fetchComments(true);
+  subMode.value = 'hotword';
+  ui.commentsSheetTab = 'comments';
+  if (changed) void fetchComments(true);
 }
 
 async function toggleFloorReplies(cmt: SongComment) {
@@ -408,7 +487,50 @@ async function openArtist(idx = 0) {
 async function openAlbum() {
   if (!song.value) return;
   echoSystem.haptic('light');
-  await openAlbumFromSong(song.value, router, ui, t('album.empty'));
+  const enrichedSong: Song = {
+    ...song.value,
+    albumId: resolvedAlbumId.value || song.value.albumId,
+    album: resolvedAlbumName.value || song.value.album,
+    coverUrl: resolvedAlbumCover.value || song.value.coverUrl,
+  };
+  await openAlbumFromSong(enrichedSong, router, ui, t('album.empty'));
+}
+
+async function playChorusHighlight() {
+  if (!song.value || !climaxRange.value) return;
+  echoSystem.haptic('medium');
+  const startMs = climaxRange.value.startMs;
+  if (!isCurrentPlayingSong.value) {
+    await player.playSong(song.value);
+  } else if (!player.isPlaying) {
+    await player.togglePlay(true);
+  }
+  await player.seek(startMs);
+  ui.showToast(`${t('comments.detailClimax')} ${formatMsShort(startMs)}`);
+}
+
+async function toggleFav() {
+  if (!song.value) return;
+  echoSystem.haptic('light');
+  await player.toggleFavorite(song.value);
+}
+
+function playNextInQueue() {
+  if (!song.value) return;
+  player.addToQueueNext(song.value);
+}
+
+function openUnblock() {
+  if (!song.value) return;
+  const s = song.value;
+  ui.commentsSheetSong = null;
+  ui.unblockModalSong = s;
+}
+
+function playAlbumSibling(track: Song) {
+  const list = albumDetail.value?.songs || [track];
+  const idx = list.findIndex((item) => item.id === track.id && item.hash === track.hash);
+  void player.playQueue(list, idx >= 0 ? idx : 0);
 }
 
 async function copyMeta() {
@@ -450,10 +572,10 @@ function openPoster() {
               <div class="w-11 h-1.5 rounded-full bg-[var(--text-tertiary)]/55" />
             </div>
 
-            <!-- Song Header Card (EchoMusic-inspired, Liquid Glass refined) -->
+            <!-- Song Header Card -->
             <div class="px-4 pt-1 pb-3 flex items-center gap-3">
               <div class="w-13 h-13 rounded-[12px] overflow-hidden bg-[var(--bg-subtle)] shrink-0 shadow-md flex items-center justify-center">
-                <img v-if="song.coverUrl" :src="song.coverUrl" class="w-full h-full object-cover" alt="" />
+                <img v-if="resolvedAlbumCover" :src="resolvedAlbumCover" class="w-full h-full object-cover" alt="" />
                 <Icon v-else :icon="iconMusic" class="w-5 h-5 text-[var(--text-tertiary)]" />
               </div>
               <div class="min-w-0 flex-1">
@@ -521,10 +643,58 @@ function openPoster() {
             @touchend.passive="dragSheet.onBodyTouchEnd"
             @touchcancel.passive="dragSheet.onBodyTouchEnd"
           >
-            <!-- ==================== TAB A: TRACK DETAILS ==================== -->
+            <!-- ==================== TAB A: RICH TRACK DETAILS ==================== -->
             <template v-if="ui.commentsSheetTab === 'details'">
+              <!-- Quick Actions Strip -->
+              <div class="grid grid-cols-4 gap-2">
+                <button
+                  type="button"
+                  class="py-2.5 px-1.5 rounded-[16px] bg-[var(--bg-card)] border-0 flex flex-col items-center justify-center gap-1 shadow-xs am-tap"
+                  @click="toggleFav"
+                >
+                  <Icon
+                    :icon="isFavoriteSong ? iconHeartFilled : iconHeart"
+                    class="w-4.5 h-4.5"
+                    :class="isFavoriteSong ? 'text-[#ff3b30]' : 'am-accent-text'"
+                  />
+                  <span class="text-[11px] font-semibold text-[var(--text-primary)] truncate max-w-full">
+                    {{ isFavoriteSong ? t('song.unfavorite') : t('song.favorite') }}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  class="py-2.5 px-1.5 rounded-[16px] bg-[var(--bg-card)] border-0 flex flex-col items-center justify-center gap-1 shadow-xs am-tap"
+                  @click="playNextInQueue"
+                >
+                  <Icon :icon="iconPlaylistAdd" class="w-4.5 h-4.5 am-accent-text" />
+                  <span class="text-[11px] font-semibold text-[var(--text-primary)] truncate max-w-full">
+                    {{ t('song.playNext') }}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  class="py-2.5 px-1.5 rounded-[16px] bg-[var(--bg-card)] border-0 flex flex-col items-center justify-center gap-1 shadow-xs am-tap"
+                  @click="openUnblock"
+                >
+                  <Icon :icon="iconSparkles" class="w-4.5 h-4.5 am-accent-text" />
+                  <span class="text-[11px] font-semibold text-[var(--text-primary)] truncate max-w-full">
+                    {{ t('song.unblock') }}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  class="py-2.5 px-1.5 rounded-[16px] bg-[var(--bg-card)] border-0 flex flex-col items-center justify-center gap-1 shadow-xs am-tap"
+                  @click="openPoster"
+                >
+                  <Icon :icon="iconPhoto" class="w-4.5 h-4.5 am-accent-text" />
+                  <span class="text-[11px] font-semibold text-[var(--text-primary)] truncate max-w-full">
+                    {{ t('song.poster') }}
+                  </span>
+                </button>
+              </div>
+
+              <!-- Artist + Album Spotlight Card -->
               <section class="rounded-[20px] bg-[var(--bg-card)] overflow-hidden divide-y divide-[var(--hairline)] shadow-xs">
-                <!-- Clickable Artist Row(s) -->
                 <div class="px-4 py-3 space-y-2">
                   <div class="text-[11.5px] font-medium text-[var(--text-secondary)]">{{ t('comments.detailArtist') }}</div>
                   <div class="flex flex-wrap gap-2">
@@ -542,78 +712,181 @@ function openPoster() {
                   </div>
                 </div>
 
-                <!-- Clickable Album Row -->
+                <!-- Rich Album Row (Auto-populated via privilege_lite even if missing on track!) -->
                 <button
-                  v-if="song.album"
+                  v-if="resolvedAlbumName || resolvedAlbumId"
                   type="button"
-                  class="w-full px-4 py-3 bg-transparent border-0 flex items-center justify-between gap-2 text-left am-tap"
+                  class="w-full px-4 py-3 bg-transparent border-0 flex items-center gap-3 text-left am-tap"
                   @click="openAlbum"
                 >
-                  <div class="min-w-0">
-                    <div class="text-[11.5px] text-[var(--text-secondary)]">{{ t('comments.detailAlbum') }}</div>
-                    <div class="text-[14.5px] font-semibold text-[var(--text-primary)] truncate mt-0.5 flex items-center gap-1.5">
-                      <Icon :icon="iconDisc" class="w-4 h-4 am-accent-text shrink-0" />
-                      <span class="truncate">{{ song.album }}</span>
+                  <div class="w-12 h-12 rounded-[10px] overflow-hidden bg-[var(--bg-subtle)] shrink-0 shadow-xs flex items-center justify-center">
+                    <img v-if="resolvedAlbumCover" :src="resolvedAlbumCover" class="w-full h-full object-cover" alt="" />
+                    <Icon v-else :icon="iconDisc" class="w-5 h-5 am-accent-text" />
+                  </div>
+                  <div class="min-w-0 flex-1">
+                    <div class="text-[11px] text-[var(--text-secondary)]">{{ t('comments.detailAlbum') }}</div>
+                    <div class="text-[14.5px] font-bold text-[var(--text-primary)] truncate mt-0.5">
+                      {{ resolvedAlbumName || t('comments.viewFullAlbum') }}
+                    </div>
+                    <div
+                      v-if="albumDetail?.publishDate || albumDetail?.language"
+                      class="text-[11px] text-[var(--text-tertiary)] truncate mt-0.5 tabular-nums"
+                    >
+                      <template v-if="albumDetail?.publishDate">{{ albumDetail.publishDate }}</template>
+                      <template v-if="albumDetail?.publishDate && albumDetail?.language"> · </template>
+                      <template v-if="albumDetail?.language">{{ albumDetail.language }}</template>
                     </div>
                   </div>
                   <Icon :icon="iconChevronRight" class="w-4.5 h-4.5 text-[var(--text-tertiary)] shrink-0" />
                 </button>
 
-                <!-- Duration + Audio Quality + Comments Count -->
+                <!-- 3-Metric Telemetry Grid -->
                 <div class="px-4 py-3 grid grid-cols-3 gap-2 text-center">
-                  <div class="rounded-xl bg-[var(--bg-subtle)]/55 py-2 px-1">
-                    <div class="text-[13.5px] font-bold text-[var(--text-primary)] tabular-nums">
-                      {{ formatDuration(song.duration) }}
+                  <div class="rounded-xl bg-[var(--bg-subtle)]/55 py-2.5 px-1">
+                    <div class="text-[14px] font-bold text-[var(--text-primary)] tabular-nums">
+                      {{ formatDuration(resolvedDurationSec) }}
                     </div>
                     <div class="text-[10.5px] text-[var(--text-secondary)] mt-0.5">{{ t('comments.detailDuration') }}</div>
                   </div>
-                  <div class="rounded-xl bg-[var(--bg-subtle)]/55 py-2 px-1">
-                    <div class="text-[13.5px] font-bold text-[var(--text-primary)] tabular-nums">
+                  <div class="rounded-xl bg-[var(--bg-subtle)]/55 py-2.5 px-1">
+                    <div class="text-[14px] font-bold text-[var(--text-primary)] tabular-nums">
                       {{ totalCount > 0 ? formatCompactCount(totalCount, effectiveLocale) : '--' }}
                     </div>
                     <div class="text-[10.5px] text-[var(--text-secondary)] mt-0.5">{{ t('comments.detailComments') }}</div>
                   </div>
-                  <div class="rounded-xl bg-[var(--bg-subtle)]/55 py-2 px-1">
-                    <div class="text-[12.5px] font-bold am-accent-text truncate">
-                      {{ qualityBadges[0] || 'STD' }}
+                  <div class="rounded-xl bg-[var(--bg-subtle)]/55 py-2.5 px-1">
+                    <div class="text-[14px] font-bold am-accent-text truncate">
+                      {{ peakQualityLabel }}
                     </div>
                     <div class="text-[10.5px] text-[var(--text-secondary)] mt-0.5">{{ t('comments.detailQuality') }}</div>
                   </div>
                 </div>
 
-                <!-- Source Status -->
-                <div class="px-4 py-3 flex items-center justify-between gap-2">
+                <!-- Full Audio Quality Formats Matrix (Bitrate + File Size) -->
+                <div v-if="enrichedMeta?.qualities.length" class="px-4 py-3 space-y-2">
+                  <div class="flex items-center justify-between">
+                    <span class="text-[11.5px] font-medium text-[var(--text-secondary)]">{{ t('comments.detailQualities') }}</span>
+                    <span class="text-[11px] font-semibold am-accent-text truncate">
+                      {{ isCurrentPlayingSong && player.sourceTag ? player.sourceTag : t('comments.sourceNative') }}
+                    </span>
+                  </div>
+                  <div class="flex flex-wrap gap-1.5">
+                    <span
+                      v-for="q in enrichedMeta.qualities"
+                      :key="q.quality"
+                      class="px-2.5 py-1 rounded-xl bg-[var(--bg-subtle)]/75 text-[11.5px] font-semibold text-[var(--text-primary)] inline-flex items-center gap-1 tabular-nums"
+                    >
+                      <span>{{ q.label }}</span>
+                      <span v-if="q.sizeText" class="text-[10.5px] text-[var(--text-tertiary)] font-normal">{{ q.sizeText }}</span>
+                    </span>
+                  </div>
+                </div>
+
+                <!-- Active Source Row Fallback -->
+                <div v-else class="px-4 py-3 flex items-center justify-between gap-2">
                   <span class="text-[13px] text-[var(--text-secondary)]">{{ t('comments.detailSource') }}</span>
                   <span class="text-[13px] font-semibold text-[var(--text-primary)] truncate">
-                    {{ player.currentSong?.id === song.id && player.sourceTag ? player.sourceTag : t('comments.sourceNative') }}
+                    {{ isCurrentPlayingSong && player.sourceTag ? player.sourceTag : t('comments.sourceNative') }}
                   </span>
                 </div>
               </section>
 
-              <div class="grid grid-cols-2 gap-2.5">
+              <!-- Chorus Highlight Quick Preview Card -->
+              <section
+                v-if="climaxRange"
+                class="rounded-[18px] bg-gradient-to-r from-[var(--accent)]/14 via-[var(--accent)]/6 to-[var(--bg-card)] p-3.5 flex items-center justify-between gap-3 border border-[var(--accent)]/20"
+              >
+                <div class="flex items-center gap-2.5 min-w-0">
+                  <div class="w-9 h-9 rounded-full am-accent-bg text-white flex items-center justify-center shrink-0 shadow-xs">
+                    <Icon :icon="iconWaveSine" class="w-4.5 h-4.5" />
+                  </div>
+                  <div class="min-w-0">
+                    <div class="text-[13px] font-bold text-[var(--text-primary)]">{{ t('comments.detailClimax') }}</div>
+                    <div class="text-[11.5px] text-[var(--text-secondary)] tabular-nums mt-0.5">
+                      {{ formatMsShort(climaxRange.startMs) }} – {{ formatMsShort(climaxRange.endMs) }}
+                    </div>
+                  </div>
+                </div>
                 <button
                   type="button"
-                  class="h-11 rounded-[16px] bg-[var(--bg-card)] text-[13.5px] font-semibold text-[var(--text-primary)] border-0 inline-flex items-center justify-center gap-1.5 shadow-xs am-tap"
-                  @click="openPoster"
+                  class="px-3.5 h-8 rounded-full am-accent-bg text-white text-[12px] font-semibold border-0 inline-flex items-center gap-1 shrink-0 am-tap"
+                  @click="playChorusHighlight"
                 >
-                  <Icon :icon="iconPhoto" class="w-4 h-4 am-accent-text" />
-                  <span class="truncate">{{ t('song.poster') }}</span>
+                  <Icon :icon="iconPlayerPlayFilled" class="w-3.5 h-3.5" />
+                  <span>{{ t('comments.playClimax') }}</span>
                 </button>
-                <button
-                  type="button"
-                  class="h-11 rounded-[16px] bg-[var(--bg-card)] text-[13.5px] font-semibold text-[var(--text-primary)] border-0 inline-flex items-center justify-center gap-1.5 shadow-xs am-tap"
-                  @click="copyMeta"
-                >
-                  <Icon :icon="iconCopy" class="w-4 h-4 am-accent-text" />
-                  <span class="truncate">{{ t('song.copyMeta') }}</span>
-                </button>
-              </div>
+              </section>
+
+              <!-- Listener Hotwords Preview Cloud (Tap -> Jump straight to filtered comments!) -->
+              <section v-if="hotwords.length" class="rounded-[20px] bg-[var(--bg-card)] p-4 space-y-2.5 shadow-xs">
+                <div class="flex items-center justify-between">
+                  <span class="text-[12.5px] font-bold text-[var(--text-primary)]">{{ t('comments.detailHotwords') }}</span>
+                  <span class="text-[11px] text-[var(--text-tertiary)]">{{ t('comments.hotword') }}</span>
+                </div>
+                <div class="flex flex-wrap gap-1.5">
+                  <button
+                    v-for="hw in hotwords.slice(0, 8)"
+                    :key="`det-${hw.word}`"
+                    type="button"
+                    class="px-2.5 py-1 rounded-full bg-[var(--bg-subtle)] text-[12px] font-semibold text-[var(--text-primary)] border-0 inline-flex items-center gap-1 am-tap"
+                    @click="selectHotword(hw.word)"
+                  >
+                    <span class="am-accent-text">#</span>
+                    <span>{{ hw.word }}</span>
+                    <span v-if="hw.count" class="text-[10.5px] text-[var(--text-tertiary)] tabular-nums">{{ hw.count }}</span>
+                  </button>
+                </div>
+              </section>
+
+              <!-- More from This Album -->
+              <section v-if="albumPreviewTracks.length" class="rounded-[20px] bg-[var(--bg-card)] overflow-hidden shadow-xs">
+                <div class="px-4 py-3 flex items-center justify-between am-hairline-b">
+                  <span class="text-[13px] font-bold text-[var(--text-primary)]">{{ t('comments.detailAlbumTracks') }}</span>
+                  <button
+                    type="button"
+                    class="text-[12px] font-semibold am-accent-text bg-transparent border-0 p-0 inline-flex items-center gap-0.5 am-tap"
+                    @click="openAlbum"
+                  >
+                    <span>{{ t('comments.viewFullAlbum') }}</span>
+                    <Icon :icon="iconChevronRight" class="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <div class="divide-y divide-[var(--hairline)]">
+                  <button
+                    v-for="(trk, tidx) in albumPreviewTracks"
+                    :key="`${trk.id}-${tidx}`"
+                    type="button"
+                    class="w-full px-4 py-2.5 bg-transparent border-0 flex items-center gap-3 text-left am-tap"
+                    @click="playAlbumSibling(trk)"
+                  >
+                    <span class="w-5 text-[12px] font-bold text-[var(--text-tertiary)] tabular-nums text-center shrink-0">
+                      {{ tidx + 1 }}
+                    </span>
+                    <div class="min-w-0 flex-1">
+                      <div class="text-[13.5px] font-semibold text-[var(--text-primary)] truncate">{{ trk.title }}</div>
+                      <div class="text-[11px] text-[var(--text-secondary)] truncate">{{ trk.artist }}</div>
+                    </div>
+                    <span class="text-[11px] text-[var(--text-tertiary)] tabular-nums shrink-0">
+                      {{ formatDuration(trk.duration) }}
+                    </span>
+                  </button>
+                </div>
+              </section>
+
+              <!-- Copy Song Meta Button -->
+              <button
+                type="button"
+                class="w-full h-10 rounded-[16px] bg-[var(--bg-card)] text-[13px] font-semibold text-[var(--text-secondary)] border-0 inline-flex items-center justify-center gap-1.5 shadow-xs am-tap"
+                @click="copyMeta"
+              >
+                <Icon :icon="iconCopy" class="w-4 h-4 am-accent-text" />
+                <span>{{ t('song.copyMeta') }}</span>
+              </button>
             </template>
 
-            <!-- ==================== TAB B: COMMENTS (ALL / CLASSIFY / HOTWORD) ==================== -->
+            <!-- ==================== TAB B: 4-MODE REAL COMMENTS (FEATURED / TOP / LATEST / HOTWORDS) ==================== -->
             <template v-else>
-              <!-- 3-Mode Bar matching EchoMusic -->
-              <div class="pt-seg-group grid-cols-3">
+              <div class="pt-seg-group grid-cols-4">
                 <button
                   type="button"
                   class="pt-seg-btn"
@@ -625,10 +898,18 @@ function openPoster() {
                 <button
                   type="button"
                   class="pt-seg-btn"
-                  :class="subMode === 'classify' ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-xs' : 'bg-transparent text-[var(--text-secondary)]'"
-                  @click="switchSubMode('classify')"
+                  :class="subMode === 'hot' ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-xs' : 'bg-transparent text-[var(--text-secondary)]'"
+                  @click="switchSubMode('hot')"
                 >
-                  {{ t('comments.classify') }}
+                  {{ t('comments.hot') }}
+                </button>
+                <button
+                  type="button"
+                  class="pt-seg-btn"
+                  :class="subMode === 'newest' ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-xs' : 'bg-transparent text-[var(--text-secondary)]'"
+                  @click="switchSubMode('newest')"
+                >
+                  {{ t('comments.newest') }}
                 </button>
                 <button
                   type="button"
@@ -640,65 +921,36 @@ function openPoster() {
                 </button>
               </div>
 
-              <!-- Classify Chips + Hot/New Toggle -->
-              <div v-if="subMode === 'classify' && classifies.length" class="space-y-2">
-                <div class="flex items-center gap-1.5 am-hscroll pb-0.5">
-                  <button
-                    v-for="cls in classifies"
-                    :key="cls.id"
-                    type="button"
-                    class="px-3 h-7 rounded-full text-[12px] font-semibold border-0 shrink-0 transition-colors"
-                    :class="
-                      selectedClassifyId === cls.id
-                        ? 'am-accent-bg text-white'
-                        : 'bg-[var(--bg-card)] text-[var(--text-secondary)]'
-                    "
-                    @click="selectClassify(cls.id)"
-                  >
-                    {{ cls.name }}<template v-if="cls.count"> · {{ formatCompactCount(cls.count, effectiveLocale) }}</template>
-                  </button>
-                </div>
-                <div class="flex items-center justify-end gap-1.5">
-                  <button
-                    type="button"
-                    class="px-2.5 h-6 rounded-full text-[11px] font-semibold border-0"
-                    :class="classifySort === 1 ? 'bg-[var(--accent)]/16 am-accent-text' : 'bg-transparent text-[var(--text-tertiary)]'"
-                    @click="toggleClassifySort(1)"
-                  >
-                    {{ t('comments.sortHot') }}
-                  </button>
-                  <button
-                    type="button"
-                    class="px-2.5 h-6 rounded-full text-[11px] font-semibold border-0"
-                    :class="classifySort === 2 ? 'bg-[var(--accent)]/16 am-accent-text' : 'bg-transparent text-[var(--text-tertiary)]'"
-                    @click="toggleClassifySort(2)"
-                  >
-                    {{ t('comments.sortNew') }}
-                  </button>
-                </div>
-              </div>
-
-              <!-- Hotword Chips -->
+              <!-- Real Hotword Chips (from KuGou hot_word_list[].content) -->
               <div v-if="subMode === 'hotword' && hotwords.length" class="flex items-center gap-1.5 am-hscroll pb-0.5">
                 <button
                   v-for="hw in hotwords"
                   :key="hw.word"
                   type="button"
-                  class="px-3 h-7 rounded-full text-[12px] font-semibold border-0 shrink-0 transition-colors"
+                  class="px-3 h-7 rounded-full text-[12px] font-semibold border-0 shrink-0 transition-colors inline-flex items-center gap-1 am-tap"
                   :class="
                     selectedHotword === hw.word
-                      ? 'am-accent-bg text-white'
+                      ? 'am-accent-bg text-white shadow-xs'
                       : 'bg-[var(--bg-card)] text-[var(--text-secondary)]'
                   "
                   @click="selectHotword(hw.word)"
                 >
-                  # {{ hw.word }}
+                  <span># {{ hw.word }}</span>
+                  <span v-if="hw.count" class="text-[10.5px] opacity-75 tabular-nums">{{ hw.count }}</span>
                 </button>
               </div>
 
               <!-- Loading Skeleton -->
               <div v-if="loading" class="py-12 text-center text-[13px] text-[var(--text-secondary)]">
                 {{ t('comments.loading') }}
+              </div>
+
+              <!-- No Hotwords State -->
+              <div
+                v-else-if="subMode === 'hotword' && !hotwords.length"
+                class="py-12 text-center text-[13px] text-[var(--text-secondary)]"
+              >
+                {{ t('comments.noHotwords') }}
               </div>
 
               <!-- Empty State -->
@@ -778,30 +1030,37 @@ function openPoster() {
                     class="ml-[42px] mt-1.5 rounded-2xl bg-[var(--bg-subtle)]/55 p-3 space-y-2.5"
                   >
                     <div
-                      v-if="floorStates[cmt.id].loading && !floorStates[cmt.id].replies.length"
+                      v-if="floorStates[cmt.id]?.loading && !floorStates[cmt.id]?.replies.length"
                       class="text-[12px] text-[var(--text-secondary)]"
                     >
                       {{ t('common.loading') }}
                     </div>
                     <div
-                      v-for="rep in floorStates[cmt.id].replies"
+                      v-for="rep in floorStates[cmt.id]?.replies || []"
                       :key="rep.id"
-                      class="space-y-1 text-[12.5px]"
+                      class="space-y-0.5"
                     >
-                      <div class="flex items-center justify-between gap-2">
-                        <span class="font-bold text-[var(--text-primary)] truncate">{{ rep.userName }}</span>
-                        <span class="text-[10.5px] text-[var(--text-tertiary)] shrink-0 tabular-nums">{{ rep.addTime }}</span>
+                      <div class="flex items-center justify-between gap-2 text-[11.5px]">
+                        <span class="font-bold text-[var(--text-primary)] truncate">
+                          {{ rep.userName }}
+                          <template v-if="rep.replyToUser">
+                            <span class="font-normal text-[var(--text-tertiary)]"> ▸ {{ rep.replyToUser }}</span>
+                          </template>
+                        </span>
+                        <span class="text-[10.5px] text-[var(--text-tertiary)] tabular-nums shrink-0">{{ rep.addTime }}</span>
                       </div>
-                      <p class="m-0 text-[var(--text-secondary)] leading-relaxed break-words">{{ rep.content }}</p>
+                      <p class="text-[12.5px] leading-snug text-[var(--text-primary)]/90 whitespace-pre-wrap break-words m-0">
+                        {{ rep.content }}
+                      </p>
                     </div>
                     <button
-                      v-if="floorStates[cmt.id].hasMore"
+                      v-if="floorStates[cmt.id]?.hasMore"
                       type="button"
-                      class="bg-transparent border-0 p-0 text-[11.5px] font-semibold am-accent-text"
-                      :disabled="floorStates[cmt.id].loading"
+                      class="text-[11.5px] font-semibold am-accent-text bg-transparent border-0 p-0 am-tap"
+                      :disabled="floorStates[cmt.id]?.loading"
                       @click="loadMoreFloorReplies(cmt)"
                     >
-                      {{ floorStates[cmt.id].loading ? t('common.loading') : t('common.loadMore') }}
+                      {{ floorStates[cmt.id]?.loading ? t('common.loading') : t('common.loadMore') }}
                     </button>
                   </div>
                 </article>
@@ -809,7 +1068,7 @@ function openPoster() {
                 <button
                   v-if="hasMore"
                   type="button"
-                  class="w-full h-10 rounded-2xl bg-[var(--bg-card)] text-[13px] font-semibold am-accent-text border-0 shadow-xs am-tap"
+                  class="w-full h-10 rounded-2xl bg-[var(--bg-subtle)] text-[13px] font-semibold am-accent-text border-0 am-tap"
                   :disabled="loadingMore"
                   @click="fetchComments(false)"
                 >
@@ -819,38 +1078,36 @@ function openPoster() {
             </template>
           </div>
 
-          <!-- Bottom Sticky Comment Composer (Comments Tab Only, IME-aware!) -->
+          <!-- IME-Aware Bottom Comment / Reply Composer -->
           <div
             v-if="ui.commentsSheetTab === 'comments'"
-            class="shrink-0 px-4 pt-2.5 am-hairline-t bg-[var(--lg-sheet-bg)]"
-            :style="{ paddingBottom: 'calc(max(var(--safe-bottom), var(--ime-height)) + 12px)' }"
+            class="shrink-0 px-4 pt-2.5 am-hairline-t bg-[var(--bg-card)]/92 backdrop-blur-xl space-y-1.5"
+            :style="{ paddingBottom: `calc(max(var(--safe-bottom), var(--ime-bottom)) + 10px)` }"
           >
-            <div v-if="replyTarget" class="mb-2 flex items-center justify-between px-3 py-1.5 rounded-xl bg-[var(--bg-subtle)] text-[12px]">
+            <div v-if="replyTarget" class="flex items-center justify-between gap-2 px-2.5 py-1 rounded-xl bg-[var(--bg-subtle)]/75 text-[11.5px]">
               <span class="text-[var(--text-secondary)] truncate">
                 {{ t('comments.replyingTo', { user: replyTarget.userName }) }}
               </span>
               <button
                 type="button"
-                class="bg-transparent border-0 p-0.5 text-[var(--text-tertiary)] shrink-0"
+                class="bg-transparent border-0 p-0.5 text-[var(--text-tertiary)]"
                 @click="replyTarget = null"
               >
                 <Icon :icon="iconX" class="w-3.5 h-3.5" />
               </button>
             </div>
-
             <form class="flex items-center gap-2" @submit.prevent="submitComment">
               <input
                 v-model="composerText"
                 type="text"
                 :placeholder="accounts.isLoggedIn ? t('comments.placeholder') : t('comments.loginPlaceholder')"
-                :readonly="!accounts.isLoggedIn"
-                class="flex-1 min-w-0 h-10 px-3.5 rounded-full bg-[var(--bg-card)] text-[13.5px] text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] border border-[var(--hairline)] outline-none"
-                @click="!accounts.isLoggedIn && (ui.loginModalOpen = true)"
+                class="flex-1 h-10 px-3.5 rounded-full bg-[var(--bg-subtle)] text-[13.5px] text-[var(--text-primary)] border-0 outline-none"
+                @focus="!accounts.isLoggedIn && (ui.loginModalOpen = true)"
               />
               <button
                 type="submit"
-                class="h-10 px-4 rounded-full am-accent-bg text-white text-[13px] font-semibold border-0 inline-flex items-center gap-1 am-tap shrink-0 disabled:opacity-45"
-                :disabled="sending || (accounts.isLoggedIn && !composerText.trim())"
+                class="px-4 h-10 rounded-full am-accent-bg text-white text-[13px] font-semibold border-0 inline-flex items-center gap-1 am-tap shrink-0 disabled:opacity-45"
+                :disabled="sending || !composerText.trim()"
               >
                 <Icon :icon="iconSend" class="w-3.5 h-3.5" />
                 <span>{{ t('comments.send') }}</span>

@@ -1,8 +1,8 @@
 {
   "name": "puretone",
-  "version": "2.4.0",
+  "version": "2.4.1",
   "private": true,
-  "description": "PureTone (纯音) - Minimalist ad-free iOS 26 Liquid Glass Android music player with built-in KuGou API, 4-channel unblock engine, and Daily VIP Auto-Claim.",
+  "description": "MELUNE (弥音) - Minimalist ad-free iOS 26 Liquid Glass Android music player with built-in KuGou API, 4-channel unblock engine, and Daily VIP Auto-Claim.",
   "license": "GPL-3.0-only",
   "type": "module",
   "scripts": {

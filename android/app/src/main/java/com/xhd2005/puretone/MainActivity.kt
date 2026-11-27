@@ -52,10 +52,6 @@ class MainActivity : BridgeActivity() {
 
     private fun handleLaunchIntent(intent: Intent?, isColdStart: Boolean) {
         if (intent == null) return
-        if (intent.getBooleanExtra("autoClaim", false)) {
-            if (isColdStart) EchoSystemPlugin.pendingAutoClaim = true
-            else EchoSystemPlugin.dispatchAutoClaimIntent()
-        }
         if (intent.getBooleanExtra("openNowPlaying", false)) {
             if (isColdStart) EchoSystemPlugin.pendingOpenNowPlaying = true
             else EchoSystemPlugin.dispatchOpenNowPlayingIntent()

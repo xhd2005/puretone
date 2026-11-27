@@ -52,7 +52,27 @@ const albumsLoaded = ref(false);
 const isFollowed = ref(false);
 const togglingFollow = ref(false);
 const bioModalOpen = ref(false);
+const activeBioSectionIdx = ref(0);
+const bioScrollRef = ref<HTMLElement | null>(null);
 const scrollTop = ref(0);
+
+const bioSections = computed(() => {
+  const secs = detail.value?.bioSections;
+  if (Array.isArray(secs) && secs.length > 0) return secs;
+  const fallback = detail.value?.longIntro || detail.value?.intro || '';
+  return fallback ? [{ title: t('artist.bioModalTitle'), content: fallback }] : [];
+});
+
+function jumpToBioSection(idx: number) {
+  echoSystem.haptic('selection');
+  activeBioSectionIdx.value = idx;
+  const container = bioScrollRef.value;
+  if (!container) return;
+  const target = container.querySelector<HTMLElement>(`[data-bio-sec="${idx}"]`);
+  if (target) {
+    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+}
 
 const displayName = computed(() => detail.value?.name || fallbackName.value || 'Artist');
 const displayAvatar = computed(() => detail.value?.avatar || fallbackAvatar.value || '');
@@ -462,7 +482,7 @@ watch(artistId, () => void bootstrap());
       </section>
     </div>
 
-    <!-- Full Artist Biography Modal -->
+    <!-- Full Artist Biography Modal (Structured Multi-Section Reader) -->
     <Transition name="lg-modal">
       <div
         v-if="bioModalOpen"
@@ -470,26 +490,79 @@ watch(artistId, () => void bootstrap());
         @click="bioModalOpen = false"
       >
         <div class="lg-sheet-slide" @click.stop>
-          <div class="lg-sheet-panel rounded-t-[28px] max-h-[82vh] flex flex-col overflow-hidden">
+          <div class="lg-sheet-panel rounded-t-[28px] max-h-[84vh] flex flex-col overflow-hidden">
             <div class="pt-2.5 pb-1 flex justify-center shrink-0">
               <div class="w-11 h-1.5 rounded-full bg-[var(--text-tertiary)]/55" />
             </div>
-            <div class="px-5 py-2.5 flex items-center justify-between am-hairline-b shrink-0">
+            <div class="px-5 py-2.5 flex items-center justify-between gap-2 am-hairline-b shrink-0">
               <div class="min-w-0">
                 <div class="text-[17px] font-bold text-[var(--text-primary)] truncate">{{ displayName }}</div>
-                <div class="text-[11.5px] text-[var(--text-secondary)]">{{ t('artist.bioModalTitle') }}</div>
+                <div class="text-[11.5px] text-[var(--text-secondary)]">
+                  {{ t('artist.bioModalTitle') }}<template v-if="detail?.birthday"> · {{ detail.birthday }}</template>
+                </div>
               </div>
+              <div class="flex items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  class="px-2.5 h-8 rounded-full bg-[var(--bg-subtle)] border-0 inline-flex items-center gap-1 text-[12px] font-semibold am-accent-text am-tap"
+                  @click="copyBio"
+                >
+                  <Icon :icon="iconCopy" class="w-3.5 h-3.5" />
+                  <span>{{ t('artist.copyBio') }}</span>
+                </button>
+                <button
+                  type="button"
+                  class="w-8 h-8 rounded-full bg-[var(--bg-subtle)] border-0 flex items-center justify-center text-[var(--text-secondary)] am-tap shrink-0"
+                  @click="bioModalOpen = false"
+                >
+                  <Icon :icon="iconX" class="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            <!-- Section Quick-Jump Pills (简介 / 基本资料 / 演艺经历 / 主要作品 / 荣誉记录) -->
+            <div
+              v-if="bioSections.length > 1"
+              class="px-5 py-2.5 flex items-center gap-1.5 am-hscroll am-hairline-b shrink-0"
+            >
               <button
+                v-for="(sec, idx) in bioSections"
+                :key="`${sec.title}-${idx}`"
                 type="button"
-                class="w-8 h-8 rounded-full bg-[var(--bg-subtle)] border-0 flex items-center justify-center text-[var(--text-secondary)] am-tap shrink-0"
-                @click="bioModalOpen = false"
+                class="px-3 h-7 rounded-full text-[12px] font-semibold border-0 shrink-0 transition-colors am-tap"
+                :class="
+                  activeBioSectionIdx === idx
+                    ? 'am-accent-bg text-white shadow-xs'
+                    : 'bg-[var(--bg-subtle)] text-[var(--text-secondary)]'
+                "
+                @click="jumpToBioSection(idx)"
               >
-                <Icon :icon="iconX" class="w-4 h-4" />
+                {{ sec.title }}
               </button>
             </div>
-            <div class="flex-1 am-scroll px-5 py-4 pb-[calc(var(--safe-bottom)+28px)]">
-              <p class="text-[14px] leading-relaxed text-[var(--text-primary)] whitespace-pre-wrap m-0">
-                {{ detail?.longIntro || detail?.intro || t('artist.noBio') }}
+
+            <div
+              ref="bioScrollRef"
+              class="flex-1 am-scroll px-5 py-4 pb-[calc(var(--safe-bottom)+28px)] space-y-4"
+            >
+              <template v-if="bioSections.length">
+                <section
+                  v-for="(sec, idx) in bioSections"
+                  :key="`body-${sec.title}-${idx}`"
+                  :data-bio-sec="idx"
+                  class="rounded-[18px] bg-[var(--bg-card)] p-4 space-y-2 shadow-xs"
+                >
+                  <div v-if="bioSections.length > 1" class="flex items-center gap-2">
+                    <span class="w-1 h-4 rounded-full am-accent-bg shrink-0" />
+                    <h3 class="text-[14.5px] font-bold text-[var(--text-primary)] m-0">{{ sec.title }}</h3>
+                  </div>
+                  <p class="text-[13.5px] leading-[1.7] text-[var(--text-primary)] whitespace-pre-wrap break-words m-0">
+                    {{ sec.content }}
+                  </p>
+                </section>
+              </template>
+              <p v-else class="text-[14px] text-center py-10 text-[var(--text-secondary)] m-0">
+                {{ t('artist.noBio') }}
               </p>
             </div>
           </div>

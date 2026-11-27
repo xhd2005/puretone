@@ -9,7 +9,6 @@ export interface SafeAreaInsets {
 }
 
 export interface AppLaunchFlags {
-  autoClaim: boolean;
   openNowPlaying: boolean;
   versionName: string;
   versionCode: number;
@@ -17,11 +16,17 @@ export interface AppLaunchFlags {
 
 export type HapticStyle = 'light' | 'medium' | 'heavy' | 'selection' | 'success';
 
+export interface UpdateDownloadCandidate {
+  url: string;
+  label: string;
+}
+
 export interface UpdateDownloadProgressEvent {
   downloadedBytes: number;
   totalBytes: number;
   percent: number;
   done: boolean;
+  sourceLabel?: string;
   error?: string;
 }
 
@@ -35,14 +40,17 @@ export interface EchoSystemPluginInterface {
   haptic(options: { style?: HapticStyle }): Promise<void>;
   moveToBackground(): Promise<void>;
   getLaunchFlags(): Promise<AppLaunchFlags>;
-  scheduleDailyReminder(options: { hour: number; minute: number }): Promise<{ scheduled: boolean }>;
-  cancelDailyReminder(): Promise<void>;
   checkNotificationPermission(): Promise<{ granted: boolean; systemEnabled: boolean; runtimeGranted: boolean }>;
   requestNotificationPermission(): Promise<{ granted: boolean }>;
   openAppNotificationSettings(): Promise<{ opened: boolean }>;
   openAppDetailsSettings(): Promise<{ opened: boolean }>;
   openExternalUrl(options: { url: string }): Promise<{ opened: boolean }>;
-  downloadAndInstallApk(options: { url: string; fileName?: string }): Promise<{
+  downloadAndInstallApk(options: {
+    url?: string;
+    candidates?: UpdateDownloadCandidate[];
+    fileName?: string;
+    expectedSha256?: string;
+  }): Promise<{
     started: boolean;
     needsInstallPermission?: boolean;
     message?: string;
@@ -65,7 +73,6 @@ export interface EchoSystemPluginInterface {
   shareQrToWeChat(options: { base64Image: string }): Promise<{ launched: boolean; message?: string }>;
   addListener(eventName: 'insetsChange', listener: (insets: SafeAreaInsets) => void): Promise<PluginListenerHandle>;
   addListener(eventName: 'hardwareBack', listener: () => void): Promise<PluginListenerHandle>;
-  addListener(eventName: 'autoClaimIntent', listener: () => void): Promise<PluginListenerHandle>;
   addListener(eventName: 'openNowPlayingIntent', listener: () => void): Promise<PluginListenerHandle>;
   addListener(
     eventName: 'updateDownloadProgress',
@@ -150,7 +157,7 @@ export const echoSystem = {
     if (Capacitor.isNativePlatform()) {
       return EchoSystemNative.getLaunchFlags();
     }
-    return { autoClaim: false, openNowPlaying: false, versionName: '2.4.0', versionCode: 7 };
+    return { openNowPlaying: false, versionName: '2.4.1', versionCode: 8 };
   },
 
   async checkNotificationPermission(): Promise<{ granted: boolean; systemEnabled: boolean; runtimeGranted: boolean }> {
@@ -197,14 +204,26 @@ export const echoSystem = {
   },
 
   async downloadAndInstallApk(
-    url: string,
+    urlOrOptions:
+      | string
+      | {
+          url?: string;
+          candidates?: UpdateDownloadCandidate[];
+          fileName?: string;
+          expectedSha256?: string;
+        },
     fileName?: string,
   ): Promise<{ started: boolean; needsInstallPermission?: boolean; message?: string }> {
+    const opts =
+      typeof urlOrOptions === 'string'
+        ? { url: urlOrOptions, fileName }
+        : urlOrOptions;
+    const primaryUrl = opts.candidates?.[0]?.url || opts.url || '';
     if (!Capacitor.isNativePlatform()) {
-      if (typeof window !== 'undefined') window.open(url, '_blank', 'noopener');
+      if (typeof window !== 'undefined' && primaryUrl) window.open(primaryUrl, '_blank', 'noopener');
       return { started: false, message: '已在浏览器打开下载链接' };
     }
-    return EchoSystemNative.downloadAndInstallApk({ url, fileName });
+    return EchoSystemNative.downloadAndInstallApk(opts);
   },
 
   async onUpdateDownloadProgress(cb: (ev: UpdateDownloadProgressEvent) => void): Promise<() => void> {
@@ -213,22 +232,6 @@ export const echoSystem = {
       return () => void h.remove();
     }
     return () => {};
-  },
-
-  async scheduleDailyReminder(hour: number, minute: number): Promise<boolean> {
-    if (Capacitor.isNativePlatform()) {
-      const perm = await EchoSystemNative.requestNotificationPermission().catch(() => ({ granted: true }));
-      if (!perm.granted) return false;
-      const res = await EchoSystemNative.scheduleDailyReminder({ hour, minute });
-      return Boolean(res?.scheduled);
-    }
-    return true;
-  },
-
-  async cancelDailyReminder(): Promise<void> {
-    if (Capacitor.isNativePlatform()) {
-      await EchoSystemNative.cancelDailyReminder().catch(() => {});
-    }
   },
 
   async copyToClipboard(text: string): Promise<void> {
@@ -304,14 +307,6 @@ export const echoSystem = {
   async onHardwareBack(cb: () => void): Promise<() => void> {
     if (Capacitor.isNativePlatform()) {
       const h = await EchoSystemNative.addListener('hardwareBack', cb);
-      return () => void h.remove();
-    }
-    return () => {};
-  },
-
-  async onAutoClaimIntent(cb: () => void): Promise<() => void> {
-    if (Capacitor.isNativePlatform()) {
-      const h = await EchoSystemNative.addListener('autoClaimIntent', cb);
       return () => void h.remove();
     }
     return () => {};

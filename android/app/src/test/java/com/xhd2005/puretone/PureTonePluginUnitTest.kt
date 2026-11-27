@@ -4,9 +4,9 @@ import com.xhd2005.puretone.player.EchoPlaybackService
 import com.xhd2005.puretone.plugins.EchoHttpPlugin
 import com.xhd2005.puretone.plugins.EchoSystemPlugin
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.util.Calendar
 
 class PureTonePluginUnitTest {
 
@@ -22,25 +22,17 @@ class PureTonePluginUnitTest {
     }
 
     @Test
-    fun computeNextTriggerMillis_alwaysReturnsFutureTimestamp() {
-        val cal = Calendar.getInstance().apply {
-            set(2026, Calendar.NOVEMBER, 26, 10, 0, 0)
-            set(Calendar.MILLISECOND, 0)
-        }
-        val now = cal.timeInMillis
+    fun apkVerificationHelpers_validateZipMagicAndSha256() {
+        val validApkHeader = byteArrayOf(0x50, 0x4B, 0x03, 0x04, 0x14, 0x00)
+        val htmlProxyError = "<!DOCTYPE html><html>403</html>".toByteArray()
+        assertTrue(EchoSystemPlugin.isValidApkHeader(validApkHeader))
+        assertFalse(EchoSystemPlugin.isValidApkHeader(htmlProxyError))
+        assertFalse(EchoSystemPlugin.isValidApkHeader(byteArrayOf(0x50, 0x4B)))
 
-        val nextPast = EchoSystemPlugin.computeNextTriggerMillis(9, 0, now)
-        assertTrue(nextPast > now)
-        val pastCal = Calendar.getInstance().apply { timeInMillis = nextPast }
-        assertEquals(27, pastCal.get(Calendar.DAY_OF_MONTH))
-        assertEquals(9, pastCal.get(Calendar.HOUR_OF_DAY))
-
-        val nextToday = EchoSystemPlugin.computeNextTriggerMillis(21, 30, now)
-        assertTrue(nextToday > now)
-        val todayCal = Calendar.getInstance().apply { timeInMillis = nextToday }
-        assertEquals(26, todayCal.get(Calendar.DAY_OF_MONTH))
-        assertEquals(21, todayCal.get(Calendar.HOUR_OF_DAY))
-        assertEquals(30, todayCal.get(Calendar.MINUTE))
+        assertEquals(
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            EchoSystemPlugin.sha256Hex("abc".toByteArray()),
+        )
     }
 
     @Test

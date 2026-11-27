@@ -40,7 +40,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
-import java.util.Calendar
+import java.security.MessageDigest
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
@@ -78,8 +78,8 @@ class EchoSystemPlugin : Plugin() {
     private lateinit var dbHelper: PureToneKvDbHelper
     private val updateExecutor = Executors.newSingleThreadExecutor()
     private val updateHttpClient = OkHttpClient.Builder()
-        .connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(90, TimeUnit.SECONDS)
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(35, TimeUnit.SECONDS)
         .followRedirects(true)
         .followSslRedirects(true)
         .build()
@@ -95,6 +95,7 @@ class EchoSystemPlugin : Plugin() {
         super.load()
         instance = this
         dbHelper = PureToneKvDbHelper(context.applicationContext)
+        cleanupLegacyDailyReminder()
 
         activity?.runOnUiThread {
             val root = activity.window?.decorView ?: return@runOnUiThread
@@ -221,22 +222,19 @@ class EchoSystemPlugin : Plugin() {
         } catch (_: Exception) {
             null
         }
-        val autoClaim = pendingAutoClaim
-        pendingAutoClaim = false
         val openNowPlaying = pendingOpenNowPlaying
         pendingOpenNowPlaying = false
 
         val versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            pkgInfo?.longVersionCode?.toInt() ?: 2
+            pkgInfo?.longVersionCode?.toInt() ?: 8
         } else {
             @Suppress("DEPRECATION")
-            pkgInfo?.versionCode ?: 2
+            pkgInfo?.versionCode ?: 8
         }
         call.resolve(
             JSObject()
-                .put("autoClaim", autoClaim)
                 .put("openNowPlaying", openNowPlaying)
-                .put("versionName", pkgInfo?.versionName ?: "2.0.0")
+                .put("versionName", pkgInfo?.versionName ?: "2.4.1")
                 .put("versionCode", versionCode),
         )
     }
@@ -337,11 +335,27 @@ class EchoSystemPlugin : Plugin() {
 
     @PluginMethod
     fun downloadAndInstallApk(call: PluginCall) {
-        val url = call.getString("url")?.trim() ?: ""
-        if (!url.startsWith("http://") && !url.startsWith("https://")) {
+        val candidateList = mutableListOf<Pair<String, String>>()
+        val rawCandidates = call.getArray("candidates")
+        if (rawCandidates != null) {
+            for (i in 0 until rawCandidates.length()) {
+                val obj = rawCandidates.optJSONObject(i) ?: continue
+                val u = obj.optString("url", "").trim()
+                val lbl = obj.optString("label", "").trim().ifEmpty { "线路 ${i + 1}" }
+                if (u.startsWith("http://") || u.startsWith("https://")) {
+                    candidateList.add(u to lbl)
+                }
+            }
+        }
+        val fallbackUrl = call.getString("url")?.trim() ?: ""
+        if (candidateList.isEmpty() && (fallbackUrl.startsWith("http://") || fallbackUrl.startsWith("https://"))) {
+            candidateList.add(fallbackUrl to "GitHub")
+        }
+        if (candidateList.isEmpty()) {
             call.resolve(JSObject().put("started", false).put("message", "无效的更新包地址"))
             return
         }
+        val expectedSha256 = call.getString("expectedSha256")?.trim()?.lowercase().orEmpty()
         val rawName = call.getString("fileName")?.trim().orEmpty()
         val safeName = if (rawName.endsWith(".apk", ignoreCase = true)) {
             rawName.replace(Regex("[^a-zA-Z0-9._-]"), "_")
@@ -371,59 +385,102 @@ class EchoSystemPlugin : Plugin() {
         call.resolve(JSObject().put("started", true).put("needsInstallPermission", false))
 
         updateExecutor.execute {
-            try {
-                val updatesDir = File(context.cacheDir, "updates")
-                if (!updatesDir.exists()) updatesDir.mkdirs()
-                val apkFile = File(updatesDir, safeName)
+            val updatesDir = File(context.cacheDir, "updates")
+            if (!updatesDir.exists()) updatesDir.mkdirs()
+            val apkFile = File(updatesDir, safeName)
+            var lastError = "所有更新线路均暂不可达，请稍后重试或点击浏览器加速下载"
+
+            for ((idx, pair) in candidateList.withIndex()) {
+                val (targetUrl, nodeLabel) = pair
                 if (apkFile.exists()) apkFile.delete()
+                notifyUpdateProgress(0L, 0L, if (idx == 0) 2 else 4, false, nodeLabel, null)
 
-                val req = Request.Builder()
-                    .url(url)
-                    .header("User-Agent", "MELUNE-Android/2.4")
-                    .build()
-                updateHttpClient.newCall(req).execute().use { res ->
-                    if (!res.isSuccessful) {
-                        notifyUpdateProgress(0L, 0L, 0, false, "下载失败（HTTP ${res.code}）")
-                        return@execute
-                    }
-                    val body = res.body ?: run {
-                        notifyUpdateProgress(0L, 0L, 0, false, "安装包响应为空")
-                        return@execute
-                    }
-                    val total = body.contentLength().coerceAtLeast(0L)
-                    var downloaded = 0L
-                    var lastEmit = 0L
-                    val buf = ByteArray(16 * 1024)
-                    body.byteStream().use { input ->
-                        FileOutputStream(apkFile).use { out ->
-                            while (true) {
-                                val read = input.read(buf)
-                                if (read == -1) break
-                                out.write(buf, 0, read)
-                                downloaded += read
-                                val now = System.currentTimeMillis()
-                                if (now - lastEmit >= 160L) {
-                                    lastEmit = now
-                                    val pct = if (total > 0L) ((downloaded * 100L) / total).toInt().coerceIn(0, 99) else 0
-                                    notifyUpdateProgress(downloaded, total, pct, false, null)
-                                }
-                            }
-                            out.flush()
+                try {
+                    val req = Request.Builder()
+                        .url(targetUrl)
+                        .header("User-Agent", "MELUNE-Android/2.4.1")
+                        .build()
+                    val downloadedOk = updateHttpClient.newCall(req).execute().use { res ->
+                        if (!res.isSuccessful) {
+                            lastError = "$nodeLabel 失败（HTTP ${res.code}）"
+                            return@use false
                         }
+                        val body = res.body ?: run {
+                            lastError = "$nodeLabel 响应为空"
+                            return@use false
+                        }
+                        val total = body.contentLength().coerceAtLeast(0L)
+                        var downloaded = 0L
+                        var lastEmit = 0L
+                        val buf = ByteArray(16 * 1024)
+                        val headerBytes = ByteArray(4)
+                        var headerRead = 0
+                        val shaDigest = MessageDigest.getInstance("SHA-256")
+
+                        body.byteStream().use { input ->
+                            FileOutputStream(apkFile).use { out ->
+                                while (true) {
+                                    val read = input.read(buf)
+                                    if (read == -1) break
+                                    if (headerRead < 4) {
+                                        val copyLen = minOf(read, 4 - headerRead)
+                                        System.arraycopy(buf, 0, headerBytes, headerRead, copyLen)
+                                        headerRead += copyLen
+                                        if (headerRead == 4 && !isValidApkHeader(headerBytes)) {
+                                            lastError = "$nodeLabel 返回非 APK 内容，正在切换线路"
+                                            return@use false
+                                        }
+                                    }
+                                    out.write(buf, 0, read)
+                                    shaDigest.update(buf, 0, read)
+                                    downloaded += read
+                                    val now = System.currentTimeMillis()
+                                    if (now - lastEmit >= 160L) {
+                                        lastEmit = now
+                                        val pct = if (total > 0L) ((downloaded * 100L) / total).toInt().coerceIn(1, 99) else 0
+                                        notifyUpdateProgress(downloaded, total, pct, false, nodeLabel, null)
+                                    }
+                                }
+                                out.flush()
+                            }
+                        }
+
+                        if (headerRead < 4 || !isValidApkHeader(headerBytes) || downloaded < 1024L * 100L) {
+                            lastError = "$nodeLabel 安装包不完整，正在切换线路"
+                            return@use false
+                        }
+                        if (expectedSha256.length == 64) {
+                            val actualSha = shaDigest.digest().joinToString("") { "%02x".format(it) }
+                            if (!actualSha.equals(expectedSha256, ignoreCase = true)) {
+                                lastError = "$nodeLabel 完整性校验失败，正在切换安全线路"
+                                return@use false
+                            }
+                        }
+
+                        notifyUpdateProgress(downloaded, total.coerceAtLeast(downloaded), 100, true, nodeLabel, null)
+                        true
                     }
 
-                    notifyUpdateProgress(downloaded, total.coerceAtLeast(downloaded), 100, true, null)
-
-                    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", apkFile)
-                    val installIntent = Intent(Intent.ACTION_VIEW).apply {
-                        setDataAndType(uri, "application/vnd.android.package-archive")
-                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                    if (downloadedOk) {
+                        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", apkFile)
+                        val installIntent = Intent(Intent.ACTION_VIEW).apply {
+                            setDataAndType(uri, "application/vnd.android.package-archive")
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        context.startActivity(installIntent)
+                        return@execute
                     }
-                    context.startActivity(installIntent)
+                } catch (e: Exception) {
+                    lastError = "$nodeLabel 连接失败：${e.message ?: "超时"}"
+                } finally {
+                    if (!apkFile.exists() || apkFile.length() < 1024L * 100L) {
+                        apkFile.delete()
+                    }
                 }
-            } catch (e: Exception) {
-                notifyUpdateProgress(0L, 0L, 0, false, e.message ?: "下载更新失败，请尝试浏览器下载")
             }
+
+            if (apkFile.exists()) apkFile.delete()
+            notifyUpdateProgress(0L, 0L, 0, false, null, lastError)
         }
     }
 
@@ -432,6 +489,7 @@ class EchoSystemPlugin : Plugin() {
         totalBytes: Long,
         percent: Int,
         done: Boolean,
+        sourceLabel: String?,
         error: String?,
     ) {
         val obj = JSObject()
@@ -439,55 +497,42 @@ class EchoSystemPlugin : Plugin() {
             .put("totalBytes", totalBytes)
             .put("percent", percent)
             .put("done", done)
+        if (!sourceLabel.isNullOrBlank()) obj.put("sourceLabel", sourceLabel)
         if (!error.isNullOrBlank()) obj.put("error", error)
         notifyListeners("updateDownloadProgress", obj)
     }
 
-    @PluginMethod
-    fun scheduleDailyReminder(call: PluginCall) {
-        val hour = (call.getInt("hour") ?: 9).coerceIn(0, 23)
-        val minute = (call.getInt("minute") ?: 0).coerceIn(0, 59)
-
-        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        VipReminderReceiver.ensureChannel(nm)
-
-        val triggerAt = computeNextTriggerMillis(hour, minute, System.currentTimeMillis())
-        val intent = Intent(context, VipReminderReceiver::class.java)
-        val pi = PendingIntent.getBroadcast(
-            context,
-            VipReminderReceiver.REQ_CODE_ALARM,
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
-        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        alarmManager.setInexactRepeating(
-            AlarmManager.RTC_WAKEUP,
-            triggerAt,
-            AlarmManager.INTERVAL_DAY,
-            pi,
-        )
-        call.resolve(JSObject().put("scheduled", true))
-    }
-
-    @PluginMethod
-    fun cancelDailyReminder(call: PluginCall) {
-        val intent = Intent(context, VipReminderReceiver::class.java)
-        val pi = PendingIntent.getBroadcast(
-            context,
-            VipReminderReceiver.REQ_CODE_ALARM,
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
-        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        alarmManager.cancel(pi)
-        call.resolve()
+    private fun cleanupLegacyDailyReminder() {
+        try {
+            val intent = Intent().setComponent(
+                ComponentName(context.packageName, "com.xhd2005.puretone.plugins.VipReminderReceiver"),
+            )
+            val pi = PendingIntent.getBroadcast(
+                context,
+                LEGACY_REMINDER_ALARM_REQ_CODE,
+                intent,
+                PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE,
+            )
+            if (pi != null) {
+                val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+                alarmManager.cancel(pi)
+                pi.cancel()
+            }
+            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            nm.cancel(LEGACY_REMINDER_NOTIFICATION_ID)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                nm.deleteNotificationChannel(LEGACY_REMINDER_CHANNEL_ID)
+            }
+        } catch (_: Exception) {
+            // non-fatal legacy cleanup
+        }
     }
 
     @PluginMethod
     fun copyToClipboard(call: PluginCall) {
         val text = call.getString("text") ?: ""
         val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        cm.setPrimaryClip(ClipData.newPlainText("PureTone", text))
+        cm.setPrimaryClip(ClipData.newPlainText("MELUNE", text))
         call.resolve()
     }
 
@@ -763,12 +808,12 @@ class EchoSystemPlugin : Plugin() {
         private const val WECHAT_PKG = "com.tencent.mm"
         private const val KUGOU_LITE_PKG = "com.kugou.android.lite"
         private const val KUGOU_MAIN_PKG = "com.kugou.android"
+        private const val LEGACY_REMINDER_CHANNEL_ID = "puretone_daily_vip_reminder"
+        private const val LEGACY_REMINDER_NOTIFICATION_ID = 202611
+        private const val LEGACY_REMINDER_ALARM_REQ_CODE = 202613
 
         @Volatile
         private var instance: EchoSystemPlugin? = null
-
-        @Volatile
-        var pendingAutoClaim: Boolean = false
 
         @Volatile
         var pendingOpenNowPlaying: Boolean = false
@@ -780,15 +825,6 @@ class EchoSystemPlugin : Plugin() {
             return true
         }
 
-        fun dispatchAutoClaimIntent() {
-            val plugin = instance
-            if (plugin != null && plugin.hasListeners("autoClaimIntent")) {
-                plugin.notifyListeners("autoClaimIntent", JSObject())
-            } else {
-                pendingAutoClaim = true
-            }
-        }
-
         fun dispatchOpenNowPlayingIntent() {
             val plugin = instance
             if (plugin != null && plugin.hasListeners("openNowPlayingIntent")) {
@@ -798,18 +834,20 @@ class EchoSystemPlugin : Plugin() {
             }
         }
 
-        fun computeNextTriggerMillis(hour: Int, minute: Int, nowMillis: Long): Long {
-            val cal = Calendar.getInstance().apply {
-                timeInMillis = nowMillis
-                set(Calendar.HOUR_OF_DAY, hour)
-                set(Calendar.MINUTE, minute)
-                set(Calendar.SECOND, 0)
-                set(Calendar.MILLISECOND, 0)
-                if (timeInMillis <= nowMillis) {
-                    add(Calendar.DAY_OF_YEAR, 1)
-                }
-            }
-            return cal.timeInMillis
+        /**
+         * Validates standard ZIP/APK magic header (PK\x03\x04) to reject HTML proxy error pages.
+         */
+        fun isValidApkHeader(header: ByteArray): Boolean {
+            return header.size >= 4 &&
+                header[0] == 0x50.toByte() &&
+                header[1] == 0x4B.toByte() &&
+                header[2] == 0x03.toByte() &&
+                header[3] == 0x04.toByte()
+        }
+
+        fun sha256Hex(data: ByteArray): String {
+            val digest = MessageDigest.getInstance("SHA-256").digest(data)
+            return digest.joinToString("") { "%02x".format(it) }
         }
     }
 }

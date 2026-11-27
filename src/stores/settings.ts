@@ -11,6 +11,7 @@ export type AccentThemeMode = 'dynamic' | 'apple-red';
 export type AppLocale = 'system' | 'zh-CN' | 'zh-TW' | 'en';
 export type LyricFontSize = 'standard' | 'large' | 'xlarge';
 export type TrackTransitionFadeMs = 0 | 1500 | 3000 | 5000;
+export type UpdateMirrorMode = 'auto' | 'direct';
 
 export interface PersistedSettings {
   appearance: AppearanceMode;
@@ -27,12 +28,11 @@ export interface PersistedSettings {
   autoClaimOnLaunch: boolean;
   autoClaimAllAccounts: boolean;
   enableConceptTasks: boolean;
-  dailyReminderEnabled: boolean;
-  dailyReminderHour: number;
-  dailyReminderMinute: number;
   showTranslation: boolean;
   showCoverLyricsPreview: boolean;
   showLockScreenLyrics: boolean;
+  updateMirrorMode: UpdateMirrorMode;
+  customUpdateMirror: string;
 }
 
 const STORAGE_KEY = 'settings.v1';
@@ -52,19 +52,22 @@ const DEFAULTS: PersistedSettings = {
   autoClaimOnLaunch: true,
   autoClaimAllAccounts: true,
   enableConceptTasks: true,
-  dailyReminderEnabled: false,
-  dailyReminderHour: 9,
-  dailyReminderMinute: 0,
   showTranslation: true,
   showCoverLyricsPreview: true,
   // Default OFF so lock-screen & live media cards stay rock-solid (no OS rate-limit freeze)
   showLockScreenLyrics: false,
+  updateMirrorMode: 'auto',
+  customUpdateMirror: '',
 };
 
 function sanitizeFadeMs(raw: unknown): TrackTransitionFadeMs {
   const n = Number(raw);
   if (n === 0 || n === 1500 || n === 3000 || n === 5000) return n;
   return DEFAULTS.transitionFadeMs;
+}
+
+function sanitizeMirrorMode(raw: unknown): UpdateMirrorMode {
+  return raw === 'direct' ? 'direct' : 'auto';
 }
 
 export const useSettingsStore = defineStore('settings', () => {
@@ -82,12 +85,11 @@ export const useSettingsStore = defineStore('settings', () => {
   const autoClaimOnLaunch = ref<boolean>(DEFAULTS.autoClaimOnLaunch);
   const autoClaimAllAccounts = ref<boolean>(DEFAULTS.autoClaimAllAccounts);
   const enableConceptTasks = ref<boolean>(DEFAULTS.enableConceptTasks);
-  const dailyReminderEnabled = ref<boolean>(DEFAULTS.dailyReminderEnabled);
-  const dailyReminderHour = ref<number>(DEFAULTS.dailyReminderHour);
-  const dailyReminderMinute = ref<number>(DEFAULTS.dailyReminderMinute);
   const showTranslation = ref<boolean>(DEFAULTS.showTranslation);
   const showCoverLyricsPreview = ref<boolean>(DEFAULTS.showCoverLyricsPreview);
   const showLockScreenLyrics = ref<boolean>(DEFAULTS.showLockScreenLyrics);
+  const updateMirrorMode = ref<UpdateMirrorMode>(DEFAULTS.updateMirrorMode);
+  const customUpdateMirror = ref<string>(DEFAULTS.customUpdateMirror);
 
   const systemPrefersDark = ref<boolean>(
     typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: dark)').matches,
@@ -148,7 +150,6 @@ export const useSettingsStore = defineStore('settings', () => {
     } else {
       copy[trackKey] = next;
     }
-    // Cap persisted track offsets at 200 entries
     const keys = Object.keys(copy);
     if (keys.length > 200) {
       for (const k of keys.slice(0, keys.length - 200)) {
@@ -188,12 +189,11 @@ export const useSettingsStore = defineStore('settings', () => {
     autoClaimOnLaunch.value = saved.autoClaimOnLaunch ?? DEFAULTS.autoClaimOnLaunch;
     autoClaimAllAccounts.value = saved.autoClaimAllAccounts ?? DEFAULTS.autoClaimAllAccounts;
     enableConceptTasks.value = saved.enableConceptTasks ?? DEFAULTS.enableConceptTasks;
-    dailyReminderEnabled.value = saved.dailyReminderEnabled ?? DEFAULTS.dailyReminderEnabled;
-    dailyReminderHour.value = saved.dailyReminderHour ?? DEFAULTS.dailyReminderHour;
-    dailyReminderMinute.value = saved.dailyReminderMinute ?? DEFAULTS.dailyReminderMinute;
     showTranslation.value = saved.showTranslation ?? DEFAULTS.showTranslation;
     showCoverLyricsPreview.value = saved.showCoverLyricsPreview ?? DEFAULTS.showCoverLyricsPreview;
     showLockScreenLyrics.value = saved.showLockScreenLyrics ?? DEFAULTS.showLockScreenLyrics;
+    updateMirrorMode.value = sanitizeMirrorMode(saved.updateMirrorMode);
+    customUpdateMirror.value = typeof saved.customUpdateMirror === 'string' ? saved.customUpdateMirror.trim() : '';
     hydrated = true;
     applyThemeClass();
     applyLocaleToDocument(resolveEffectiveLocale(locale.value));
@@ -223,35 +223,17 @@ export const useSettingsStore = defineStore('settings', () => {
       autoClaimOnLaunch,
       autoClaimAllAccounts,
       enableConceptTasks,
-      dailyReminderEnabled,
-      dailyReminderHour,
-      dailyReminderMinute,
       showTranslation,
       showCoverLyricsPreview,
       showLockScreenLyrics,
+      updateMirrorMode,
+      customUpdateMirror,
     ],
     () => {
       void persist();
     },
     { deep: true },
   );
-
-  async function setDailyReminder(
-    enabled: boolean,
-    hour = dailyReminderHour.value,
-    minute = dailyReminderMinute.value,
-  ): Promise<boolean> {
-    dailyReminderHour.value = hour;
-    dailyReminderMinute.value = minute;
-    if (enabled) {
-      const ok = await echoSystem.scheduleDailyReminder(hour, minute);
-      dailyReminderEnabled.value = ok;
-      return ok;
-    }
-    await echoSystem.cancelDailyReminder();
-    dailyReminderEnabled.value = false;
-    return true;
-  }
 
   function exportSnapshot(): PersistedSettings {
     return {
@@ -269,12 +251,11 @@ export const useSettingsStore = defineStore('settings', () => {
       autoClaimOnLaunch: autoClaimOnLaunch.value,
       autoClaimAllAccounts: autoClaimAllAccounts.value,
       enableConceptTasks: enableConceptTasks.value,
-      dailyReminderEnabled: dailyReminderEnabled.value,
-      dailyReminderHour: dailyReminderHour.value,
-      dailyReminderMinute: dailyReminderMinute.value,
       showTranslation: showTranslation.value,
       showCoverLyricsPreview: showCoverLyricsPreview.value,
       showLockScreenLyrics: showLockScreenLyrics.value,
+      updateMirrorMode: updateMirrorMode.value,
+      customUpdateMirror: customUpdateMirror.value.trim(),
     };
   }
 
@@ -300,6 +281,8 @@ export const useSettingsStore = defineStore('settings', () => {
     if (typeof saved.showTranslation === 'boolean') showTranslation.value = saved.showTranslation;
     if (typeof saved.showCoverLyricsPreview === 'boolean') showCoverLyricsPreview.value = saved.showCoverLyricsPreview;
     if (typeof saved.showLockScreenLyrics === 'boolean') showLockScreenLyrics.value = saved.showLockScreenLyrics;
+    if (saved.updateMirrorMode !== undefined) updateMirrorMode.value = sanitizeMirrorMode(saved.updateMirrorMode);
+    if (typeof saved.customUpdateMirror === 'string') customUpdateMirror.value = saved.customUpdateMirror.trim();
     applyThemeClass();
     applyLocaleToDocument(resolveEffectiveLocale(locale.value));
     void echoPlayer.setEqPreset(eqPreset.value);
@@ -323,19 +306,17 @@ export const useSettingsStore = defineStore('settings', () => {
     autoClaimOnLaunch,
     autoClaimAllAccounts,
     enableConceptTasks,
-    dailyReminderEnabled,
-    dailyReminderHour,
-    dailyReminderMinute,
     showTranslation,
     showCoverLyricsPreview,
     showLockScreenLyrics,
+    updateMirrorMode,
+    customUpdateMirror,
     isDark,
     applyThemeClass,
     getLyricOffset,
     adjustLyricOffset,
     resetLyricOffset,
     hydrate,
-    setDailyReminder,
     exportSnapshot,
     importSnapshot,
   };

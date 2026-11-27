@@ -4,6 +4,7 @@ import type {
   AccountProfile,
   AlbumDetail,
   AlbumSummary,
+  ArtistBioSection,
   ArtistDetail,
   ArtistSummary,
   CommentClassifyTag,
@@ -16,6 +17,8 @@ import type {
   SongClimaxRange,
   SongComment,
   SongCommentsPage,
+  SongEnrichedMeta,
+  SongQualitySpec,
 } from '@/types/music';
 
 // Static lazy registry of ONLY the ~38 KuGouMusicApi modules needed by EchoMusic Mobile
@@ -91,6 +94,42 @@ const moduleLoaders: Record<string, () => Promise<{ default?: KugouModuleFn } | 
   '/search/lyric': () => import('@kugou/module/search_lyric.js'),
   '/lyric': () => import('@kugou/module/lyric.js'),
   '/comment/music': () => import('@kugou/module/comment_music.js'),
+  '/comment/music/hot': async () => ({
+    default: (params, useAxios) =>
+      useAxios({
+        url: '/mcomment/r/v1/rank/topliked',
+        encryptType: 'android',
+        method: 'POST',
+        params: {
+          ver: 6,
+          mixsongid: params.mixsongid,
+          need_show_image: 1,
+          p: params.page || 1,
+          pagesize: params.pagesize || 25,
+          extdata: '0',
+          code: 'fc4be23b4e972707f36b8a828a93ba8a',
+        },
+        cookie: (params?.cookie as Record<string, unknown>) || {},
+      }),
+  }),
+  '/comment/music/newest': async () => ({
+    default: (params, useAxios) =>
+      useAxios({
+        url: '/mcomment/r/v1/rank/newest',
+        encryptType: 'android',
+        method: 'POST',
+        params: {
+          ver: 6,
+          mixsongid: params.mixsongid,
+          need_show_image: 1,
+          p: params.page || 1,
+          pagesize: params.pagesize || 25,
+          extdata: '0',
+          code: 'fc4be23b4e972707f36b8a828a93ba8a',
+        },
+        cookie: (params?.cookie as Record<string, unknown>) || {},
+      }),
+  }),
   '/comment/music/classify': () => import('@kugou/module/comment_music_classify.js'),
   '/comment/music/hotword': () => import('@kugou/module/comment_music_hotword.js'),
   '/comment/floor': () => import('@kugou/module/comment_floor.js'),
@@ -461,6 +500,9 @@ export function normalizeSong(raw: Record<string, any>): Song {
       raw.duration ??
       raw.Duration ??
       raw.audio_info?.duration ??
+      raw.audio_info?.duration_128 ??
+      raw.audio_info?.duration_320 ??
+      raw.audio_info?.duration_flac ??
       raw.audio_info?.timelength ??
       0,
   );
@@ -471,6 +513,7 @@ export function normalizeSong(raw: Record<string, any>): Song {
     raw.trans_param?.union_cover ??
     raw.album_sizable_cover ??
     raw.album_info?.sizable_cover ??
+    raw.album_info?.cover ??
     raw.cover ??
     raw.img ??
     raw.Image ??
@@ -507,6 +550,39 @@ export function normalizeSong(raw: Record<string, any>): Song {
     isGray,
     privilege,
   };
+}
+
+export function parseStructuredIntro(raw: unknown): { plainText: string; sections: ArtistBioSection[] } {
+  if (!raw) return { plainText: '', sections: [] };
+  if (typeof raw === 'string') {
+    const clean = raw.replace(/\r\n/g, '\n').trim();
+    return {
+      plainText: clean,
+      sections: clean ? [{ title: '简介', content: clean }] : [],
+    };
+  }
+  const list = Array.isArray(raw) ? raw : typeof raw === 'object' ? [raw] : [];
+  const sections: ArtistBioSection[] = [];
+  for (const item of list) {
+    if (typeof item === 'string') {
+      const clean = item.replace(/\r\n/g, '\n').trim();
+      if (clean) sections.push({ title: '简介', content: clean });
+      continue;
+    }
+    if (!item || typeof item !== 'object') continue;
+    const obj = item as Record<string, any>;
+    const title = String(obj.title ?? obj.name ?? obj.label ?? '').trim() || '简介';
+    const content = String(obj.content ?? obj.text ?? obj.desc ?? obj.intro ?? '')
+      .replace(/\r\n/g, '\n')
+      .trim();
+    if (!content) continue;
+    sections.push({ title, content });
+  }
+  const plainText = sections
+    .map((s) => (sections.length > 1 && s.title ? `【${s.title}】\n${s.content}` : s.content))
+    .join('\n\n')
+    .trim();
+  return { plainText, sections };
 }
 
 export function formatCompactCount(count: number, locale: 'zh-CN' | 'zh-TW' | 'en' = 'zh-CN'): string {
@@ -805,8 +881,13 @@ export const kugouApi = {
     const rawData = res?.body?.data;
     const d = Array.isArray(rawData) ? rawData[0] : rawData;
     if (!d || typeof d !== 'object') return null;
-    const rawIntro = String(d.intro ?? d.short_intro ?? '').trim();
-    const rawLong = String(d.long_intro ?? d.intro ?? '').trim();
+    const shortParsed = parseStructuredIntro(d.intro ?? d.short_intro);
+    const longParsed = parseStructuredIntro(d.long_intro);
+    const sections = longParsed.sections.length ? longParsed.sections : shortParsed.sections;
+    const shortPreview =
+      shortParsed.plainText ||
+      (sections[0]?.content ?? longParsed.plainText);
+    const fullText = longParsed.plainText || shortParsed.plainText;
     return {
       id: String(d.author_id ?? authorId),
       name: String(d.author_name ?? d.singername ?? '').trim() || '未知歌手',
@@ -816,8 +897,9 @@ export const kugouApi = {
       mvCount: Number(d.mv_count ?? d.video_count ?? 0) || 0,
       fansCount: Number(d.fansnums ?? d.fans_count ?? 0) || 0,
       birthday: String(d.birthday ?? '').trim() || undefined,
-      intro: rawIntro || rawLong,
-      longIntro: rawLong || rawIntro,
+      intro: shortPreview,
+      longIntro: fullText,
+      bioSections: sections,
       isFollow: Number(d.is_follow ?? d.follow_status ?? 0) === 1,
     };
   },
@@ -894,9 +976,65 @@ export const kugouApi = {
       publishDate: String(meta?.publish_date ?? '').slice(0, 10) || undefined,
       songCount: songs.length,
       language: String(meta?.language ?? '').trim() || undefined,
-      intro: String(meta?.intro ?? '').trim() || undefined,
+      intro: parseStructuredIntro(meta?.intro).plainText || undefined,
       songs,
     };
+  },
+
+  async getSongEnrichedMeta(song: Pick<Song, 'hash' | 'albumId' | 'mixSongId'>): Promise<SongEnrichedMeta | null> {
+    if (!song.hash) return null;
+    try {
+      const res = await callKugouRoute('/privilege/lite', {
+        hash: song.hash,
+        album_id: song.albumId && song.albumId !== '0' ? song.albumId : '',
+        qualities: '128,320,flac,high,viper_atmos',
+      });
+      const item = Array.isArray(res?.body?.data) ? res.body.data[0] : null;
+      const qv = Array.isArray(res?.body?.quality_vip) ? res.body.quality_vip[0] : null;
+      if (!item && !qv) return null;
+
+      const rawAlbumId = String(
+        (item?.album_id && String(item.album_id) !== '0' ? item.album_id : '') ||
+          item?.recommend_album_id ||
+          (qv?.album_id && String(qv.album_id) !== '0' ? qv.album_id : '') ||
+          '',
+      ).trim();
+      const albumName = String(item?.albumname ?? qv?.albumname ?? '').trim() || undefined;
+      const durMs = Number(item?.info?.duration ?? 0);
+      const durationSec = durMs > 1000 ? Math.round(durMs / 1000) : durMs > 0 ? Math.round(durMs) : undefined;
+      const coverUrl = fixCoverUrl(item?.info?.image ?? item?.trans_param?.union_cover ?? '', 480) || undefined;
+
+      const labelMap: Record<string, string> = {
+        '128': '128K',
+        '320': '320K HQ',
+        flac: 'FLAC 无损',
+        high: 'Hi-Res',
+        viper_atmos: '全景声',
+      };
+      const qualities: SongQualitySpec[] = Array.isArray(qv?.qualities)
+        ? qv.qualities
+            .filter((q: any) => Boolean(q?.exists))
+            .map((q: any) => ({
+              quality: String(q.quality || ''),
+              label: labelMap[String(q.quality || '')] || String(q.quality || '').toUpperCase(),
+              bitrate: Number(q.bitrate || 0),
+              sizeText: String(q.size_text || '').trim(),
+              extname: String(q.extname || '').toUpperCase(),
+              needVip: Boolean(q.need_vip),
+              obtainable: Boolean(q.obtainable),
+            }))
+        : [];
+
+      return {
+        albumId: rawAlbumId && rawAlbumId !== '0' ? rawAlbumId : undefined,
+        albumName,
+        durationSec,
+        coverUrl,
+        qualities,
+      };
+    } catch {
+      return null;
+    }
   },
 
   async getSongCommentCount(song: { hash?: string; mixSongId?: number }): Promise<number> {
@@ -954,7 +1092,7 @@ export const kugouApi = {
     const hotwords: CommentHotwordTag[] = Array.isArray(b.hot_word_list)
       ? b.hot_word_list
           .map((w: any) => ({
-            word: String(typeof w === 'string' ? w : w?.word ?? w?.hot_word ?? w?.name ?? '').trim(),
+            word: String(typeof w === 'string' ? w : w?.content ?? w?.word ?? w?.hot_word ?? w?.name ?? '').trim(),
             count: Number(w?.count ?? w?.num ?? 0) || undefined,
           }))
           .filter((w: CommentHotwordTag) => Boolean(w.word))
@@ -967,6 +1105,29 @@ export const kugouApi = {
       specialId,
       classifies,
       hotwords,
+    };
+  },
+
+  async getSongCommentsRanked(
+    mixSongId: number,
+    rank: 'hot' | 'newest',
+    page = 1,
+    pagesize = 25,
+  ): Promise<SongCommentsPage> {
+    const route = rank === 'hot' ? '/comment/music/hot' : '/comment/music/newest';
+    const res = await callKugouRoute(route, { mixsongid: mixSongId, page, pagesize });
+    const b = res?.body?.data && Array.isArray(res?.body?.data?.list) ? res.body.data : res?.body ?? {};
+    const specialId = String(b.special_id ?? b.childrenid ?? '').trim() || undefined;
+    const mainList: any[] = Array.isArray(b.list) ? b.list : [];
+    const comments = mainList.map((raw) => normalizeCommentItem(raw, specialId || ''));
+    const total = Number(b.count ?? comments.length) || 0;
+    return {
+      comments,
+      total,
+      hasMore: mainList.length >= pagesize && page * pagesize < Math.max(total, page * pagesize + 1),
+      specialId,
+      classifies: [],
+      hotwords: [],
     };
   },
 

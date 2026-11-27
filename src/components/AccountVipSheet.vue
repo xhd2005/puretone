@@ -5,7 +5,6 @@ import iconCheck from '@iconify/icons-tabler/check';
 import iconPlus from '@iconify/icons-tabler/plus';
 import iconRefresh from '@iconify/icons-tabler/refresh';
 import iconTrash from '@iconify/icons-tabler/trash';
-import iconBell from '@iconify/icons-tabler/bell';
 import iconSparkles from '@iconify/icons-tabler/sparkles';
 import iconFlame from '@iconify/icons-tabler/flame';
 import iconCrown from '@iconify/icons-tabler/crown';
@@ -34,6 +33,7 @@ import {
   type AppLocale,
   type LyricFontSize,
   type TrackTransitionFadeMs,
+  type UpdateMirrorMode,
 } from '@/stores/settings';
 import { usePlayerStore } from '@/stores/player';
 import { useStatsStore } from '@/stores/stats';
@@ -224,22 +224,6 @@ const vipTierCards = computed(() => {
   const fallbackListen = activeAcc.value?.tvipEndTime || activeAcc.value?.vipEndTime;
   return [
     {
-      label: t('vip.svip'),
-      short: 'SVIP',
-      active: Boolean(tiers?.svip?.active),
-      text: formatTierRelative(tiers?.svip?.endTime, tiers?.svip?.active),
-      tone: 'from-[#f59e0b] to-[#b45309]',
-      ring: 'ring-[#f59e0b]/25',
-    },
-    {
-      label: t('vip.luxury'),
-      short: 'VIP',
-      active: Boolean(tiers?.luxuryVip?.active),
-      text: formatTierRelative(tiers?.luxuryVip?.endTime, tiers?.luxuryVip?.active),
-      tone: 'from-[#fbbf24] to-[#d97706]',
-      ring: 'ring-[#fbbf24]/25',
-    },
-    {
       label: t('vip.concept'),
       short: 'LITE',
       active: Boolean(tiers?.conceptVip?.active),
@@ -258,27 +242,12 @@ const vipTierCards = computed(() => {
   ];
 });
 
-const reminderTimeStr = computed({
-  get: () =>
-    `${String(settings.dailyReminderHour).padStart(2, '0')}:${String(settings.dailyReminderMinute).padStart(2, '0')}`,
-  set: (val: string) => {
-    const [h, m] = val.split(':').map(Number);
-    if (Number.isFinite(h) && Number.isFinite(m)) {
-      void settings.setDailyReminder(settings.dailyReminderEnabled, h, m);
-    }
-  },
-});
+const mirrorOptions = computed<Array<{ id: UpdateMirrorMode; label: string }>>(() => [
+  { id: 'auto', label: t('update.channelAuto') },
+  { id: 'direct', label: t('update.channelDirect') },
+]);
 
-async function toggleReminder() {
-  echoSystem.haptic('selection');
-  const next = !settings.dailyReminderEnabled;
-  const ok = await settings.setDailyReminder(next);
-  if (next && ok) {
-    ui.showToast(`${t('vip.reminder')}: ${reminderTimeStr.value}`);
-  } else if (next && !ok) {
-    ui.showToast('Notification permission denied');
-  }
-}
+const showCustomMirror = ref(false);
 
 async function handleMediaControlAction() {
   echoSystem.haptic('light');
@@ -354,14 +323,20 @@ async function handleCheckUpdate() {
   echoSystem.haptic('light');
   checkingUpdate.value = true;
   try {
-    const res = await checkForAppUpdate({ silent: false, currentVersion: appVersion.value });
+    const res = await checkForAppUpdate({
+      silent: false,
+      currentVersion: appVersion.value,
+      mirrorMode: settings.updateMirrorMode,
+      customMirror: settings.customUpdateMirror,
+    });
     if (res && res.hasUpdate) {
       ui.updateReleaseInfo = res;
     } else {
-      ui.showToast(t('settings.upToDate', { ver: appVersion.value }));
+      const via = res?.checkedVia ? ` (${res.checkedVia})` : '';
+      ui.showToast(`${t('settings.upToDate', { ver: appVersion.value })}${via}`);
     }
   } catch (e: any) {
-    ui.showToast(e?.message || 'Update check failed');
+    ui.showToast(e?.message || 'Update check failed', 3200);
   } finally {
     checkingUpdate.value = false;
   }
@@ -748,30 +723,6 @@ async function openAuthorProfile() {
                     </div>
                     <input v-model="settings.autoClaimOnLaunch" type="checkbox" class="ios-switch" />
                   </label>
-
-                  <div class="px-4 py-3.5 flex items-center justify-between gap-2">
-                    <div class="flex items-center gap-2">
-                      <Icon :icon="iconBell" class="w-4 h-4 am-accent-text" />
-                      <div>
-                        <div class="text-[15px] text-[var(--text-primary)]">{{ t('vip.reminder') }}</div>
-                        <div class="text-[11px] text-[var(--text-secondary)]">{{ t('vip.reminderSub') }}</div>
-                      </div>
-                    </div>
-                    <div class="flex items-center gap-2">
-                      <input
-                        v-if="settings.dailyReminderEnabled"
-                        v-model="reminderTimeStr"
-                        type="time"
-                        class="bg-[var(--bg-subtle)] text-[var(--text-primary)] text-[13px] font-medium px-2 py-1 rounded-lg border-0"
-                      />
-                      <input
-                        type="checkbox"
-                        :checked="settings.dailyReminderEnabled"
-                        class="ios-switch"
-                        @change="toggleReminder"
-                      />
-                    </div>
-                  </div>
                 </section>
               </template>
             </template>
@@ -1133,6 +1084,48 @@ async function openAuthorProfile() {
                     <Icon :icon="checkingUpdate ? iconRefresh : iconDownload" class="w-3.5 h-3.5 shrink-0" :class="{ 'animate-spin': checkingUpdate }" />
                     <span>{{ checkingUpdate ? t('about.checking') : t('about.checkUpdate') }}</span>
                   </button>
+                </div>
+
+                <!-- Mainland China Update Acceleration Route Selector (2-Row Zero-Overflow) -->
+                <div class="rounded-2xl bg-[var(--bg-subtle)]/50 p-3 space-y-2">
+                  <div class="flex items-center justify-between gap-2">
+                    <span class="text-[12.5px] font-semibold text-[var(--text-primary)] truncate">{{ t('update.channel') }}</span>
+                    <button
+                      type="button"
+                      class="text-[11px] font-semibold am-accent-text bg-transparent border-0 p-0 shrink-0 am-tap"
+                      @click="showCustomMirror = !showCustomMirror"
+                    >
+                      {{ showCustomMirror ? t('vip.collapse') : t('update.customMirror') }}
+                    </button>
+                  </div>
+                  <div class="pt-seg-group grid-cols-2">
+                    <button
+                      v-for="m in mirrorOptions"
+                      :key="m.id"
+                      type="button"
+                      class="pt-seg-btn"
+                      :class="
+                        settings.updateMirrorMode === m.id
+                          ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-xs'
+                          : 'bg-transparent text-[var(--text-secondary)]'
+                      "
+                      @click="echoSystem.haptic('selection'); settings.updateMirrorMode = m.id"
+                    >
+                      {{ m.label }}
+                    </button>
+                  </div>
+                  <div v-if="showCustomMirror" class="space-y-1.5 pt-0.5">
+                    <input
+                      v-model.trim="settings.customUpdateMirror"
+                      type="url"
+                      inputmode="url"
+                      :placeholder="t('update.customMirrorPlaceholder')"
+                      class="w-full h-9 px-3 rounded-xl bg-[var(--bg-card)] text-[12.5px] text-[var(--text-primary)] border border-[var(--hairline)] outline-none"
+                    />
+                  </div>
+                  <p class="text-[10.5px] text-[var(--text-tertiary)] leading-snug m-0">
+                    {{ t('update.customMirrorHint') }}
+                  </p>
                 </div>
 
                 <!-- Brand Poetic Tagline Box -->

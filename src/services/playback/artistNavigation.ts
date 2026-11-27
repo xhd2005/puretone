@@ -79,17 +79,59 @@ export async function openArtistProfileFromSong(
   await navigateToArtistRef(refs[0], router, ui, labels);
 }
 
+function isValidAlbumId(raw?: string | number | null): string {
+  const s = String(raw ?? '').trim();
+  return s && s !== '0' && s !== 'null' && s !== 'undefined' ? s : '';
+}
+
 export async function openAlbumFromSong(
   song: Song,
   router: Router,
   ui: ArtistNavUiBridge,
   fallbackNotFound?: string,
 ): Promise<boolean> {
-  let albumId = song.albumId?.trim() || '';
-  if (!albumId && song.album) {
-    const found = await kugouApi.searchAlbums(`${song.album} ${song.artist}`, 1, 5).catch(() => []);
-    albumId = found[0]?.id || '';
+  let albumId = isValidAlbumId(song.albumId);
+  let albumName = String(song.album || '').trim();
+  let albumCover = song.coverUrl || '';
+
+  // 1. Resolve via KuGou privilege_lite by track hash (returns recommend_album_id & real albumname!)
+  if (!albumId && song.hash) {
+    try {
+      const enriched = await kugouApi.getSongEnrichedMeta(song);
+      if (enriched) {
+        albumId = isValidAlbumId(enriched.albumId);
+        if (!albumName && enriched.albumName) albumName = enriched.albumName;
+        if (!albumCover && enriched.coverUrl) albumCover = enriched.coverUrl;
+      }
+    } catch {
+      // fallback below
+    }
   }
+
+  // 2. Fallback: search exact track by title + artist to recover AlbumID (works even on old cached playlists)
+  if (!albumId && song.title) {
+    try {
+      const found = await kugouApi.searchSongs(`${song.title} ${song.artist}`.trim(), 1, 6);
+      const matched =
+        found.songs.find((s) => s.hash && song.hash && s.hash.toLowerCase() === song.hash.toLowerCase() && isValidAlbumId(s.albumId)) ||
+        found.songs.find((s) => isValidAlbumId(s.albumId));
+      if (matched) {
+        albumId = isValidAlbumId(matched.albumId);
+        if (!albumName && matched.album) albumName = matched.album;
+        if (!albumCover && matched.coverUrl) albumCover = matched.coverUrl;
+      }
+    } catch {
+      // fallback below
+    }
+  }
+
+  // 3. Final fallback: search album directly by album name
+  if (!albumId && albumName) {
+    const found = await kugouApi.searchAlbums(`${albumName} ${song.artist}`.trim(), 1, 5).catch(() => []);
+    albumId = isValidAlbumId(found[0]?.id);
+    if (!albumCover && found[0]?.coverUrl) albumCover = found[0].coverUrl;
+  }
+
   if (!albumId) {
     if (fallbackNotFound) ui.showToast(fallbackNotFound);
     return false;
@@ -100,8 +142,8 @@ export async function openAlbumFromSong(
   await router.push({
     path: `/album/${encodeURIComponent(albumId)}`,
     query: {
-      name: song.album || '',
-      cover: song.coverUrl || '',
+      name: albumName,
+      cover: albumCover,
       artist: song.artist || '',
     },
   });

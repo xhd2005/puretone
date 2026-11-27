@@ -31,21 +31,14 @@ function parseVipTiers(vipData: Record<string, any> | null, fallbackListenExpiry
     const matched = busiList.find(pred);
     if (!matched) return { active: false };
     const end = String(matched.vip_end_time || matched.end_time || '').trim();
-    const active = Number(matched.is_vip) === 1 || isFutureDate(end);
-    return { active, endTime: end || undefined };
+    const active = Number(matched.is_vip) === 1 && (!end || isFutureDate(end));
+    return { active, endTime: active ? end || undefined : undefined };
   };
 
-  let svip = findTier((b) => /svip|super/i.test(String(b?.product_type || b?.busi_type || '')));
-  if (!svip.active && vipData?.su_vip_end_time) {
-    const end = String(vipData.su_vip_end_time).trim();
-    if (isFutureDate(end)) svip = { active: true, endTime: end };
-  }
-
-  let luxuryVip = findTier((b) => /^vip$/i.test(String(b?.product_type || '')) || /luxury|music/i.test(String(b?.busi_type || '')));
-  if (!luxuryVip.active && vipData?.vip_end_time && Number(vipData?.vip_type) === 6) {
-    const end = String(vipData.vip_end_time).trim();
-    if (isFutureDate(end)) luxuryVip = { active: true, endTime: end };
-  }
+  // KuGou Concept Edition populates su_vip_end_time even for non-SVIP accounts,
+  // so strictly trust busi_vip.is_vip === 1 for legacy fields and focus UI on Concept + Listen VIP.
+  const svip = findTier((b) => /svip|super/i.test(String(b?.product_type || b?.busi_type || '')));
+  const luxuryVip = findTier((b) => /^vip$/i.test(String(b?.product_type || '')) || /luxury|music/i.test(String(b?.busi_type || '')));
 
   let conceptVip = findTier((b) => /concept|youth/i.test(String(b?.busi_type || b?.product_type || '')));
   if (!conceptVip.active && vipData?.m_end_time) {

@@ -112,10 +112,57 @@ jobs:
           path: android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 30
 
-      - name: Create GitHub Release on Tag (Permanent Signed Release APK Only)
+      - name: Generate China-Friendly Update Manifest (latest.json)
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          export TAG="${{ github.ref_name }}"
+          export VER="${TAG#v}"
+          export APK_NAME="MELUNE-${TAG}-release.apk"
+          APK_PATH="android/app/build/outputs/apk/release/${APK_NAME}"
+          export APK_SIZE=$(stat -c%s "$APK_PATH")
+          export APK_SHA=$(sha256sum "$APK_PATH" | awk '{print $1}')
+          export PUB_DATE=$(date -u +%Y-%m-%d)
+          mkdir -p dist-updates
+          node -e '
+            const fs = require("fs");
+            const payload = {
+              version: process.env.VER,
+              tag: process.env.TAG,
+              title: `弥音 · MELUNE ${process.env.TAG}`,
+              publishedAt: process.env.PUB_DATE,
+              releaseNotes: `弥音 · MELUNE ${process.env.TAG} 正式发布（支持大陆多路加速下载与 SHA-256 完整性校验），建议立即更新体验最新优化。`,
+              htmlUrl: `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/tag/${process.env.TAG}`,
+              apkFileName: process.env.APK_NAME,
+              apkSizeBytes: Number(process.env.APK_SIZE),
+              apkSha256: process.env.APK_SHA,
+              githubDownloadUrl: `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/download/${process.env.TAG}/${process.env.APK_NAME}`
+            };
+            fs.writeFileSync("dist-updates/latest.json", JSON.stringify(payload, null, 2) + "\n");
+          '
+          echo "=== Generated latest.json ==="
+          cat dist-updates/latest.json
+
+      - name: Create GitHub Release on Tag (Permanent Signed Release APK + latest.json)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           files: |
             android/app/build/outputs/apk/release/MELUNE-*-release.apk
+            dist-updates/latest.json
+
+      - name: Publish updates branch & Purge jsDelivr CDN
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          TAG="${{ github.ref_name }}"
+          TMP_DIR=$(mktemp -d)
+          cp dist-updates/latest.json "$TMP_DIR/latest.json"
+          cd "$TMP_DIR"
+          git init -b updates
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add latest.json
+          git commit -m "chore(updates): publish manifest for ${TAG}"
+          git remote add origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+          git push --force origin updates:updates
+          curl -fsSL "https://purge.jsdelivr.net/gh/${{ github.repository }}@updates/latest.json" || true
