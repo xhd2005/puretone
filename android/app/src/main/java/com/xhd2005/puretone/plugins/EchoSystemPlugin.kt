@@ -226,15 +226,15 @@ class EchoSystemPlugin : Plugin() {
         pendingOpenNowPlaying = false
 
         val versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            pkgInfo?.longVersionCode?.toInt() ?: 8
+            pkgInfo?.longVersionCode?.toInt() ?: 9
         } else {
             @Suppress("DEPRECATION")
-            pkgInfo?.versionCode ?: 8
+            pkgInfo?.versionCode ?: 9
         }
         call.resolve(
             JSObject()
                 .put("openNowPlaying", openNowPlaying)
-                .put("versionName", pkgInfo?.versionName ?: "2.4.1")
+                .put("versionName", pkgInfo?.versionName ?: "2.4.2")
                 .put("versionCode", versionCode),
         )
     }
@@ -398,7 +398,7 @@ class EchoSystemPlugin : Plugin() {
                 try {
                     val req = Request.Builder()
                         .url(targetUrl)
-                        .header("User-Agent", "MELUNE-Android/2.4.1")
+                        .header("User-Agent", "MELUNE-Android/2.4.2")
                         .build()
                     val downloadedOk = updateHttpClient.newCall(req).execute().use { res ->
                         if (!res.isSuccessful) {

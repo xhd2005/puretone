@@ -853,17 +853,20 @@ export const kugouApi = {
     const list = res?.body?.data?.lists ?? res?.body?.data?.info ?? [];
     if (!Array.isArray(list)) return [];
     return list
-      .map((item: any) => ({
-        id: String(item.albumid ?? item.album_id ?? item.id ?? '').trim(),
-        name: String(item.albumname ?? item.album_name ?? item.name ?? '').trim(),
-        artist: String(item.singer ?? item.author_name ?? item.singername ?? '').trim(),
-        artistId: item.singerid || item.author_id ? String(item.singerid ?? item.author_id) : undefined,
-        coverUrl: fixCoverUrl(item.img ?? item.sizable_cover ?? item.pic ?? '', 400),
-        publishDate: String(item.publish_time ?? item.publish_date ?? '').slice(0, 10) || undefined,
-        songCount: Number(item.songcount ?? item.song_count ?? 0) || undefined,
-        language: String(item.language ?? '').trim() || undefined,
-        intro: String(item.intro ?? '').trim() || undefined,
-      }))
+      .map((item: any) => {
+        const rawArtistId = String(item.singerid ?? item.author_id ?? '').trim();
+        return {
+          id: String(item.albumid ?? item.album_id ?? item.id ?? '').trim(),
+          name: String(item.albumname ?? item.album_name ?? item.name ?? '').trim(),
+          artist: String(item.singer ?? item.author_name ?? item.singername ?? '').trim(),
+          artistId: rawArtistId && rawArtistId !== '0' ? rawArtistId : undefined,
+          coverUrl: fixCoverUrl(item.img ?? item.sizable_cover ?? item.pic ?? '', 400),
+          publishDate: String(item.publish_time ?? item.publish_date ?? '').slice(0, 10) || undefined,
+          songCount: Number(item.songcount ?? item.song_count ?? 0) || undefined,
+          language: String(item.language ?? '').trim() || undefined,
+          intro: parseStructuredIntro(item.intro).plainText || undefined,
+        };
+      })
       .filter((a: AlbumSummary) => Boolean(a.id && a.name));
   },
 
@@ -955,23 +958,49 @@ export const kugouApi = {
   },
 
   async getAlbumDetail(albumId: string): Promise<AlbumDetail | null> {
-    const [metaRes, songsRes] = await Promise.all([
+    // KuGou /v1/album_audio/lite strictly rejects pagesize > 50 with HTTP 502 / error_code 20010.
+    const PAGE_SIZE = 50;
+    const [metaRes, firstPageRes] = await Promise.all([
       callKugouRoute('/album/detail', { id: albumId }).catch(() => null),
-      callKugouRoute('/album/songs', { id: albumId, page: 1, pagesize: 100 }).catch(() => null),
+      callKugouRoute('/album/songs', { id: albumId, page: 1, pagesize: PAGE_SIZE }).catch(() => null),
     ]);
     const rawMeta = metaRes?.body?.data;
     const meta = Array.isArray(rawMeta) ? rawMeta[0] : rawMeta;
-    const songsData = songsRes?.body?.data;
-    const rawSongs = Array.isArray(songsData) ? songsData : songsData?.songs ?? songsData?.list ?? [];
-    const songs = Array.isArray(rawSongs) ? rawSongs.map(normalizeSong) : [];
+    const firstData = firstPageRes?.body?.data;
+    const firstRaw = Array.isArray(firstData) ? firstData : firstData?.songs ?? firstData?.list ?? [];
+    const totalExpected = Number(firstData?.total ?? firstRaw.length ?? 0) || 0;
+
+    const songs: Song[] = Array.isArray(firstRaw) ? firstRaw.map(normalizeSong) : [];
+    const seen = new Set(songs.map((s) => s.hash || s.id));
+
+    // Fetch additional pages cleanly for large box-sets / OST albums (up to 4 pages = 200 tracks)
+    if (songs.length >= PAGE_SIZE && totalExpected > songs.length) {
+      const maxPages = Math.min(4, Math.ceil(totalExpected / PAGE_SIZE));
+      for (let p = 2; p <= maxPages; p += 1) {
+        const nextRes = await callKugouRoute('/album/songs', { id: albumId, page: p, pagesize: PAGE_SIZE }).catch(() => null);
+        const nd = nextRes?.body?.data;
+        const nr = Array.isArray(nd) ? nd : nd?.songs ?? nd?.list ?? [];
+        if (!Array.isArray(nr) || !nr.length) break;
+        for (const item of nr.map(normalizeSong)) {
+          const key = item.hash || item.id;
+          if (!seen.has(key)) {
+            seen.add(key);
+            songs.push(item);
+          }
+        }
+        if (nr.length < PAGE_SIZE) break;
+      }
+    }
+
     if (!meta && !songs.length) return null;
 
     const firstAuthor = Array.isArray(meta?.authors) ? meta.authors[0] : null;
+    const rawAuthorId = String(firstAuthor?.author_id ?? '').trim();
     return {
       id: String(meta?.album_id ?? albumId),
       name: String(meta?.album_name ?? songs[0]?.album ?? '未知专辑').trim(),
       artist: String(meta?.author_name ?? firstAuthor?.author_name ?? songs[0]?.artist ?? '未知歌手').trim(),
-      artistId: firstAuthor?.author_id ? String(firstAuthor.author_id) : undefined,
+      artistId: rawAuthorId && rawAuthorId !== '0' ? rawAuthorId : undefined,
       coverUrl: fixCoverUrl(meta?.sizable_cover ?? songs[0]?.coverUrl ?? '', 480),
       publishDate: String(meta?.publish_date ?? '').slice(0, 10) || undefined,
       songCount: songs.length,

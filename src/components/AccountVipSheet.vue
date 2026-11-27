@@ -247,7 +247,7 @@ const mirrorOptions = computed<Array<{ id: UpdateMirrorMode; label: string }>>((
   { id: 'direct', label: t('update.channelDirect') },
 ]);
 
-const showCustomMirror = ref(false);
+const showUpdateRoutePanel = ref(false);
 
 async function handleMediaControlAction() {
   echoSystem.haptic('light');
@@ -1063,135 +1063,150 @@ async function openAuthorProfile() {
                 </div>
               </section>
 
-              <!-- Group C: About MELUNE (弥音), Brand Philosophy, Hayden Xue Bio, Repo & Compliance -->
-              <section class="rounded-[22px] bg-[var(--bg-card)] p-4 shadow-xs space-y-3">
-                <div class="flex items-center justify-between gap-2.5">
-                  <div class="flex items-center gap-3 min-w-0 flex-1">
-                    <PureToneMark :size="44" />
-                    <div class="min-w-0">
-                      <div class="text-[16px] font-bold text-[var(--text-primary)] truncate">{{ t('app.fullName') }}</div>
-                      <div class="text-[11.5px] text-[var(--text-secondary)] tabular-nums truncate">
-                        v{{ appVersion }} · GPL-3.0
-                      </div>
+              <!-- Group C: Editorial Minimalist About & Updates (Zero Nested Box Clutter) -->
+              <section class="space-y-3">
+                <!-- 1. Centered Moonlit Brand Hero -->
+                <div class="relative rounded-[24px] bg-[var(--bg-card)] px-5 pt-6 pb-5 text-center shadow-xs overflow-hidden">
+                  <div
+                    class="pointer-events-none absolute -top-12 left-1/2 -translate-x-1/2 w-48 h-32 rounded-full blur-3xl opacity-22"
+                    style="background: radial-gradient(circle, #5b8cff 0%, #3456be 55%, transparent 100%);"
+                  />
+                  <div class="relative z-10 flex flex-col items-center">
+                    <PureToneMark :size="58" class="shadow-lg rounded-[15px]" />
+                    <div class="mt-3 text-[19px] font-bold tracking-tight text-[var(--text-primary)]">
+                      {{ t('app.fullName') }}
                     </div>
+                    <p class="mt-1 text-[12.5px] text-[var(--text-secondary)] m-0 leading-relaxed">
+                      {{ t('app.slogan') }}
+                    </p>
+                    <div class="mt-2.5 inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[var(--bg-subtle)] text-[11px] font-semibold text-[var(--text-secondary)] tabular-nums">
+                      <span>v{{ appVersion }}</span>
+                      <span class="opacity-40">·</span>
+                      <span>GPL-3.0</span>
+                    </div>
+
+                    <button
+                      type="button"
+                      class="mt-4 w-full max-w-[230px] h-10 rounded-full am-accent-bg text-white text-[13.5px] font-semibold border-0 inline-flex items-center justify-center gap-1.5 shadow-xs am-tap"
+                      :disabled="checkingUpdate"
+                      @click="handleCheckUpdate"
+                    >
+                      <Icon :icon="checkingUpdate ? iconRefresh : iconDownload" class="w-4 h-4 shrink-0" :class="{ 'animate-spin': checkingUpdate }" />
+                      <span>{{ checkingUpdate ? t('about.checking') : t('about.checkUpdate') }}</span>
+                    </button>
                   </div>
+                </div>
+
+                <!-- 2. Clean iOS-Style Unified Hairline List (No Boxes-Inside-Boxes!) -->
+                <div class="rounded-[22px] bg-[var(--bg-card)] overflow-hidden divide-y divide-[var(--hairline)] shadow-xs">
+                  <!-- Author Row: Hayden Xue -->
                   <button
                     type="button"
-                    class="px-3 h-8 rounded-full bg-[var(--bg-subtle)] text-[12px] font-semibold am-accent-text border-0 inline-flex items-center gap-1 am-tap shrink-0"
-                    :disabled="checkingUpdate"
-                    @click="handleCheckUpdate"
+                    class="w-full px-4 py-3.5 bg-transparent border-0 flex items-center gap-3 text-left am-tap"
+                    @click="openAuthorProfile"
                   >
-                    <Icon :icon="checkingUpdate ? iconRefresh : iconDownload" class="w-3.5 h-3.5 shrink-0" :class="{ 'animate-spin': checkingUpdate }" />
-                    <span>{{ checkingUpdate ? t('about.checking') : t('about.checkUpdate') }}</span>
-                  </button>
-                </div>
-
-                <!-- Mainland China Update Acceleration Route Selector (2-Row Zero-Overflow) -->
-                <div class="rounded-2xl bg-[var(--bg-subtle)]/50 p-3 space-y-2">
-                  <div class="flex items-center justify-between gap-2">
-                    <span class="text-[12.5px] font-semibold text-[var(--text-primary)] truncate">{{ t('update.channel') }}</span>
-                    <button
-                      type="button"
-                      class="text-[11px] font-semibold am-accent-text bg-transparent border-0 p-0 shrink-0 am-tap"
-                      @click="showCustomMirror = !showCustomMirror"
-                    >
-                      {{ showCustomMirror ? t('vip.collapse') : t('update.customMirror') }}
-                    </button>
-                  </div>
-                  <div class="pt-seg-group grid-cols-2">
-                    <button
-                      v-for="m in mirrorOptions"
-                      :key="m.id"
-                      type="button"
-                      class="pt-seg-btn"
-                      :class="
-                        settings.updateMirrorMode === m.id
-                          ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-xs'
-                          : 'bg-transparent text-[var(--text-secondary)]'
-                      "
-                      @click="echoSystem.haptic('selection'); settings.updateMirrorMode = m.id"
-                    >
-                      {{ m.label }}
-                    </button>
-                  </div>
-                  <div v-if="showCustomMirror" class="space-y-1.5 pt-0.5">
-                    <input
-                      v-model.trim="settings.customUpdateMirror"
-                      type="url"
-                      inputmode="url"
-                      :placeholder="t('update.customMirrorPlaceholder')"
-                      class="w-full h-9 px-3 rounded-xl bg-[var(--bg-card)] text-[12.5px] text-[var(--text-primary)] border border-[var(--hairline)] outline-none"
-                    />
-                  </div>
-                  <p class="text-[10.5px] text-[var(--text-tertiary)] leading-snug m-0">
-                    {{ t('update.customMirrorHint') }}
-                  </p>
-                </div>
-
-                <!-- Brand Poetic Tagline Box -->
-                <div class="rounded-2xl bg-gradient-to-br from-[#3456be]/10 via-[#1a2d70]/8 to-transparent p-3 space-y-1 border border-[var(--hairline)]">
-                  <div class="text-[12.5px] font-semibold text-[var(--text-primary)]">
-                    {{ t('app.slogan') }}
-                  </div>
-                  <div class="text-[10.5px] font-medium tracking-wider text-[var(--text-tertiary)] uppercase">
-                    {{ t('app.sloganEn') }}
-                  </div>
-                  <p class="text-[11.5px] text-[var(--text-secondary)] leading-relaxed m-0 pt-0.5">
-                    {{ t('about.story') }}
-                  </p>
-                </div>
-
-                <!-- Author Card: Hayden Xue (@xhd2005) -->
-                <div
-                  class="rounded-2xl bg-[var(--bg-subtle)]/55 p-3 space-y-1.5 cursor-pointer am-tap"
-                  @click="openAuthorProfile"
-                >
-                  <div class="flex items-center justify-between gap-2">
-                    <div class="flex items-center gap-2 min-w-0">
-                      <span class="w-7 h-7 rounded-full am-accent-bg text-white text-[12px] font-extrabold flex items-center justify-center shrink-0">
-                        HX
-                      </span>
-                      <div class="min-w-0">
-                        <div class="text-[13px] font-bold text-[var(--text-primary)] truncate">{{ t('about.authorTitle') }}</div>
-                        <div class="text-[11px] text-[var(--text-secondary)] truncate">@{{ APP_AUTHOR }}</div>
+                    <span class="w-9 h-9 rounded-full am-accent-bg text-white text-[12.5px] font-extrabold flex items-center justify-center shrink-0">
+                      HX
+                    </span>
+                    <div class="min-w-0 flex-1">
+                      <div class="flex items-center gap-1.5">
+                        <span class="text-[14.5px] font-semibold text-[var(--text-primary)] truncate">{{ t('about.authorTitle') }}</span>
+                        <span class="text-[11.5px] text-[var(--text-tertiary)] shrink-0">@{{ APP_AUTHOR }}</span>
                       </div>
+                      <p class="text-[11.5px] text-[var(--text-secondary)] leading-snug m-0 mt-0.5 line-clamp-2">
+                        {{ t('about.authorBio') }}
+                      </p>
                     </div>
-                    <span class="text-[11px] font-semibold am-accent-text shrink-0">GitHub ↗</span>
-                  </div>
-                  <p class="text-[11.5px] text-[var(--text-secondary)] leading-relaxed m-0">
-                    {{ t('about.authorBio') }}
-                  </p>
-                </div>
+                    <span class="text-[12px] font-semibold am-accent-text shrink-0">↗</span>
+                  </button>
 
-                <div class="space-y-2">
+                  <!-- Open-Source Repository Row (Never Truncates!) -->
                   <button
                     type="button"
-                    class="w-full h-10 px-3.5 rounded-xl bg-[var(--bg-subtle)]/75 text-[13px] font-medium text-[var(--text-primary)] border-0 flex items-center justify-between am-tap"
+                    class="w-full px-4 py-3.5 bg-transparent border-0 flex items-center justify-between gap-2.5 text-left am-tap"
                     @click="openGithubRepo"
                   >
-                    <span class="flex items-center gap-2 min-w-0">
-                      <Icon :icon="iconBrandGithub" class="w-4 h-4 shrink-0" />
-                      <span class="truncate">github.com/xhd2005/puretone</span>
-                    </span>
-                    <span class="text-[12px] am-accent-text font-semibold shrink-0 ml-2">{{ t('about.repoLink') }}</span>
+                    <div class="flex items-center gap-2.5 min-w-0">
+                      <Icon :icon="iconBrandGithub" class="w-4.5 h-4.5 text-[var(--text-secondary)] shrink-0" />
+                      <span class="text-[14.5px] font-medium text-[var(--text-primary)] truncate">{{ t('about.repoLink') }}</span>
+                    </div>
+                    <span class="text-[12px] text-[var(--text-tertiary)] font-mono shrink-0">xhd2005/puretone ↗</span>
                   </button>
 
+                  <!-- Collapsible Update Acceleration Route Row (Clean 1-Line Default!) -->
+                  <div>
+                    <button
+                      type="button"
+                      class="w-full px-4 py-3.5 bg-transparent border-0 flex items-center justify-between gap-2.5 text-left am-tap"
+                      @click="echoSystem.haptic('selection'); showUpdateRoutePanel = !showUpdateRoutePanel"
+                    >
+                      <div class="flex items-center gap-2.5 min-w-0">
+                        <Icon :icon="iconDownload" class="w-4.5 h-4.5 am-accent-text shrink-0" />
+                        <span class="text-[14.5px] font-medium text-[var(--text-primary)] truncate">{{ t('update.channel') }}</span>
+                      </div>
+                      <div class="flex items-center gap-1 text-[12px] text-[var(--text-secondary)] shrink-0">
+                        <span>{{ settings.updateMirrorMode === 'direct' ? t('update.channelDirect') : t('update.channelAuto') }}</span>
+                        <Icon
+                          :icon="iconChevronDown"
+                          class="w-3.5 h-3.5 transition-transform opacity-70"
+                          :class="{ 'rotate-180': showUpdateRoutePanel }"
+                        />
+                      </div>
+                    </button>
+
+                    <div v-if="showUpdateRoutePanel" class="px-4 pb-3.5 pt-0.5 space-y-2.5">
+                      <div class="pt-seg-group grid-cols-2">
+                        <button
+                          v-for="m in mirrorOptions"
+                          :key="m.id"
+                          type="button"
+                          class="pt-seg-btn"
+                          :class="
+                            settings.updateMirrorMode === m.id
+                              ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-xs'
+                              : 'bg-transparent text-[var(--text-secondary)]'
+                          "
+                          @click="echoSystem.haptic('selection'); settings.updateMirrorMode = m.id"
+                        >
+                          {{ m.label }}
+                        </button>
+                      </div>
+                      <input
+                        v-model.trim="settings.customUpdateMirror"
+                        type="url"
+                        inputmode="url"
+                        :placeholder="t('update.customMirrorPlaceholder')"
+                        class="w-full h-9 px-3 rounded-xl bg-[var(--bg-subtle)] text-[12.5px] text-[var(--text-primary)] border-0 outline-none"
+                      />
+                      <p class="text-[11px] text-[var(--text-tertiary)] leading-relaxed m-0">
+                        {{ t('update.customMirrorHint') }}
+                      </p>
+                    </div>
+                  </div>
+
+                  <!-- Compliance & Legal Disclaimer Row -->
                   <button
                     type="button"
-                    class="w-full h-10 px-3.5 rounded-xl bg-[var(--bg-subtle)]/50 text-[13px] font-medium text-[var(--text-secondary)] border-0 flex items-center justify-between gap-2 am-tap"
+                    class="w-full px-4 py-3.5 bg-transparent border-0 flex items-center justify-between gap-2.5 text-left am-tap"
                     @click="echoSystem.haptic('light'); ui.complianceModalOpen = true"
                   >
-                    <span class="flex items-center gap-2 min-w-0">
-                      <Icon :icon="iconShieldCheck" class="w-4 h-4 am-accent-text shrink-0" />
-                      <span class="truncate">{{ t('about.disclaimerLink') }}</span>
-                    </span>
+                    <div class="flex items-center gap-2.5 min-w-0">
+                      <Icon :icon="iconShieldCheck" class="w-4.5 h-4.5 am-accent-text shrink-0" />
+                      <span class="text-[14.5px] font-medium text-[var(--text-primary)] truncate">{{ t('about.disclaimerLink') }}</span>
+                    </div>
                     <span class="text-[12px] text-[var(--text-tertiary)] shrink-0">{{ t('common.view') }}</span>
                   </button>
                 </div>
 
-                <p class="text-[11px] text-[var(--text-tertiary)] leading-relaxed m-0 px-0.5">
-                  {{ t('about.thanks') }}
-                </p>
+                <!-- 3. Quiet Editorial Footer -->
+                <div class="px-3 pt-1 pb-2 text-center space-y-1">
+                  <div class="text-[10px] font-semibold tracking-[0.14em] uppercase text-[var(--text-tertiary)]/75">
+                    {{ t('app.sloganEn') }}
+                  </div>
+                  <p class="text-[11px] text-[var(--text-tertiary)] leading-relaxed m-0">
+                    {{ t('about.thanks') }}
+                  </p>
+                </div>
               </section>
             </template>
           </div>
