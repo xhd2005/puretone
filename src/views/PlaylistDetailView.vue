@@ -234,14 +234,18 @@ function toggleSearch() {
 function enterBatchMode() {
   echoSystem.haptic('selection');
   manageSheetOpen.value = false;
+  searchOpen.value = false;
   batchMode.value = true;
   selectedKeys.value = new Set();
+  ui.setBatchDock(true, exitBatchMode);
 }
 
 function exitBatchMode() {
+  if (!batchMode.value) return;
   echoSystem.haptic('selection');
   batchMode.value = false;
   selectedKeys.value = new Set();
+  ui.setBatchDock(false);
 }
 
 function toggleSelectSong(song: Song) {
@@ -467,6 +471,9 @@ onMounted(async () => {
 onUnmounted(() => {
   abortSignal.aborted = true;
   if (highlightTimer) clearTimeout(highlightTimer);
+  if (batchMode.value) {
+    ui.setBatchDock(false);
+  }
 });
 </script>
 
@@ -529,26 +536,28 @@ onUnmounted(() => {
       </div>
 
       <!-- Expandable In-Playlist Instant Search Bar -->
-      <div v-if="searchOpen && !batchMode" class="px-4 pb-2.5">
-        <div class="h-9 rounded-xl bg-[var(--bg-subtle)] px-3 flex items-center gap-2">
-          <Icon :icon="iconSearch" class="w-4 h-4 text-[var(--text-secondary)] shrink-0" />
-          <input
-            ref="searchInputRef"
-            v-model="searchQuery"
-            type="search"
-            :placeholder="t('playlist.searchPlaceholder')"
-            class="flex-1 bg-transparent border-0 outline-none text-[14px] text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]"
-          />
-          <button
-            v-if="searchQuery"
-            type="button"
-            class="w-4.5 h-4.5 rounded-full bg-[var(--text-tertiary)] text-[var(--bg-canvas)] border-0 flex items-center justify-center shrink-0"
-            @click="searchQuery = ''"
-          >
-            <Icon :icon="iconX" class="w-3 h-3" />
-          </button>
+      <Transition name="am-expand">
+        <div v-if="searchOpen && !batchMode" class="px-4 pb-2.5">
+          <div class="h-9 rounded-xl bg-[var(--bg-subtle)] px-3 flex items-center gap-2">
+            <Icon :icon="iconSearch" class="w-4 h-4 text-[var(--text-secondary)] shrink-0" />
+            <input
+              ref="searchInputRef"
+              v-model="searchQuery"
+              type="search"
+              :placeholder="t('playlist.searchPlaceholder')"
+              class="flex-1 bg-transparent border-0 outline-none text-[14px] text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]"
+            />
+            <button
+              v-if="searchQuery"
+              type="button"
+              class="w-4.5 h-4.5 rounded-full bg-[var(--text-tertiary)] text-[var(--bg-canvas)] border-0 flex items-center justify-center shrink-0"
+              @click="searchQuery = ''"
+            >
+              <Icon :icon="iconX" class="w-3 h-3" />
+            </button>
+          </div>
         </div>
-      </div>
+      </Transition>
     </header>
 
     <div ref="scrollContainerRef" class="flex-1 am-scroll pb-52" @scroll.passive="onScroll">
@@ -696,41 +705,50 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- Floating Batch Management Action Bar -->
-    <Transition name="fade-pop">
-      <div
-        v-if="batchMode"
-        class="batch-bar lg-surface px-3 py-2 flex items-center gap-2 shadow-xl"
-      >
-        <button
-          type="button"
-          class="flex-1 h-10 rounded-full am-accent-bg text-white text-[13.5px] font-semibold border-0 inline-flex items-center justify-center gap-1.5 am-tap disabled:opacity-45"
-          :disabled="!selectedSongs.length || batchBusy"
-          @click="handleBatchAdd"
+    <!-- Teleported Bottom Takeover Batch Dock (Immune to ancestor transform & always in prime thumb zone!) -->
+    <Teleport to="body">
+      <Transition name="am-dock-slide">
+        <div
+          v-if="batchMode"
+          class="batch-dock-wrap"
         >
-          <Icon :icon="iconPlaylistAdd" class="w-4.5 h-4.5" />
-          <span>{{ t('playlist.batchAdd') }}</span>
-        </button>
+          <div class="batch-dock lg-capsule px-2.5 py-2 flex items-center gap-2">
+            <button
+              type="button"
+              class="flex-1 h-11 rounded-full am-accent-bg text-white text-[14px] font-semibold border-0 inline-flex items-center justify-center gap-1.5 am-tap disabled:opacity-45 shadow-xs"
+              :disabled="!selectedSongs.length || batchBusy"
+              @click="handleBatchAdd"
+            >
+              <Icon :icon="iconPlaylistAdd" class="w-4.5 h-4.5 shrink-0" />
+              <span class="truncate">
+                {{ t('playlist.batchAdd') }}<template v-if="selectedSongs.length"> ({{ selectedSongs.length }})</template>
+              </span>
+            </button>
 
-        <button
-          v-if="isOwner && listId"
-          type="button"
-          class="flex-1 h-10 rounded-full bg-[#ff3b30]/14 text-[#ff3b30] text-[13.5px] font-semibold border-0 inline-flex items-center justify-center gap-1.5 am-tap disabled:opacity-45"
-          :disabled="!selectedSongs.length || batchBusy"
-          @click="handleBatchRemove"
-        >
-          <Icon :icon="iconTrash" class="w-4 h-4" />
-          <span>{{ batchBusy ? t('common.loading') : t('playlist.batchRemove') }}</span>
-        </button>
-      </div>
-    </Transition>
+            <button
+              v-if="isOwner && listId"
+              type="button"
+              class="flex-1 h-11 rounded-full bg-[#ff3b30]/14 text-[#ff3b30] text-[14px] font-semibold border-0 inline-flex items-center justify-center gap-1.5 am-tap disabled:opacity-45"
+              :disabled="!selectedSongs.length || batchBusy"
+              @click="handleBatchRemove"
+            >
+              <Icon :icon="iconTrash" class="w-4 h-4 shrink-0" />
+              <span class="truncate">
+                {{ batchBusy ? t('common.loading') : t('playlist.batchRemove') }}<template v-if="!batchBusy && selectedSongs.length"> ({{ selectedSongs.length }})</template>
+              </span>
+            </button>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
 
     <!-- Floating Liquid Glass "Locate Currently Playing" Button -->
     <Transition name="fade-pop">
       <button
         v-if="currentSongMatchKey && !batchMode"
         type="button"
-        class="locate-fab lg-surface am-tap"
+        class="locate-fab lg-capsule am-tap"
+        :class="{ 'has-mini': Boolean(player.currentSong) }"
         :aria-label="t('playlist.locateCurrent')"
         @click="locateCurrentSong"
       >
@@ -845,14 +863,14 @@ onUnmounted(() => {
     </Transition>
 
     <!-- Edit Playlist Info Modal -->
-    <Transition name="lg-modal">
+    <Transition name="lg-dialog">
       <div
         v-if="editModalOpen"
         class="fixed inset-0 z-[95] flex items-center justify-center p-5 lg-scrim"
         @click="!editSaving && (editModalOpen = false)"
       >
         <div
-          class="w-full max-w-[360px] rounded-[26px] lg-sheet-panel p-5 space-y-4 shadow-2xl"
+          class="w-full max-w-[360px] rounded-[26px] lg-sheet-panel lg-dialog-card p-5 space-y-4 shadow-2xl"
           @click.stop
         >
           <div class="flex items-center justify-between gap-2">
@@ -916,9 +934,9 @@ onUnmounted(() => {
 }
 
 .locate-fab {
-  position: fixed;
+  position: absolute;
   right: 18px;
-  bottom: calc(var(--safe-bottom) + var(--tabbar-h) + var(--miniplayer-h) + 22px);
+  bottom: calc(var(--safe-bottom) + var(--tabbar-height) + 22px);
   z-index: 25;
   width: 44px;
   height: 44px;
@@ -926,15 +944,38 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
+  transition: bottom 320ms var(--spring-ease);
 }
 
-.batch-bar {
+.locate-fab.has-mini {
+  bottom: calc(var(--safe-bottom) + var(--tabbar-height) + var(--miniplayer-height) + 32px);
+}
+
+@media (min-width: 768px) {
+  .locate-fab {
+    bottom: calc(var(--safe-bottom) + 24px);
+  }
+  .locate-fab.has-mini {
+    bottom: calc(var(--safe-bottom) + var(--miniplayer-height) + 30px);
+  }
+}
+
+.batch-dock-wrap {
   position: fixed;
   left: 16px;
   right: 16px;
-  bottom: calc(var(--safe-bottom) + var(--tabbar-h) + var(--miniplayer-h) + 14px);
-  z-index: 30;
+  bottom: calc(var(--safe-bottom) + 14px);
+  z-index: 50;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.batch-dock {
+  width: 100%;
+  max-width: 480px;
   border-radius: 999px;
+  pointer-events: auto;
 }
 
 .manage-item {

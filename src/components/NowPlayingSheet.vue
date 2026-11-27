@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { Icon } from '@iconify/vue';
 import iconPlayerPlayFilled from '@iconify/icons-tabler/player-play-filled';
@@ -27,6 +27,12 @@ import iconTrash from '@iconify/icons-tabler/trash';
 import type { SongClimaxRange } from '@/types/music';
 import { formatCompactCount, kugouApi } from '@/services/kugou/kugouEngine';
 import { openArtistProfileFromSong } from '@/services/playback/artistNavigation';
+import {
+  computeHeroFlipTransform,
+  computeMetaGlideTransform,
+  HERO_MORPH_EASING,
+  type BoxRect,
+} from '@/utils/heroMorph';
 import { usePlayerStore } from '@/stores/player';
 import { useSettingsStore } from '@/stores/settings';
 import { useUiStore } from '@/stores/ui';
@@ -45,6 +51,163 @@ const { t, effectiveLocale } = useI18n();
 const commentCount = ref(0);
 const climaxRange = ref<SongClimaxRange | null>(null);
 const showLyricOffsetBar = ref(false);
+
+// Shared-Element Hero Morph refs & animation handles
+const coverArtworkRef = ref<HTMLElement | null>(null);
+const coverMetaRef = ref<HTMLElement | null>(null);
+const miniThumbRef = ref<HTMLElement | null>(null);
+const miniMetaRef = ref<HTMLElement | null>(null);
+const stageTransitionName = ref<'np-to-detail' | 'np-to-cover' | 'np-cross-depth'>('np-to-detail');
+const morphHideLeavingCover = ref(false);
+const morphHideLeavingMini = ref(false);
+let activeArtworkAnim: Animation | null = null;
+let activeMetaAnim: Animation | null = null;
+let morphCleanupTimer: ReturnType<typeof setTimeout> | null = null;
+
+function snapshotRect(el: HTMLElement | null): BoxRect | null {
+  if (!el) return null;
+  const r = el.getBoundingClientRect();
+  if (r.width < 4 || r.height < 4) return null;
+  return { left: r.left, top: r.top, width: r.width, height: r.height };
+}
+
+function cancelActiveMorph() {
+  if (activeArtworkAnim) {
+    try {
+      activeArtworkAnim.cancel();
+    } catch {
+      // ignore
+    }
+    activeArtworkAnim = null;
+  }
+  if (activeMetaAnim) {
+    try {
+      activeMetaAnim.cancel();
+    } catch {
+      // ignore
+    }
+    activeMetaAnim = null;
+  }
+  if (morphCleanupTimer) {
+    clearTimeout(morphCleanupTimer);
+    morphCleanupTimer = null;
+  }
+}
+
+async function switchModeWithMorph(target: 'cover' | 'lyrics' | 'queue') {
+  const fromMode = ui.nowPlayingMode;
+  if (fromMode === target) return;
+
+  const leavingCover = fromMode === 'cover';
+  const enteringCover = target === 'cover';
+  const needsHeroMorph = leavingCover !== enteringCover;
+
+  // Capture LIVE mid-flight rects BEFORE cancelling previous animation for 100% interruptible physics!
+  const fromArtRect = needsHeroMorph
+    ? snapshotRect(leavingCover ? coverArtworkRef.value : miniThumbRef.value)
+    : null;
+  const fromMetaRect = needsHeroMorph
+    ? snapshotRect(leavingCover ? coverMetaRef.value : miniMetaRef.value)
+    : null;
+
+  cancelActiveMorph();
+
+  if (leavingCover) {
+    stageTransitionName.value = 'np-to-detail';
+    morphHideLeavingCover.value = true;
+    morphHideLeavingMini.value = false;
+  } else if (enteringCover) {
+    stageTransitionName.value = 'np-to-cover';
+    morphHideLeavingCover.value = false;
+    morphHideLeavingMini.value = true;
+  } else {
+    stageTransitionName.value = 'np-cross-depth';
+    morphHideLeavingCover.value = false;
+    morphHideLeavingMini.value = false;
+  }
+
+  ui.nowPlayingMode = target;
+
+  if (!needsHeroMorph || !fromArtRect) {
+    return;
+  }
+
+  await nextTick();
+
+  const targetArtEl = enteringCover ? coverArtworkRef.value : miniThumbRef.value;
+  const targetMetaEl = enteringCover ? coverMetaRef.value : miniMetaRef.value;
+
+  if (targetArtEl && typeof targetArtEl.animate === 'function') {
+    const toArtRect = snapshotRect(targetArtEl);
+    if (toArtRect) {
+      const restScale = enteringCover ? (player.isPlaying ? 1 : 0.84) : 1;
+      const plan = computeHeroFlipTransform(fromArtRect, toArtRect, {
+        fromRadiusPx: leavingCover ? 18 : 10,
+        toRadiusPx: enteringCover ? 18 : 10,
+        targetRestScale: restScale,
+      });
+      if (plan) {
+        activeArtworkAnim = targetArtEl.animate(
+          [
+            {
+              transform: plan.fromTransform,
+              borderRadius: plan.fromBorderRadius,
+              boxShadow: leavingCover
+                ? '0 26px 60px rgba(0, 0, 0, 0.48)'
+                : '0 8px 20px rgba(0, 0, 0, 0.30)',
+            },
+            {
+              transform: plan.toTransform,
+              borderRadius: plan.toBorderRadius,
+              boxShadow: enteringCover
+                ? player.isPlaying
+                  ? '0 30px 70px rgba(0, 0, 0, 0.54), 0 8px 22px rgba(0, 0, 0, 0.32)'
+                  : '0 12px 28px rgba(0, 0, 0, 0.36)'
+                : '0 8px 18px rgba(0, 0, 0, 0.32)',
+            },
+          ],
+          {
+            duration: enteringCover ? 480 : 460,
+            easing: HERO_MORPH_EASING,
+            fill: 'none',
+          },
+        );
+        activeArtworkAnim.onfinish = () => {
+          activeArtworkAnim = null;
+        };
+      }
+    }
+  }
+
+  if (fromMetaRect && targetMetaEl && typeof targetMetaEl.animate === 'function') {
+    const toMetaRect = snapshotRect(targetMetaEl);
+    if (toMetaRect) {
+      const glide = computeMetaGlideTransform(fromMetaRect, toMetaRect);
+      if (glide) {
+        activeMetaAnim = targetMetaEl.animate(
+          [
+            { transform: glide.fromTransform, opacity: 0.65 },
+            { transform: glide.toTransform, opacity: 1 },
+          ],
+          {
+            duration: 440,
+            easing: HERO_MORPH_EASING,
+            fill: 'none',
+          },
+        );
+        activeMetaAnim.onfinish = () => {
+          activeMetaAnim = null;
+        };
+      }
+    }
+  }
+
+  morphCleanupTimer = setTimeout(() => {
+    morphHideLeavingCover.value = false;
+    morphHideLeavingMini.value = false;
+    morphCleanupTimer = null;
+  }, 500);
+}
 
 const currentTrackOffsetKey = computed(() => {
   const s = player.currentSong;
@@ -138,9 +301,11 @@ let activeScrubPointerId: number | null = null;
 const lyricsHudVisible = ref(true);
 let lyricsHideTimer: ReturnType<typeof setTimeout> | null = null;
 
-// Sheet Drag-to-Dismiss & Cover Swipe/Double-Tap state
+// Sheet Drag-to-Dismiss & Cover Swipe/Double-Tap state (with spring rebound!)
 const dragOffsetY = ref(0);
+const isDraggingSheet = ref(false);
 const coverSwipeX = ref(0);
+const isSwipingCover = ref(false);
 const heartBurst = ref(false);
 let sheetTouchY = 0;
 let coverTouchStartX = 0;
@@ -148,6 +313,25 @@ let coverTouchStartY = 0;
 let coverGestureAxis: 'none' | 'x' | 'y' = 'none';
 let lastCoverTapAt = 0;
 let heartBurstTimer: ReturnType<typeof setTimeout> | null = null;
+
+const overlayDragStyle = computed(() => {
+  if (dragOffsetY.value <= 0) return undefined;
+  const radius = Math.min(30, Math.round(dragOffsetY.value * 0.28));
+  return {
+    transform: `translate3d(0, ${dragOffsetY.value}px, 0)`,
+    borderRadius: `${radius}px`,
+    transition: isDraggingSheet.value ? 'none' : undefined,
+  };
+});
+
+const artworkSwipeStyle = computed(() => {
+  if (!coverSwipeX.value) return undefined;
+  const tilt = Math.max(-5, Math.min(5, coverSwipeX.value * 0.032));
+  return {
+    transform: `translate3d(${coverSwipeX.value}px, 0, 0) rotate(${tilt.toFixed(2)}deg) scale(0.95)`,
+    transition: isSwipingCover.value ? 'none' : undefined,
+  };
+});
 
 function clearLyricsHideTimer() {
   if (lyricsHideTimer) {
@@ -227,8 +411,14 @@ watch(
   (open) => {
     settings.applyThemeClass(open);
     if (!open) {
+      cancelActiveMorph();
+      morphHideLeavingCover.value = false;
+      morphHideLeavingMini.value = false;
+      isDraggingSheet.value = false;
+      isSwipingCover.value = false;
       dragOffsetY.value = 0;
       coverSwipeX.value = 0;
+      showLyricOffsetBar.value = false;
       clearLyricsHideTimer();
       lyricsHudVisible.value = true;
     } else if (ui.nowPlayingMode === 'lyrics') {
@@ -243,6 +433,7 @@ watch(
     if (mode === 'lyrics') {
       revealLyricsHud(true);
     } else {
+      showLyricOffsetBar.value = false;
       clearLyricsHideTimer();
       lyricsHudVisible.value = true;
     }
@@ -262,6 +453,7 @@ watch(
 );
 
 onUnmounted(() => {
+  cancelActiveMorph();
   clearLyricsHideTimer();
   if (heartBurstTimer) clearTimeout(heartBurstTimer);
 });
@@ -336,16 +528,18 @@ function finishScrub(e: PointerEvent, commit: boolean) {
   scheduleLyricsAutoHide();
 }
 
-// ---- Top Handle Drag-to-Dismiss ----
+// ---- Top Handle Drag-to-Dismiss (with Spring Rebound!) ----
 
 function onHandleTouchStart(e: TouchEvent) {
   sheetTouchY = e.touches[0]?.clientY ?? 0;
+  isDraggingSheet.value = true;
 }
 function onHandleTouchMove(e: TouchEvent) {
   const dy = (e.touches[0]?.clientY ?? 0) - sheetTouchY;
   dragOffsetY.value = Math.max(0, dy);
 }
 function onHandleTouchEnd() {
+  isDraggingSheet.value = false;
   if (dragOffsetY.value > 95) {
     echoSystem.haptic('light');
     ui.nowPlayingOpen = false;
@@ -372,12 +566,14 @@ function onCoverTouchMove(e: TouchEvent) {
   if (coverGestureAxis === 'none') {
     if (Math.abs(dx) > 12 || Math.abs(dy) > 12) {
       coverGestureAxis = Math.abs(dx) >= Math.abs(dy) ? 'x' : 'y';
+      if (coverGestureAxis === 'x') isSwipingCover.value = true;
+      else if (coverGestureAxis === 'y' && dy > 0) isDraggingSheet.value = true;
     }
   }
   if (coverGestureAxis === 'x') {
-    // Elastic horizontal swipe preview
     coverSwipeX.value = dx * 0.42;
   } else if (coverGestureAxis === 'y' && dy > 0) {
+    isDraggingSheet.value = true;
     dragOffsetY.value = dy * 0.85;
   }
 }
@@ -386,6 +582,9 @@ function onCoverTouchEnd(e: TouchEvent) {
   const t = e.changedTouches[0];
   const dx = (t?.clientX ?? coverTouchStartX) - coverTouchStartX;
   const dy = (t?.clientY ?? coverTouchStartY) - coverTouchStartY;
+
+  isSwipingCover.value = false;
+  isDraggingSheet.value = false;
 
   if (coverGestureAxis === 'x') {
     if (dx < -58) {
@@ -420,7 +619,12 @@ function onCoverTouchEnd(e: TouchEvent) {
 
 function toggleMode(target: 'lyrics' | 'queue') {
   echoSystem.haptic('selection');
-  ui.nowPlayingMode = ui.nowPlayingMode === target ? 'cover' : target;
+  void switchModeWithMorph(ui.nowPlayingMode === target ? 'cover' : target);
+}
+
+function returnToCover() {
+  echoSystem.haptic('selection');
+  void switchModeWithMorph('cover');
 }
 
 const playModeIcon = computed(() => {
@@ -448,7 +652,8 @@ function handleClearQueue() {
     <div
       v-if="ui.nowPlayingOpen && player.currentSong"
       class="np-overlay"
-      :style="dragOffsetY ? { transform: `translateY(${dragOffsetY}px)`, transition: 'none' } : undefined"
+      :class="{ 'is-dragging': isDraggingSheet }"
+      :style="overlayDragStyle"
     >
       <FluidCoverBackground :active="ui.nowPlayingOpen" />
 
@@ -465,283 +670,320 @@ function handleClearQueue() {
         </div>
 
         <!-- Subtle Sleep Timer Pill (when active in cover mode) -->
-        <div
-          v-if="player.sleepTimerBadge && ui.nowPlayingMode === 'cover'"
-          class="flex justify-center pb-1 shrink-0"
-        >
-          <button
-            type="button"
-            class="lg-fluid-btn px-3 py-1 rounded-full text-[11px] font-semibold text-white/90 inline-flex items-center gap-1 am-tap"
-            @click="ui.actionSheetSong = player.currentSong"
+        <Transition name="am-expand">
+          <div
+            v-if="player.sleepTimerBadge && ui.nowPlayingMode === 'cover'"
+            class="flex justify-center pb-1 shrink-0"
           >
-            <Icon :icon="iconMoon" class="w-3.5 h-3.5" />
-            <span class="tabular-nums">{{ player.sleepTimerBadge }}</span>
-          </button>
-        </div>
-
-        <!-- Compact Header in Lyrics / Queue mode -->
-        <div v-if="ui.nowPlayingMode !== 'cover'" class="np-mini-header">
-          <button
-            type="button"
-            class="flex items-center gap-3 flex-1 min-w-0 text-left bg-transparent border-0 p-0"
-            @click="ui.nowPlayingMode = 'cover'"
-          >
-            <div class="w-12 h-12 rounded-[10px] overflow-hidden shrink-0 shadow-lg bg-white/10">
-              <img
-                v-if="player.currentSong.coverUrl"
-                :src="player.currentSong.coverUrl"
-                class="w-full h-full object-cover"
-                alt=""
-              />
-            </div>
-            <div class="min-w-0 flex-1">
-              <div class="text-[16px] font-semibold text-white truncate">{{ player.currentSong.title }}</div>
-              <div class="text-[13px] text-white/65 truncate flex items-center gap-1.5">
-                <span class="truncate">{{ player.currentSong.artist }}</span>
-                <span
-                  v-if="player.sleepTimerBadge"
-                  class="px-1.5 py-0.5 rounded-full bg-white/15 text-[10px] font-semibold text-white/90 tabular-nums shrink-0 inline-flex items-center gap-0.5"
-                >
-                  <Icon :icon="iconMoon" class="w-2.5 h-2.5" />
-                  {{ player.sleepTimerBadge }}
-                </span>
-              </div>
-            </div>
-          </button>
-
-          <div class="flex items-center gap-1.5 shrink-0">
-            <button
-              v-if="ui.nowPlayingMode === 'lyrics'"
-              type="button"
-              class="lg-fluid-btn h-9 px-2.5 rounded-full text-[11px] font-semibold text-white/90 tabular-nums am-tap"
-              :class="{ '!bg-white/30 !text-white': showLyricOffsetBar || currentLyricOffsetMs !== 0 }"
-              @click="showLyricOffsetBar = !showLyricOffsetBar; echoSystem.haptic('selection')"
-            >
-              {{ currentLyricOffsetMs !== 0 ? lyricOffsetLabel : t('np.lyricOffset') }}
-            </button>
-            <button
-              v-if="ui.nowPlayingMode === 'lyrics'"
-              type="button"
-              class="np-circle-btn lg-fluid-btn am-tap"
-              :aria-label="t('song.poster')"
-              @click="ui.lyricPosterSong = player.currentSong"
-            >
-              <Icon :icon="iconPhoto" class="w-5 h-5" />
-            </button>
-            <button
-              v-if="ui.nowPlayingMode === 'lyrics' && player.lyrics.hasTranslation"
-              type="button"
-              class="np-circle-btn lg-fluid-btn am-tap"
-              :class="{ '!bg-white/30 !text-white': settings.showTranslation }"
-              aria-label="Toggle translation"
-              @click="settings.showTranslation = !settings.showTranslation; echoSystem.haptic('selection')"
-            >
-              <Icon :icon="iconLanguage" class="w-5 h-5" />
-            </button>
             <button
               type="button"
-              class="np-circle-btn lg-fluid-btn am-tap"
-              aria-label="More options"
-              @click="ui.actionSheetSong = player.currentSong"
+              class="lg-fluid-btn px-3 py-1 rounded-full text-[11px] font-semibold text-white/90 inline-flex items-center gap-1 am-tap"
+              @click="ui.openSongActions(player.currentSong)"
             >
-              <Icon :icon="iconDots" class="w-5 h-5" />
+              <Icon :icon="iconMoon" class="w-3.5 h-3.5" />
+              <span class="tabular-nums">{{ player.sleepTimerBadge }}</span>
             </button>
           </div>
-        </div>
+        </Transition>
+
+        <!-- Compact Header in Lyrics / Queue mode (Shared-Element Destination!) -->
+        <Transition name="np-header-fade">
+          <div v-if="ui.nowPlayingMode !== 'cover'" class="np-mini-header">
+            <button
+              type="button"
+              class="flex items-center gap-3 flex-1 min-w-0 text-left bg-transparent border-0 p-0"
+              @click="returnToCover"
+            >
+              <div
+                ref="miniThumbRef"
+                class="np-mini-thumb"
+                :class="{ 'is-morph-hidden': morphHideLeavingMini }"
+              >
+                <Transition name="art-xfade">
+                  <img
+                    v-if="player.currentSong.coverUrl"
+                    :key="player.currentSong.coverUrl"
+                    :src="player.currentSong.coverUrl"
+                    class="art-layer w-full h-full object-cover"
+                    alt=""
+                  />
+                  <div
+                    v-else
+                    key="mini-fallback"
+                    class="art-layer w-full h-full flex items-center justify-center bg-white/10 text-white/40"
+                  >
+                    <Icon :icon="iconMusic" class="w-5 h-5" />
+                  </div>
+                </Transition>
+              </div>
+              <div ref="miniMetaRef" class="min-w-0 flex-1">
+                <div class="text-[16px] font-semibold text-white truncate">{{ player.currentSong.title }}</div>
+                <div class="text-[13px] text-white/65 truncate flex items-center gap-1.5">
+                  <span class="truncate">{{ player.currentSong.artist }}</span>
+                  <span
+                    v-if="player.sleepTimerBadge"
+                    class="px-1.5 py-0.5 rounded-full bg-white/15 text-[10px] font-semibold text-white/90 tabular-nums shrink-0 inline-flex items-center gap-0.5"
+                  >
+                    <Icon :icon="iconMoon" class="w-2.5 h-2.5" />
+                    {{ player.sleepTimerBadge }}
+                  </span>
+                </div>
+              </div>
+            </button>
+
+            <div class="np-mini-actions flex items-center gap-1.5 shrink-0">
+              <button
+                v-if="ui.nowPlayingMode === 'lyrics'"
+                type="button"
+                class="lg-fluid-btn h-9 px-2.5 rounded-full text-[11px] font-semibold text-white/90 tabular-nums am-tap"
+                :class="{ '!bg-white/30 !text-white': showLyricOffsetBar || currentLyricOffsetMs !== 0 }"
+                @click="showLyricOffsetBar = !showLyricOffsetBar; echoSystem.haptic('selection')"
+              >
+                {{ currentLyricOffsetMs !== 0 ? lyricOffsetLabel : t('np.lyricOffset') }}
+              </button>
+              <button
+                v-if="ui.nowPlayingMode === 'lyrics'"
+                type="button"
+                class="np-circle-btn lg-fluid-btn am-tap"
+                :aria-label="t('song.poster')"
+                @click="ui.lyricPosterSong = player.currentSong"
+              >
+                <Icon :icon="iconPhoto" class="w-5 h-5" />
+              </button>
+              <button
+                v-if="ui.nowPlayingMode === 'lyrics' && player.lyrics.hasTranslation"
+                type="button"
+                class="np-circle-btn lg-fluid-btn am-tap"
+                :class="{ '!bg-white/30 !text-white': settings.showTranslation }"
+                aria-label="Toggle translation"
+                @click="settings.showTranslation = !settings.showTranslation; echoSystem.haptic('selection')"
+              >
+                <Icon :icon="iconLanguage" class="w-5 h-5" />
+              </button>
+              <button
+                type="button"
+                class="np-circle-btn lg-fluid-btn am-tap"
+                aria-label="More options"
+                @click="ui.openSongActions(player.currentSong)"
+              >
+                <Icon :icon="iconDots" class="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+        </Transition>
 
         <!-- Inline Lyrics Timeline Offset Adjuster (±0.5s, per-track persisted!) -->
-        <div
-          v-if="ui.nowPlayingMode === 'lyrics' && showLyricOffsetBar"
-          class="px-6 pb-2 flex items-center justify-center gap-2 shrink-0"
-        >
-          <button
-            type="button"
-            class="lg-fluid-btn h-7 px-3 rounded-full text-[11.5px] font-semibold text-white tabular-nums am-tap"
-            @click="nudgeLyricOffset(-500)"
+        <Transition name="am-expand">
+          <div
+            v-if="ui.nowPlayingMode === 'lyrics' && showLyricOffsetBar"
+            class="px-6 pb-2 flex items-center justify-center gap-2 shrink-0"
           >
-            -0.5s
-          </button>
-          <button
-            type="button"
-            class="lg-fluid-btn h-7 px-3.5 rounded-full text-[11.5px] font-bold text-white/95 tabular-nums am-tap"
-            @click="resetLyricOffset"
-          >
-            {{ t('np.lyricOffset') }} {{ lyricOffsetLabel }}
-          </button>
-          <button
-            type="button"
-            class="lg-fluid-btn h-7 px-3 rounded-full text-[11.5px] font-semibold text-white tabular-nums am-tap"
-            @click="nudgeLyricOffset(500)"
-          >
-            +0.5s
-          </button>
-        </div>
-
-        <!-- MODE 1: AUTHENTIC APPLE MUSIC + LIQUID GLASS COVER MODE -->
-        <div
-          v-if="ui.nowPlayingMode === 'cover'"
-          class="np-cover-stage"
-          @touchstart.passive="onCoverTouchStart"
-          @touchmove.passive="onCoverTouchMove"
-          @touchend.passive="onCoverTouchEnd"
-        >
-          <div class="np-artwork-wrap">
-            <div
-              class="np-artwork"
-              :class="player.isPlaying ? 'is-playing' : 'is-paused'"
-              :style="coverSwipeX ? { transform: `translateX(${coverSwipeX}px) scale(0.96)`, transition: 'none' } : undefined"
+            <button
+              type="button"
+              class="lg-fluid-btn h-7 px-3 rounded-full text-[11.5px] font-semibold text-white tabular-nums am-tap"
+              @click="nudgeLyricOffset(-500)"
             >
-              <img
-                v-if="player.currentSong.coverUrl"
-                :src="player.currentSong.coverUrl"
-                :alt="player.currentSong.title"
-                class="w-full h-full object-cover"
+              -0.5s
+            </button>
+            <button
+              type="button"
+              class="lg-fluid-btn h-7 px-3.5 rounded-full text-[11.5px] font-bold text-white/95 tabular-nums am-tap"
+              @click="resetLyricOffset"
+            >
+              {{ t('np.lyricOffset') }} {{ lyricOffsetLabel }}
+            </button>
+            <button
+              type="button"
+              class="lg-fluid-btn h-7 px-3 rounded-full text-[11.5px] font-semibold text-white tabular-nums am-tap"
+              @click="nudgeLyricOffset(500)"
+            >
+              +0.5s
+            </button>
+          </div>
+        </Transition>
+
+        <!-- Overlapping Stage Host for Smooth Cover <-> Lyrics <-> Queue Transitions -->
+        <div class="np-stage-host">
+          <Transition :name="stageTransitionName">
+            <!-- MODE 1: AUTHENTIC APPLE MUSIC + LIQUID GLASS COVER MODE -->
+            <div
+              v-if="ui.nowPlayingMode === 'cover'"
+              key="stage-cover"
+              class="np-stage-pane np-cover-stage"
+              @touchstart.passive="onCoverTouchStart"
+              @touchmove.passive="onCoverTouchMove"
+              @touchend.passive="onCoverTouchEnd"
+            >
+              <div class="np-artwork-wrap">
+                <div
+                  ref="coverArtworkRef"
+                  class="np-artwork"
+                  :class="[
+                    player.isPlaying ? 'is-playing' : 'is-paused',
+                    { 'is-morph-hidden': morphHideLeavingCover },
+                  ]"
+                  :style="artworkSwipeStyle"
+                >
+                  <Transition name="art-xfade">
+                    <img
+                      v-if="player.currentSong.coverUrl"
+                      :key="player.currentSong.coverUrl"
+                      :src="player.currentSong.coverUrl"
+                      :alt="player.currentSong.title"
+                      class="art-layer w-full h-full object-cover"
+                    />
+                    <div
+                      v-else
+                      key="cover-fallback"
+                      class="art-layer w-full h-full flex items-center justify-center bg-white/10 text-white/40"
+                    >
+                      <Icon :icon="iconMusic" class="w-20 h-20" />
+                    </div>
+                  </Transition>
+
+                  <!-- Double-Tap Heart Burst -->
+                  <Transition name="heart-pop">
+                    <div v-if="heartBurst" class="heart-burst-overlay">
+                      <Icon :icon="iconHeartFilled" class="w-20 h-20 text-[#ff375f] drop-shadow-2xl" />
+                    </div>
+                  </Transition>
+                </div>
+              </div>
+
+              <!-- Cover Page 2-Line Live Lyrics Preview (Tap to enter full-screen KRC lyrics) -->
+              <button
+                v-if="coverLyricsPreview"
+                type="button"
+                class="np-cover-lyrics am-tap"
+                @click.stop="toggleMode('lyrics')"
+              >
+                <div
+                  class="text-[14px] leading-snug truncate transition-colors duration-300"
+                  :class="coverLyricsPreview.isIntro ? 'text-white/62 font-medium' : 'text-white/94 font-semibold'"
+                >
+                  {{ coverLyricsPreview.current }}
+                </div>
+                <div v-if="coverLyricsPreview.next" class="text-[12px] leading-snug text-white/46 truncate mt-0.5">
+                  {{ coverLyricsPreview.next }}
+                </div>
+              </button>
+
+              <div class="np-meta-row">
+                <div ref="coverMetaRef" class="min-w-0 flex-1 pr-3">
+                  <h1 class="text-[22px] font-bold text-white truncate tracking-tight leading-snug">
+                    {{ player.currentSong.title }}
+                  </h1>
+                  <button
+                    type="button"
+                    class="mt-0.5 max-w-full inline-flex items-center gap-0.5 bg-transparent border-0 p-0 text-[16px] text-white/70 active:text-white transition-colors text-left"
+                    @click.stop="openCurrentArtist"
+                  >
+                    <span class="truncate">{{ player.currentSong.artist }}</span>
+                    <Icon :icon="iconChevronRight" class="w-4 h-4 opacity-60 shrink-0" />
+                  </button>
+                </div>
+                <div class="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    class="np-circle-btn lg-fluid-btn am-tap"
+                    aria-label="收藏到我喜欢"
+                    @click="player.toggleFavorite(player.currentSong)"
+                  >
+                    <Icon
+                      :icon="player.isCurrentFavorite ? iconHeartFilled : iconHeart"
+                      class="w-[21px] h-[21px] transition-transform duration-200"
+                      :class="player.isCurrentFavorite ? 'text-[#ff375f] scale-110' : 'text-white/95'"
+                    />
+                  </button>
+                  <button
+                    type="button"
+                    class="np-circle-btn lg-fluid-btn am-tap"
+                    aria-label="更多选项"
+                    @click="ui.openSongActions(player.currentSong)"
+                  >
+                    <Icon :icon="iconDots" class="w-[21px] h-[21px] text-white/95" />
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- MODE 2: APPLE MUSIC WORD-BY-WORD KRC LYRICS (Instant Sync + Auto-Immersive!) -->
+            <div v-else-if="ui.nowPlayingMode === 'lyrics'" key="stage-lyrics" class="np-stage-pane">
+              <KrcLyricsView
+                :active="ui.nowPlayingOpen && ui.nowPlayingMode === 'lyrics'"
+                @user-scroll="onLyricsUserScroll"
+                @tap-blank="onLyricsTapBlank"
+                @line-seek="scheduleLyricsAutoHide"
               />
-              <div v-else class="w-full h-full flex items-center justify-center bg-white/10 text-white/40">
-                <Icon :icon="iconMusic" class="w-20 h-20" />
-              </div>
+            </div>
 
-              <!-- Double-Tap Heart Burst -->
-              <Transition name="heart-pop">
-                <div v-if="heartBurst" class="heart-burst-overlay">
-                  <Icon :icon="iconHeartFilled" class="w-20 h-20 text-[#ff375f] drop-shadow-2xl" />
+            <!-- MODE 3: TRANSLUCENT UP NEXT QUEUE (with Pin-Next & Clear Queue!) -->
+            <div v-else key="stage-queue" class="np-stage-pane flex flex-col px-6 pt-3 pb-2">
+              <div class="flex items-center justify-between gap-2 mb-3">
+                <div class="min-w-0">
+                  <h2 class="text-[17px] font-bold text-white">{{ t('np.upNext') }}</h2>
+                  <p class="text-[12px] text-white/55 truncate">
+                    {{ t('np.queueMeta', { count: player.queue.length, mode: playModeLabel }) }}
+                  </p>
                 </div>
-              </Transition>
-            </div>
-          </div>
-
-          <!-- Cover Page 2-Line Live Lyrics Preview (Tap to enter full-screen KRC lyrics) -->
-          <button
-            v-if="coverLyricsPreview"
-            type="button"
-            class="np-cover-lyrics am-tap"
-            @click.stop="toggleMode('lyrics')"
-          >
-            <div
-              class="text-[14px] leading-snug truncate transition-colors"
-              :class="coverLyricsPreview.isIntro ? 'text-white/62 font-medium' : 'text-white/94 font-semibold'"
-            >
-              {{ coverLyricsPreview.current }}
-            </div>
-            <div v-if="coverLyricsPreview.next" class="text-[12px] leading-snug text-white/46 truncate mt-0.5">
-              {{ coverLyricsPreview.next }}
-            </div>
-          </button>
-
-          <div class="np-meta-row">
-            <div class="min-w-0 flex-1 pr-3">
-              <h1 class="text-[22px] font-bold text-white truncate tracking-tight leading-snug">
-                {{ player.currentSong.title }}
-              </h1>
-              <button
-                type="button"
-                class="mt-0.5 max-w-full inline-flex items-center gap-0.5 bg-transparent border-0 p-0 text-[16px] text-white/70 active:text-white transition-colors text-left"
-                @click.stop="openCurrentArtist"
-              >
-                <span class="truncate">{{ player.currentSong.artist }}</span>
-                <Icon :icon="iconChevronRight" class="w-4 h-4 opacity-60 shrink-0" />
-              </button>
-            </div>
-            <div class="flex items-center gap-2 shrink-0">
-              <button
-                type="button"
-                class="np-circle-btn lg-fluid-btn am-tap"
-                aria-label="收藏到我喜欢"
-                @click="player.toggleFavorite(player.currentSong)"
-              >
-                <Icon
-                  :icon="player.isCurrentFavorite ? iconHeartFilled : iconHeart"
-                  class="w-[21px] h-[21px]"
-                  :class="player.isCurrentFavorite ? 'text-[#ff375f]' : 'text-white/95'"
-                />
-              </button>
-              <button
-                type="button"
-                class="np-circle-btn lg-fluid-btn am-tap"
-                aria-label="更多选项"
-                @click="ui.actionSheetSong = player.currentSong"
-              >
-                <Icon :icon="iconDots" class="w-[21px] h-[21px] text-white/95" />
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <!-- MODE 2: APPLE MUSIC WORD-BY-WORD KRC LYRICS (Instant Sync + Auto-Immersive!) -->
-        <div v-else-if="ui.nowPlayingMode === 'lyrics'" class="flex-1 min-h-0 relative">
-          <KrcLyricsView
-            :active="ui.nowPlayingOpen && ui.nowPlayingMode === 'lyrics'"
-            @user-scroll="onLyricsUserScroll"
-            @tap-blank="onLyricsTapBlank"
-            @line-seek="scheduleLyricsAutoHide"
-          />
-        </div>
-
-        <!-- MODE 3: TRANSLUCENT UP NEXT QUEUE (with Pin-Next & Clear Queue!) -->
-        <div v-else class="flex-1 min-h-0 flex flex-col px-6 pt-3 pb-2">
-          <div class="flex items-center justify-between gap-2 mb-3">
-            <div class="min-w-0">
-              <h2 class="text-[17px] font-bold text-white">{{ t('np.upNext') }}</h2>
-              <p class="text-[12px] text-white/55 truncate">
-                {{ t('np.queueMeta', { count: player.queue.length, mode: playModeLabel }) }}
-              </p>
-            </div>
-            <div class="flex items-center gap-1.5 shrink-0">
-              <button
-                type="button"
-                class="lg-fluid-btn px-3 py-1.5 rounded-full text-white text-[12px] font-medium flex items-center gap-1.5 am-tap"
-                @click="player.cyclePlayMode()"
-              >
-                <Icon :icon="playModeIcon" class="w-4 h-4" />
-                <span>{{ playModeLabel }}</span>
-              </button>
-              <button
-                type="button"
-                class="lg-fluid-btn w-8 h-8 rounded-full text-white/80 flex items-center justify-center am-tap"
-                :aria-label="t('np.clearQueue')"
-                @click="handleClearQueue"
-              >
-                <Icon :icon="iconTrash" class="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-
-          <div class="flex-1 am-scroll -mx-2 px-2 space-y-1">
-            <div
-              v-for="(item, idx) in player.queue"
-              :key="`${item.id}-${idx}`"
-              class="flex items-center gap-2.5 p-2 rounded-xl transition-colors"
-              :class="idx === player.currentIndex ? 'bg-white/18' : 'active:bg-white/10'"
-              @click="player.playQueue(player.queue, idx)"
-            >
-              <div class="w-11 h-11 rounded-[9px] overflow-hidden shrink-0 bg-white/10">
-                <img v-if="item.coverUrl" :src="item.coverUrl" class="w-full h-full object-cover" alt="" />
-              </div>
-              <div class="min-w-0 flex-1">
-                <div class="text-[15px] font-medium truncate" :class="idx === player.currentIndex ? 'text-white' : 'text-white/90'">
-                  {{ item.title }}
+                <div class="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    class="lg-fluid-btn px-3 py-1.5 rounded-full text-white text-[12px] font-medium flex items-center gap-1.5 am-tap"
+                    @click="player.cyclePlayMode()"
+                  >
+                    <Icon :icon="playModeIcon" class="w-4 h-4" />
+                    <span>{{ playModeLabel }}</span>
+                  </button>
+                  <button
+                    type="button"
+                    class="lg-fluid-btn w-8 h-8 rounded-full text-white/80 flex items-center justify-center am-tap"
+                    :aria-label="t('np.clearQueue')"
+                    @click="handleClearQueue"
+                  >
+                    <Icon :icon="iconTrash" class="w-4 h-4" />
+                  </button>
                 </div>
-                <div class="text-[13px] text-white/55 truncate">{{ item.artist }}</div>
               </div>
-              <button
-                v-if="idx !== player.currentIndex && idx !== player.currentIndex + 1"
-                type="button"
-                class="w-8 h-8 rounded-full flex items-center justify-center text-white/65 bg-transparent border-0 am-tap shrink-0"
-                :aria-label="t('np.pinNext')"
-                @click.stop="player.moveQueueItemNext(idx)"
-              >
-                <Icon :icon="iconPlayerTrackNext" class="w-4 h-4" />
-              </button>
-              <button
-                type="button"
-                class="w-8 h-8 rounded-full flex items-center justify-center text-white/50 bg-transparent border-0 am-tap shrink-0"
-                aria-label="Remove"
-                @click.stop="player.removeFromQueue(idx)"
-              >
-                <Icon :icon="iconX" class="w-4 h-4" />
-              </button>
+
+              <div class="flex-1 am-scroll -mx-2 px-2 space-y-1">
+                <div
+                  v-for="(item, idx) in player.queue"
+                  :key="`${item.id}-${idx}`"
+                  class="flex items-center gap-2.5 p-2 rounded-xl transition-colors"
+                  :class="idx === player.currentIndex ? 'bg-white/18' : 'active:bg-white/10'"
+                  @click="player.playQueue(player.queue, idx)"
+                >
+                  <div class="w-11 h-11 rounded-[9px] overflow-hidden shrink-0 bg-white/10">
+                    <img v-if="item.coverUrl" :src="item.coverUrl" class="w-full h-full object-cover" alt="" />
+                  </div>
+                  <div class="min-w-0 flex-1">
+                    <div class="text-[15px] font-medium truncate" :class="idx === player.currentIndex ? 'text-white' : 'text-white/90'">
+                      {{ item.title }}
+                    </div>
+                    <div class="text-[13px] text-white/55 truncate">{{ item.artist }}</div>
+                  </div>
+                  <button
+                    v-if="idx !== player.currentIndex && idx !== player.currentIndex + 1"
+                    type="button"
+                    class="w-8 h-8 rounded-full flex items-center justify-center text-white/65 bg-transparent border-0 am-tap shrink-0"
+                    :aria-label="t('np.pinNext')"
+                    @click.stop="player.moveQueueItemNext(idx)"
+                  >
+                    <Icon :icon="iconPlayerTrackNext" class="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    class="w-8 h-8 rounded-full flex items-center justify-center text-white/50 bg-transparent border-0 am-tap shrink-0"
+                    aria-label="Remove"
+                    @click.stop="player.removeFromQueue(idx)"
+                  >
+                    <Icon :icon="iconX" class="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
             </div>
-          </div>
+          </Transition>
         </div>
 
         <!-- Scrubber & Transport Controls (Smoothly auto-hides in Immersive Lyrics Mode!) -->
@@ -858,7 +1100,7 @@ function handleClearQueue() {
               type="button"
               class="np-tool-btn am-tap"
               :class="{ 'is-on': ui.nowPlayingMode === 'queue' }"
-              :aria-label="t('np.upNext')"
+              aria-label="Up Next"
               @click="toggleMode('queue')"
             >
               <Icon :icon="iconPlaylist" class="w-6 h-6" />
@@ -879,6 +1121,14 @@ function handleClearQueue() {
   flex-direction: column;
   overflow: hidden;
   color: #ffffff;
+  transition:
+    transform 420ms var(--spring-ease),
+    border-radius 380ms var(--spring-ease);
+  will-change: transform;
+}
+
+.np-overlay.is-dragging {
+  transition: none;
 }
 
 .np-content {
@@ -908,6 +1158,8 @@ function handleClearQueue() {
 }
 
 .np-mini-header {
+  position: relative;
+  z-index: 12;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -915,9 +1167,34 @@ function handleClearQueue() {
   flex-shrink: 0;
 }
 
-.np-cover-stage {
+.np-mini-thumb {
+  position: relative;
+  width: 48px;
+  height: 48px;
+  border-radius: 10px;
+  overflow: hidden;
+  flex-shrink: 0;
+  background: rgba(255, 255, 255, 0.10);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.32);
+  transform-origin: center center;
+  will-change: transform;
+}
+
+.np-stage-host {
+  position: relative;
   flex: 1;
   min-height: 0;
+  overflow: visible;
+}
+
+.np-stage-pane {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.np-cover-stage {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
@@ -942,7 +1219,32 @@ function handleClearQueue() {
   border-radius: 18px;
   overflow: hidden;
   background: rgba(255, 255, 255, 0.08);
+  transform-origin: center center;
   transition: transform 480ms var(--spring-ease), box-shadow 480ms ease;
+  will-change: transform;
+}
+
+.is-morph-hidden {
+  opacity: 0 !important;
+  visibility: hidden !important;
+}
+
+.art-layer {
+  position: absolute;
+  inset: 0;
+}
+
+.art-xfade-enter-active,
+.art-xfade-leave-active {
+  transition: opacity 420ms ease, transform 520ms var(--spring-ease);
+}
+.art-xfade-enter-from {
+  opacity: 0;
+  transform: scale(1.06);
+}
+.art-xfade-leave-to {
+  opacity: 0;
+  transform: scale(0.97);
 }
 
 .np-cover-lyrics {
@@ -966,9 +1268,115 @@ function handleClearQueue() {
   box-shadow: 0 12px 28px rgba(0, 0, 0, 0.36);
 }
 
+/* ==================== APPLE MUSIC COVER <-> LYRICS / QUEUE TRANSITIONS ==================== */
+
+/* Mini header entrance/exit alongside FLIP artwork */
+.np-header-fade-enter-active {
+  transition: opacity 440ms ease;
+}
+.np-header-fade-enter-active .np-mini-actions {
+  transition: opacity 320ms ease 90ms, transform 380ms var(--spring-ease) 60ms;
+}
+.np-header-fade-enter-from .np-mini-actions {
+  opacity: 0;
+  transform: translate3d(12px, 0, 0);
+}
+.np-header-fade-leave-active {
+  position: absolute;
+  top: calc(var(--safe-top) + 32px);
+  left: 0;
+  right: 0;
+  pointer-events: none;
+  transition: opacity 220ms ease, transform 260ms var(--spring-ease);
+}
+.np-header-fade-leave-to {
+  opacity: 0;
+  transform: translate3d(0, -6px, 0);
+}
+
+/* 1. Cover -> Lyrics / Queue: lyrics softly unfurl upward while cover's non-hero UI dissolves */
+.np-to-detail-enter-active {
+  z-index: 5;
+  transition:
+    opacity 360ms ease 60ms,
+    transform 460ms var(--spring-ease) 30ms;
+  will-change: transform, opacity;
+}
+.np-to-detail-enter-from {
+  opacity: 0;
+  transform: translate3d(0, 34px, 0) scale3d(0.975, 0.975, 1);
+}
+.np-to-detail-leave-active {
+  z-index: 2;
+  pointer-events: none;
+  transition:
+    opacity 220ms ease,
+    transform 280ms var(--spring-ease);
+  will-change: transform, opacity;
+}
+.np-to-detail-leave-to {
+  opacity: 0;
+  transform: translate3d(0, -18px, 0) scale3d(0.96, 0.96, 1);
+}
+
+/* 2. Lyrics / Queue -> Cover: artwork flies back down via FLIP while lyrics descend softly */
+.np-to-cover-enter-active {
+  z-index: 5;
+  transition: opacity 480ms ease;
+}
+.np-to-cover-enter-active .np-cover-lyrics,
+.np-to-cover-enter-active .np-meta-row {
+  transition:
+    opacity 320ms ease 80ms,
+    transform 420ms var(--spring-ease) 60ms;
+}
+.np-to-cover-enter-from .np-cover-lyrics,
+.np-to-cover-enter-from .np-meta-row {
+  opacity: 0;
+  transform: translate3d(0, 14px, 0);
+}
+.np-to-cover-leave-active {
+  z-index: 2;
+  pointer-events: none;
+  transition:
+    opacity 230ms ease,
+    transform 300ms var(--ios-curve);
+  will-change: transform, opacity;
+}
+.np-to-cover-leave-to {
+  opacity: 0;
+  transform: translate3d(0, 28px, 0) scale3d(0.97, 0.97, 1);
+}
+
+/* 3. Lyrics <-> Queue cross-depth glide (mini header stays completely stationary!) */
+.np-cross-depth-enter-active {
+  z-index: 5;
+  transition:
+    opacity 280ms ease 40ms,
+    transform 360ms var(--spring-ease);
+  will-change: transform, opacity;
+}
+.np-cross-depth-enter-from {
+  opacity: 0;
+  transform: translate3d(0, 18px, 0) scale3d(0.985, 0.985, 1);
+}
+.np-cross-depth-leave-active {
+  z-index: 2;
+  pointer-events: none;
+  transition:
+    opacity 190ms ease,
+    transform 220ms ease;
+  will-change: transform, opacity;
+}
+.np-cross-depth-leave-to {
+  opacity: 0;
+  transform: scale3d(0.97, 0.97, 1);
+}
+
 .heart-burst-overlay {
   position: absolute;
   inset: 0;
+  z-index: 5;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -977,7 +1385,7 @@ function handleClearQueue() {
 }
 
 .heart-pop-enter-active {
-  animation: heart-pop-kf 620ms var(--spring-ease);
+  animation: heart-pop-kf 620ms var(--spring-bounce);
 }
 .heart-pop-leave-active {
   transition: opacity 180ms ease;
@@ -1015,11 +1423,11 @@ function handleClearQueue() {
   flex-shrink: 0;
   max-height: 260px;
   opacity: 1;
-  transform: translateY(0);
+  transform: translate3d(0, 0, 0);
   transition:
-    max-height 400ms var(--spring-ease),
+    max-height 420ms var(--spring-ease),
     opacity 260ms ease,
-    transform 380ms var(--spring-ease),
+    transform 400ms var(--spring-ease),
     padding 380ms var(--spring-ease);
 }
 
@@ -1030,7 +1438,7 @@ function handleClearQueue() {
 .np-controls.is-immersive-hidden {
   max-height: 0;
   opacity: 0;
-  transform: translateY(28px);
+  transform: translate3d(0, 28px, 0);
   padding-top: 0;
   padding-bottom: 0;
   overflow: hidden;
@@ -1052,7 +1460,7 @@ function handleClearQueue() {
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.25);
   overflow: hidden;
-  transition: height 180ms var(--spring-ease), box-shadow 180ms ease;
+  transition: height 200ms var(--spring-ease), box-shadow 200ms ease;
 }
 
 .scrub-climax {
@@ -1100,6 +1508,7 @@ function handleClearQueue() {
   align-items: center;
   justify-content: space-evenly;
   margin: 14px 0 16px;
+  transition: margin 360ms var(--spring-ease);
 }
 
 .np-controls.is-compact .np-transport {
@@ -1136,7 +1545,11 @@ function handleClearQueue() {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background-color 220ms ease, color 220ms ease, box-shadow 220ms ease;
+  transition:
+    background-color 240ms ease,
+    color 240ms ease,
+    box-shadow 240ms ease,
+    transform 200ms var(--spring-bounce);
 }
 
 .np-tool-btn.is-on {

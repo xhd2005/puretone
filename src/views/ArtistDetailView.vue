@@ -372,8 +372,9 @@ watch(artistId, () => void bootstrap());
         </div>
       </section>
 
-      <!-- ==================== TAB 1: ARTIST SONGS ==================== -->
-      <section v-if="activeTab === 'songs'" class="relative z-10">
+      <Transition name="am-panel-switch" mode="out-in">
+        <!-- ==================== TAB 1: ARTIST SONGS ==================== -->
+        <section v-if="activeTab === 'songs'" key="artist-songs" class="relative z-10">
         <!-- Quick Filter & Hot/New Sort Bar -->
         <div class="px-5 pb-2.5 flex items-center gap-2">
           <div class="flex-1 h-9 px-3 rounded-xl bg-[var(--bg-subtle)] flex items-center gap-2 min-w-0">
@@ -443,7 +444,7 @@ watch(artistId, () => void bootstrap());
       </section>
 
       <!-- ==================== TAB 2: ARTIST ALBUMS ==================== -->
-      <section v-else class="relative z-10 px-5 pt-1">
+      <section v-else key="artist-albums" class="relative z-10 px-5 pt-1">
         <div v-if="loadingAlbums && !albums.length" class="py-12 text-center text-[13.5px] text-[var(--text-secondary)]">
           {{ t('common.loading') }}
         </div>
@@ -480,6 +481,7 @@ watch(artistId, () => void bootstrap());
           </button>
         </div>
       </section>
+      </Transition>
     </div>
 
     <!-- Full Artist Biography Modal (Structured Multi-Section Reader) -->

@@ -20,6 +20,9 @@ export const useUiStore = defineStore('ui', () => {
   const artistPickerCandidates = ref<SongArtistRef[] | null>(null);
   const updateReleaseInfo = ref<ReleaseUpdateInfo | null>(null);
   const complianceModalOpen = ref(false);
+  /** When true (e.g. playlist batch selection), AppShell smoothly hides MiniPlayer & TabBar for a bottom takeover dock. */
+  const batchDockActive = ref(false);
+  let batchExitHandler: (() => void) | null = null;
 
   const toastMessage = ref('');
   let toastTimer: ReturnType<typeof setTimeout> | null = null;
@@ -98,6 +101,11 @@ export const useUiStore = defineStore('ui', () => {
     addToPlaylistSongs.value = list;
   }
 
+  function setBatchDock(active: boolean, onExit?: (() => void) | null) {
+    batchDockActive.value = active;
+    batchExitHandler = active ? (onExit ?? null) : null;
+  }
+
   function closeTopOverlay(): boolean {
     if (complianceModalOpen.value) {
       return true;
@@ -142,6 +150,12 @@ export const useUiStore = defineStore('ui', () => {
       nowPlayingOpen.value = false;
       return true;
     }
+    if (batchDockActive.value) {
+      const handler = batchExitHandler;
+      setBatchDock(false);
+      handler?.();
+      return true;
+    }
     return false;
   }
 
@@ -160,6 +174,7 @@ export const useUiStore = defineStore('ui', () => {
     artistPickerCandidates,
     updateReleaseInfo,
     complianceModalOpen,
+    batchDockActive,
     hasModalOverlay,
     toastMessage,
     insets,
@@ -170,6 +185,7 @@ export const useUiStore = defineStore('ui', () => {
     openSongActions,
     closeSongActions,
     openAddToPlaylist,
+    setBatchDock,
     closeTopOverlay,
   };
 });

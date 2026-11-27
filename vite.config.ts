@@ -2,9 +2,10 @@ import { defineConfig } from 'vite';
 import vue from '@vitejs/plugin-vue';
 import tailwindcss from '@tailwindcss/vite';
 import { resolve } from 'path';
+import { legacyWebViewCssPlugin } from './scripts/legacyWebViewCssPlugin';
 
 export default defineConfig({
-  plugins: [vue(), tailwindcss()],
+  plugins: [vue(), tailwindcss(), legacyWebViewCssPlugin()],
   define: {
     'process.env.platform': JSON.stringify('lite'),
     'process.env.KUGOU_API_DEV': JSON.stringify('EchoMusic'),
@@ -26,7 +27,8 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    target: 'es2022',
+    target: ['es2020', 'chrome80'],
+    cssTarget: 'chrome80',
     commonjsOptions: {
       include: [/node_modules/, /server[\\/]/],
       transformMixedEsModules: true,

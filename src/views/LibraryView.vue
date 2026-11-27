@@ -331,14 +331,14 @@ watch(() => accounts.activeAccount?.userid, () => void playlistsStore.fetchPlayl
     </div>
 
     <!-- Create / Edit Playlist Modal -->
-    <Transition name="lg-modal">
+    <Transition name="lg-dialog">
       <div
         v-if="editorOpen"
         class="fixed inset-0 z-[95] flex items-center justify-center p-5 lg-scrim"
         @click="!editorSubmitting && (editorOpen = false)"
       >
         <div
-          class="w-full max-w-[360px] rounded-[26px] lg-sheet-panel p-5 space-y-4 shadow-2xl"
+          class="w-full max-w-[360px] rounded-[26px] lg-sheet-panel lg-dialog-card p-5 space-y-4 shadow-2xl"
           @click.stop
         >
           <div class="flex items-center justify-between gap-2">

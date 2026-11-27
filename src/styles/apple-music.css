@@ -38,6 +38,8 @@
   --lg-scrim: rgba(18, 22, 32, 0.14);
 
   --spring-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --spring-bounce: cubic-bezier(0.32, 1.22, 0.42, 1);
+  --ios-curve: cubic-bezier(0.28, 0.84, 0.42, 1);
   --tabbar-height: 60px;
   --miniplayer-height: 62px;
 }
@@ -159,8 +161,9 @@ body,
   transform: translateZ(0);
 }
 
-/* iOS 26 Liquid Glass Capsule (Floating Tab Bar, MiniPlayer, Toast) */
-.lg-capsule {
+/* iOS 26 Liquid Glass Capsule (Floating Tab Bar, MiniPlayer, Batch Dock, Toast) */
+.lg-capsule,
+.lg-surface {
   background: var(--lg-capsule-bg);
   backdrop-filter: blur(34px) saturate(220%);
   -webkit-backdrop-filter: blur(34px) saturate(220%);
@@ -237,27 +240,63 @@ body,
   font-variant-numeric: tabular-nums;
 }
 
-/* Fullscreen NowPlaying Sheet slide-up */
-.am-sheet-enter-active,
+/* Android 8-11 / ColorOS 11.1 WebView (Chromium 80-87) fallback for aspect-square */
+@supports not (aspect-ratio: 1 / 1) {
+  .aspect-square {
+    position: relative;
+  }
+  .aspect-square::before {
+    content: "";
+    display: block;
+    padding-top: 100%;
+  }
+  .aspect-square > * {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+  }
+}
+
+/* Fullscreen NowPlaying Sheet slide-up with authentic iOS card-to-fullscreen lift */
+.am-sheet-enter-active {
+  transition:
+    transform 460ms var(--spring-ease),
+    border-radius 420ms var(--spring-ease),
+    opacity 260ms ease;
+  will-change: transform, opacity;
+}
 .am-sheet-leave-active {
-  transition: transform 400ms var(--spring-ease), opacity 280ms ease;
+  transition:
+    transform 380ms var(--ios-curve),
+    border-radius 340ms ease,
+    opacity 260ms ease;
+  will-change: transform, opacity;
 }
 .am-sheet-enter-from,
 .am-sheet-leave-to {
-  transform: translateY(100%);
-  opacity: 0.85;
+  transform: translate3d(0, 100%, 0) scale(0.965);
+  border-radius: 34px;
+  opacity: 0.88;
 }
 
-/* Decoupled Modal Transition: Backdrop ONLY fades, .lg-sheet-slide glides smoothly from bottom! */
-.lg-modal-enter-active,
+/* Decoupled Bottom Sheet Transition: Backdrop ONLY fades, .lg-sheet-slide glides smoothly from bottom! */
+.lg-modal-enter-active {
+  transition: opacity 280ms ease;
+}
 .lg-modal-leave-active {
-  transition: opacity 260ms ease;
+  transition: opacity 220ms ease;
 }
 .lg-modal-enter-active > .lg-sheet-slide,
+.lg-modal-enter-active > .lg-sheet-panel {
+  transition: transform 440ms var(--spring-ease);
+}
 .lg-modal-leave-active > .lg-sheet-slide,
-.lg-modal-enter-active > .lg-sheet-panel,
 .lg-modal-leave-active > .lg-sheet-panel {
-  transition: transform 420ms var(--spring-ease);
+  transition: transform 320ms var(--ios-curve);
 }
 .lg-modal-enter-from,
 .lg-modal-leave-to {
@@ -270,6 +309,38 @@ body,
   transform: translate3d(0, 100%, 0);
 }
 
+/* Centered Dialog Modal Transition: Crisp iOS Spring Scale-In (zero bottom-slab jump!) */
+.lg-dialog-enter-active {
+  transition: opacity 240ms ease;
+}
+.lg-dialog-leave-active {
+  transition: opacity 190ms ease;
+}
+.lg-dialog-enter-active > .lg-dialog-card {
+  transition:
+    transform 380ms var(--spring-ease),
+    opacity 240ms ease;
+  will-change: transform, opacity;
+}
+.lg-dialog-leave-active > .lg-dialog-card {
+  transition:
+    transform 210ms cubic-bezier(0.4, 0, 1, 1),
+    opacity 180ms ease;
+  will-change: transform, opacity;
+}
+.lg-dialog-enter-from,
+.lg-dialog-leave-to {
+  opacity: 0;
+}
+.lg-dialog-enter-from > .lg-dialog-card {
+  transform: translate3d(0, 14px, 0) scale3d(0.92, 0.92, 1);
+  opacity: 0;
+}
+.lg-dialog-leave-to > .lg-dialog-card {
+  transform: translate3d(0, 8px, 0) scale3d(0.94, 0.94, 1);
+  opacity: 0;
+}
+
 /* Generic fade */
 .am-fade-enter-active,
 .am-fade-leave-active {
@@ -278,6 +349,87 @@ body,
 .am-fade-enter-from,
 .am-fade-leave-to {
   opacity: 0;
+}
+
+/* Top Pill Toast Spring Drop-In */
+.am-toast-enter-active {
+  transition:
+    transform 360ms var(--spring-bounce),
+    opacity 220ms ease;
+  will-change: transform, opacity;
+}
+.am-toast-leave-active {
+  transition:
+    transform 220ms ease,
+    opacity 180ms ease;
+  will-change: transform, opacity;
+}
+.am-toast-enter-from {
+  opacity: 0;
+  transform: translate3d(0, -14px, 0) scale3d(0.92, 0.92, 1);
+}
+.am-toast-leave-to {
+  opacity: 0;
+  transform: translate3d(0, -10px, 0) scale3d(0.95, 0.95, 1);
+}
+
+/* Floating Bottom Dock / MiniPlayer Spring Slide-Up */
+.am-dock-slide-enter-active {
+  transition:
+    transform 400ms var(--spring-ease),
+    opacity 240ms ease;
+  will-change: transform, opacity;
+}
+.am-dock-slide-leave-active {
+  transition:
+    transform 280ms var(--ios-curve),
+    opacity 200ms ease;
+  will-change: transform, opacity;
+}
+.am-dock-slide-enter-from,
+.am-dock-slide-leave-to {
+  opacity: 0;
+  transform: translate3d(0, 44px, 0) scale3d(0.95, 0.95, 1);
+}
+
+/* Smooth In-Page Tab / Panel Crossfade + Micro-Lift */
+.am-panel-switch-enter-active {
+  transition:
+    opacity 240ms ease,
+    transform 300ms var(--spring-ease);
+  will-change: transform, opacity;
+}
+.am-panel-switch-leave-active {
+  transition:
+    opacity 130ms ease,
+    transform 150ms ease;
+}
+.am-panel-switch-enter-from {
+  opacity: 0;
+  transform: translate3d(0, 8px, 0);
+}
+.am-panel-switch-leave-to {
+  opacity: 0;
+  transform: translate3d(0, -4px, 0);
+}
+
+/* Smooth Expandable Inline Strip (Search Bar, Lyric Offset Bar) */
+.am-expand-enter-active {
+  transition:
+    opacity 220ms ease,
+    transform 280ms var(--spring-ease);
+  transform-origin: top center;
+}
+.am-expand-leave-active {
+  transition:
+    opacity 160ms ease,
+    transform 190ms ease;
+  transform-origin: top center;
+}
+.am-expand-enter-from,
+.am-expand-leave-to {
+  opacity: 0;
+  transform: translate3d(0, -8px, 0) scaleY(0.94);
 }
 
 /* iOS 26 Directional Page Transitions (Push right-in / Pop parallax-out / Crisp Tab micro-lift) */
@@ -289,14 +441,14 @@ body,
   inset: 0;
   will-change: transform, opacity;
   transition:
-    transform 360ms var(--spring-ease),
-    opacity 300ms ease;
+    transform 390ms var(--ios-curve),
+    opacity 320ms ease;
   backface-visibility: hidden;
 }
 
 .ios-push-enter-active {
   z-index: 6;
-  box-shadow: -12px 0 36px rgba(0, 0, 0, 0.14);
+  box-shadow: -14px 0 40px rgba(0, 0, 0, 0.16);
 }
 .ios-push-leave-active {
   z-index: 4;
@@ -305,8 +457,8 @@ body,
   transform: translate3d(100%, 0, 0);
 }
 .ios-push-leave-to {
-  transform: translate3d(-22%, 0, 0);
-  opacity: 0.78;
+  transform: translate3d(-24%, 0, 0);
+  opacity: 0.82;
 }
 
 .ios-pop-enter-active {
@@ -314,11 +466,11 @@ body,
 }
 .ios-pop-leave-active {
   z-index: 6;
-  box-shadow: -12px 0 36px rgba(0, 0, 0, 0.14);
+  box-shadow: -14px 0 40px rgba(0, 0, 0, 0.16);
 }
 .ios-pop-enter-from {
-  transform: translate3d(-22%, 0, 0);
-  opacity: 0.78;
+  transform: translate3d(-24%, 0, 0);
+  opacity: 0.82;
 }
 .ios-pop-leave-to {
   transform: translate3d(100%, 0, 0);
@@ -330,12 +482,12 @@ body,
   inset: 0;
   will-change: transform, opacity;
   transition:
-    opacity 190ms ease,
-    transform 240ms var(--spring-ease);
+    opacity 210ms ease,
+    transform 270ms var(--spring-ease);
 }
 .ios-tab-enter-from {
   opacity: 0;
-  transform: translate3d(0, 7px, 0);
+  transform: translate3d(0, 6px, 0) scale3d(0.992, 0.992, 1);
 }
 .ios-tab-leave-to {
   opacity: 0;

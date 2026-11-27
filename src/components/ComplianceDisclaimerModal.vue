@@ -70,13 +70,13 @@ async function openRepo() {
 </script>
 
 <template>
-  <Transition name="lg-modal">
+  <Transition name="lg-dialog">
     <div
       v-if="ui.complianceModalOpen"
       class="fixed inset-0 z-[105] flex items-center justify-center p-4 lg-scrim"
     >
       <div
-        class="lg-sheet-panel w-full max-w-md rounded-[28px] p-5 shadow-2xl space-y-3.5"
+        class="lg-sheet-panel lg-dialog-card w-full max-w-md rounded-[28px] p-5 shadow-2xl space-y-3.5"
         @click.stop
       >
         <div class="flex items-center gap-3">

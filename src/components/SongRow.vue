@@ -225,10 +225,10 @@ onUnmounted(() => {
     >
       <div
         v-if="selectable"
-        class="w-5.5 h-5.5 rounded-full flex items-center justify-center shrink-0 transition-colors"
+        class="song-checkbox w-5.5 h-5.5 rounded-full flex items-center justify-center shrink-0"
         :class="
           selected
-            ? 'am-accent-bg text-white shadow-xs'
+            ? 'is-checked am-accent-bg text-white shadow-xs'
             : 'border-2 border-[var(--text-tertiary)]/60 bg-transparent'
         "
       >
@@ -298,6 +298,7 @@ onUnmounted(() => {
 }
 
 .song-row-shell.is-highlighted {
+  background-color: rgba(52, 86, 190, 0.14);
   background-color: color-mix(in srgb, var(--accent) 16%, transparent);
 }
 
@@ -405,5 +406,16 @@ onUnmounted(() => {
 }
 .am-badge-gray {
   color: var(--accent);
+}
+
+.song-checkbox {
+  transition:
+    transform 240ms var(--spring-bounce),
+    background-color 180ms ease,
+    border-color 180ms ease;
+}
+
+.song-checkbox.is-checked {
+  transform: scale(1.06);
 }
 </style>

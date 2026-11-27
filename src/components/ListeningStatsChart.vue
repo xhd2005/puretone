@@ -317,14 +317,17 @@ function playTopStatSong(key: string) {
 }
 
 .bar-active {
+  background: var(--accent);
   background: linear-gradient(180deg, var(--accent) 0%, color-mix(in srgb, var(--accent) 72%, #ff9500) 100%);
 }
 
 .bar-today {
+  background: rgba(52, 86, 190, 0.55);
   background: color-mix(in srgb, var(--accent) 55%, transparent);
 }
 
 .bar-muted {
+  background: rgba(52, 86, 190, 0.30);
   background: color-mix(in srgb, var(--accent) 34%, var(--bg-subtle));
 }
 

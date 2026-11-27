@@ -228,87 +228,89 @@ function openAlbum(al: AlbumSummary) {
 
         <div v-if="searching" class="py-12 text-center text-[14px] text-[var(--text-secondary)]">{{ t('search.searching') }}</div>
 
-        <!-- Tab 1: Songs -->
-        <div v-else-if="activeTab === 'song'">
-          <div v-if="!songs.length" class="py-12 text-center text-[14px] text-[var(--text-secondary)]">{{ t('search.noResults') }}</div>
-          <SongRow
-            v-for="(song, idx) in songs"
-            :key="song.hash || `${song.id}-${idx}`"
-            :song="song"
-            @play="player.playQueue(songs, idx)"
-          />
-        </div>
+        <Transition v-else name="am-panel-switch" mode="out-in">
+          <!-- Tab 1: Songs -->
+          <div v-if="activeTab === 'song'" key="search-song">
+            <div v-if="!songs.length" class="py-12 text-center text-[14px] text-[var(--text-secondary)]">{{ t('search.noResults') }}</div>
+            <SongRow
+              v-for="(song, idx) in songs"
+              :key="song.hash || `${song.id}-${idx}`"
+              :song="song"
+              @play="player.playQueue(songs, idx)"
+            />
+          </div>
 
-        <!-- Tab 2: Artists -->
-        <div v-else-if="activeTab === 'artist'" class="px-5 space-y-2">
-          <div v-if="!artists.length" class="py-12 text-center text-[14px] text-[var(--text-secondary)]">{{ t('search.noResults') }}</div>
-          <button
-            v-for="art in artists"
-            :key="art.id"
-            type="button"
-            class="w-full p-2.5 rounded-[18px] bg-[var(--bg-card)] border-0 flex items-center gap-3 text-left shadow-xs am-tap"
-            @click="openArtist(art)"
-          >
-            <div class="w-13 h-13 rounded-full overflow-hidden bg-[var(--bg-subtle)] shrink-0 flex items-center justify-center">
-              <img v-if="art.avatar" :src="art.avatar" :alt="art.name" class="w-full h-full object-cover" loading="lazy" />
-              <Icon v-else :icon="iconUser" class="w-6 h-6 text-[var(--text-tertiary)]" />
-            </div>
-            <div class="min-w-0 flex-1">
-              <div class="text-[15px] font-bold text-[var(--text-primary)] truncate">{{ art.name }}</div>
-              <div class="text-[12px] text-[var(--text-secondary)] truncate mt-0.5 tabular-nums">
-                <template v-if="art.songCount > 0">{{ t('artist.songsUnit', { count: formatCompactCount(art.songCount, effectiveLocale) }) }}</template>
-                <template v-if="art.albumCount > 0"> · {{ t('artist.albumsUnit', { count: formatCompactCount(art.albumCount, effectiveLocale) }) }}</template>
-                <template v-if="art.fansCount > 0"> · {{ t('artist.fansUnit', { count: formatCompactCount(art.fansCount, effectiveLocale) }) }}</template>
-              </div>
-            </div>
-            <Icon :icon="iconChevronRight" class="w-4.5 h-4.5 text-[var(--text-tertiary)] shrink-0" />
-          </button>
-        </div>
-
-        <!-- Tab 3: Albums -->
-        <div v-else-if="activeTab === 'album'" class="px-5">
-          <div v-if="!albums.length" class="py-12 text-center text-[14px] text-[var(--text-secondary)]">{{ t('search.noResults') }}</div>
-          <div v-else class="grid grid-cols-2 sm:grid-cols-3 gap-4">
-            <div
-              v-for="al in albums"
-              :key="al.id"
-              class="cursor-pointer am-tap min-w-0"
-              @click="openAlbum(al)"
+          <!-- Tab 2: Artists -->
+          <div v-else-if="activeTab === 'artist'" key="search-artist" class="px-5 space-y-2">
+            <div v-if="!artists.length" class="py-12 text-center text-[14px] text-[var(--text-secondary)]">{{ t('search.noResults') }}</div>
+            <button
+              v-for="art in artists"
+              :key="art.id"
+              type="button"
+              class="w-full p-2.5 rounded-[18px] bg-[var(--bg-card)] border-0 flex items-center gap-3 text-left shadow-xs am-tap"
+              @click="openArtist(art)"
             >
-              <div class="aspect-square rounded-[14px] overflow-hidden bg-[var(--bg-subtle)] shadow-sm flex items-center justify-center">
-                <img v-if="al.coverUrl" :src="al.coverUrl" :alt="al.name" class="w-full h-full object-cover" loading="lazy" />
-                <Icon v-else :icon="iconDisc" class="w-10 h-10 text-[var(--text-tertiary)]" />
+              <div class="w-13 h-13 rounded-full overflow-hidden bg-[var(--bg-subtle)] shrink-0 flex items-center justify-center">
+                <img v-if="art.avatar" :src="art.avatar" :alt="art.name" class="w-full h-full object-cover" loading="lazy" />
+                <Icon v-else :icon="iconUser" class="w-6 h-6 text-[var(--text-tertiary)]" />
               </div>
-              <div class="text-[14px] font-semibold truncate mt-2 text-[var(--text-primary)]">{{ al.name }}</div>
-              <div class="text-[12px] text-[var(--text-secondary)] truncate mt-0.5">
-                {{ al.artist }}<template v-if="al.publishDate"> · {{ al.publishDate.slice(0, 4) }}</template>
+              <div class="min-w-0 flex-1">
+                <div class="text-[15px] font-bold text-[var(--text-primary)] truncate">{{ art.name }}</div>
+                <div class="text-[12px] text-[var(--text-secondary)] truncate mt-0.5 tabular-nums">
+                  <template v-if="art.songCount > 0">{{ t('artist.songsUnit', { count: formatCompactCount(art.songCount, effectiveLocale) }) }}</template>
+                  <template v-if="art.albumCount > 0"> · {{ t('artist.albumsUnit', { count: formatCompactCount(art.albumCount, effectiveLocale) }) }}</template>
+                  <template v-if="art.fansCount > 0"> · {{ t('artist.fansUnit', { count: formatCompactCount(art.fansCount, effectiveLocale) }) }}</template>
+                </div>
+              </div>
+              <Icon :icon="iconChevronRight" class="w-4.5 h-4.5 text-[var(--text-tertiary)] shrink-0" />
+            </button>
+          </div>
+
+          <!-- Tab 3: Albums -->
+          <div v-else-if="activeTab === 'album'" key="search-album" class="px-5">
+            <div v-if="!albums.length" class="py-12 text-center text-[var(--text-secondary)] text-[14px]">{{ t('search.noResults') }}</div>
+            <div v-else class="grid grid-cols-2 sm:grid-cols-3 gap-4">
+              <div
+                v-for="al in albums"
+                :key="al.id"
+                class="cursor-pointer am-tap min-w-0"
+                @click="openAlbum(al)"
+              >
+                <div class="aspect-square rounded-[14px] overflow-hidden bg-[var(--bg-subtle)] shadow-sm flex items-center justify-center">
+                  <img v-if="al.coverUrl" :src="al.coverUrl" :alt="al.name" class="w-full h-full object-cover" loading="lazy" />
+                  <Icon v-else :icon="iconDisc" class="w-10 h-10 text-[var(--text-tertiary)]" />
+                </div>
+                <div class="text-[14px] font-semibold truncate mt-2 text-[var(--text-primary)]">{{ al.name }}</div>
+                <div class="text-[12px] text-[var(--text-secondary)] truncate mt-0.5">
+                  {{ al.artist }}<template v-if="al.publishDate"> · {{ al.publishDate.slice(0, 4) }}</template>
+                </div>
               </div>
             </div>
           </div>
-        </div>
 
-        <!-- Tab 4: Playlists -->
-        <div v-else class="px-5">
-          <div v-if="!playlists.length" class="py-12 text-center text-[14px] text-[var(--text-secondary)]">{{ t('search.noResults') }}</div>
-          <div v-else class="grid grid-cols-2 sm:grid-cols-3 gap-4">
-            <div
-              v-for="pl in playlists"
-              :key="pl.id"
-              class="cursor-pointer am-tap min-w-0"
-              @click="router.push({ path: `/playlist/${encodeURIComponent(pl.globalCollectionId || pl.id)}`, query: { name: pl.name, cover: pl.coverUrl, count: String(pl.trackCount), owner: '0', intro: pl.description || '', createUserId: pl.createUserId || '', createListId: pl.createListId || '' } })"
-            >
-              <div class="aspect-square rounded-[14px] overflow-hidden shadow-sm">
-                <PlaylistCover
-                  :playlist-key="getPlaylistCacheKey(pl)"
-                  :cover-url="pl.coverUrl"
-                  :alt="pl.name"
-                />
+          <!-- Tab 4: Playlists -->
+          <div v-else key="search-playlist" class="px-5">
+            <div v-if="!playlists.length" class="py-12 text-center text-[14px] text-[var(--text-secondary)]">{{ t('search.noResults') }}</div>
+            <div v-else class="grid grid-cols-2 sm:grid-cols-3 gap-4">
+              <div
+                v-for="pl in playlists"
+                :key="pl.id"
+                class="cursor-pointer am-tap min-w-0"
+                @click="router.push({ path: `/playlist/${encodeURIComponent(pl.globalCollectionId || pl.id)}`, query: { name: pl.name, cover: pl.coverUrl, count: String(pl.trackCount), owner: '0', intro: pl.description || '', createUserId: pl.createUserId || '', createListId: pl.createListId || '' } })"
+              >
+                <div class="aspect-square rounded-[14px] overflow-hidden shadow-sm">
+                  <PlaylistCover
+                    :playlist-key="getPlaylistCacheKey(pl)"
+                    :cover-url="pl.coverUrl"
+                    :alt="pl.name"
+                  />
+                </div>
+                <div class="text-[14px] font-medium truncate mt-2 text-[var(--text-primary)]">{{ pl.name }}</div>
+                <div class="text-[12px] text-[var(--text-secondary)] tabular-nums">{{ t('search.songUnitShort', { count: pl.trackCount }) }}</div>
               </div>
-              <div class="text-[14px] font-medium truncate mt-2 text-[var(--text-primary)]">{{ pl.name }}</div>
-              <div class="text-[12px] text-[var(--text-secondary)] tabular-nums">{{ t('search.songUnitShort', { count: pl.trackCount }) }}</div>
             </div>
           </div>
-        </div>
+        </Transition>
       </div>
 
       <!-- ==================== EMPTY STATE: RECENT SEARCHES + MULTI-CHART HOT SEARCH BOARD ==================== -->

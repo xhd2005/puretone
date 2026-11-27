@@ -134,7 +134,7 @@ onMounted(async () => {
   <SplashOverlay @done="onSplashDone" />
 
   <!-- iOS 26 Liquid Glass Top Pill Toast -->
-  <Transition name="am-fade">
+  <Transition name="am-toast">
     <div
       v-if="ui.toastMessage"
       class="fixed top-[calc(var(--safe-top)+14px)] left-1/2 -translate-x-1/2 z-[115] px-4 py-2 rounded-full lg-capsule text-[13px] font-semibold text-[var(--text-primary)] whitespace-nowrap max-w-[88vw] truncate pointer-events-none"

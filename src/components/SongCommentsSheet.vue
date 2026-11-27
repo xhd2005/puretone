@@ -648,8 +648,9 @@ function addToPlaylist() {
             @touchend.passive="dragSheet.onBodyTouchEnd"
             @touchcancel.passive="dragSheet.onBodyTouchEnd"
           >
-            <!-- ==================== TAB A: RICH TRACK DETAILS ==================== -->
-            <template v-if="ui.commentsSheetTab === 'details'">
+            <Transition name="am-panel-switch" mode="out-in">
+              <!-- ==================== TAB A: RICH TRACK DETAILS ==================== -->
+              <div v-if="ui.commentsSheetTab === 'details'" key="sheet-details" class="space-y-3">
               <!-- Quick Actions Strip -->
               <div class="grid grid-cols-4 gap-2">
                 <button
@@ -897,10 +898,10 @@ function addToPlaylist() {
                   <span class="truncate">{{ t('song.copyMeta') }}</span>
                 </button>
               </div>
-            </template>
+              </div>
 
-            <!-- ==================== TAB B: 4-MODE REAL COMMENTS (FEATURED / TOP / LATEST / HOTWORDS) ==================== -->
-            <template v-else>
+              <!-- ==================== TAB B: 4-MODE REAL COMMENTS (FEATURED / TOP / LATEST / HOTWORDS) ==================== -->
+              <div v-else key="sheet-comments" class="space-y-3">
               <div class="pt-seg-group grid-cols-4">
                 <button
                   type="button"
@@ -1090,15 +1091,17 @@ function addToPlaylist() {
                   {{ loadingMore ? t('common.loading') : t('common.loadMore') }}
                 </button>
               </div>
-            </template>
+              </div>
+            </Transition>
           </div>
 
           <!-- IME-Aware Bottom Comment / Reply Composer -->
-          <div
-            v-if="ui.commentsSheetTab === 'comments'"
-            class="shrink-0 px-4 pt-2.5 am-hairline-t bg-[var(--bg-card)]/92 backdrop-blur-xl space-y-1.5"
-            :style="{ paddingBottom: `calc(max(var(--safe-bottom), var(--ime-bottom)) + 10px)` }"
-          >
+          <Transition name="am-expand">
+            <div
+              v-if="ui.commentsSheetTab === 'comments'"
+              class="shrink-0 px-4 pt-2.5 am-hairline-t bg-[var(--bg-card)]/92 backdrop-blur-xl space-y-1.5"
+              :style="{ paddingBottom: `calc(max(var(--safe-bottom), var(--ime-height)) + 10px)` }"
+            >
             <div v-if="replyTarget" class="flex items-center justify-between gap-2 px-2.5 py-1 rounded-xl bg-[var(--bg-subtle)]/75 text-[11.5px]">
               <span class="text-[var(--text-secondary)] truncate">
                 {{ t('comments.replyingTo', { user: replyTarget.userName }) }}
@@ -1128,7 +1131,8 @@ function addToPlaylist() {
                 <span>{{ t('comments.send') }}</span>
               </button>
             </form>
-          </div>
+            </div>
+          </Transition>
         </div>
       </div>
     </div>

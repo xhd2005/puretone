@@ -21,6 +21,9 @@ const activeTab = computed(() => String(route.meta?.tab || 'home'));
 const transitionName = ref<'ios-push' | 'ios-pop' | 'ios-tab'>('ios-tab');
 
 const removeBeforeEach = router.beforeEach((to, from) => {
+  if (to.fullPath !== from.fullPath && ui.batchDockActive) {
+    ui.setBatchDock(false);
+  }
   const toDepth = Number(to.meta?.depth ?? 0);
   const fromDepth = Number(from.meta?.depth ?? 0);
   if (toDepth > fromDepth) {
@@ -96,15 +99,17 @@ function goTab(path: string) {
         </router-view>
 
         <!-- Bottom subtle fade mask so scrolled content melts smoothly behind Liquid Glass capsules -->
-        <div class="bottom-veil md:hidden pointer-events-none" />
+        <div class="bottom-veil md:hidden pointer-events-none" :class="{ 'is-dock-hidden': ui.batchDockActive }" />
 
         <!-- Floating iOS 26 Liquid Glass MiniPlayer Pill -->
-        <div class="mini-holder">
-          <MiniPlayerPill />
+        <div class="mini-holder" :class="{ 'is-dock-hidden': ui.batchDockActive }">
+          <Transition name="am-dock-slide">
+            <MiniPlayerPill />
+          </Transition>
         </div>
 
         <!-- Floating iOS 26 Liquid Glass Capsule Tab Bar (< 768px) -->
-        <div class="tabbar-holder md:hidden">
+        <div class="tabbar-holder md:hidden" :class="{ 'is-dock-hidden': ui.batchDockActive }">
           <nav class="lg-tabbar lg-capsule" aria-label="Main Navigation">
             <!-- Animated Sliding Liquid Glass Lens Indicator -->
             <div
@@ -186,9 +191,19 @@ function goTab(path: string) {
   background: linear-gradient(
     to top,
     var(--bg-canvas) 0%,
+    transparent 100%
+  );
+  background: linear-gradient(
+    to top,
+    var(--bg-canvas) 0%,
     color-mix(in srgb, var(--bg-canvas) 70%, transparent) 45%,
     transparent 100%
   );
+  transition: opacity 260ms ease;
+}
+
+.bottom-veil.is-dock-hidden {
+  opacity: 0;
 }
 
 .mini-holder {
@@ -197,6 +212,16 @@ function goTab(path: string) {
   right: 14px;
   bottom: calc(var(--tabbar-height) + var(--safe-bottom) + 20px);
   z-index: 35;
+  transition:
+    transform 380ms var(--spring-ease),
+    opacity 220ms ease;
+  will-change: transform, opacity;
+}
+
+.mini-holder.is-dock-hidden {
+  transform: translate3d(0, calc(100% + 120px), 0) scale(0.94);
+  opacity: 0;
+  pointer-events: none;
 }
 
 @media (min-width: 768px) {
@@ -217,6 +242,16 @@ function goTab(path: string) {
   z-index: 32;
   display: flex;
   justify-content: center;
+  transition:
+    transform 380ms var(--spring-ease),
+    opacity 220ms ease;
+  will-change: transform, opacity;
+}
+
+.tabbar-holder.is-dock-hidden {
+  transform: translate3d(0, calc(100% + 48px), 0) scale(0.95);
+  opacity: 0;
+  pointer-events: none;
 }
 
 .lg-tabbar {
