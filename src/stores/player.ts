@@ -1,9 +1,9 @@
 import { defineStore } from 'pinia';
 import { computed, ref, watch } from 'vue';
 import type { CoverPalette, ParsedLyrics, PlayMode, SleepTimerMode, Song, UnblockCandidate } from '@/types/music';
-import { echoPlayer } from '@/native/echoPlayer';
+import { echoPlayer, type UpcomingNativeTrack } from '@/native/echoPlayer';
 import { echoSystem } from '@/native/echoSystem';
-import { kugouApi, stripAudioExtension } from '@/services/kugou/kugouEngine';
+import { cleanSongTitleAndArtist, kugouApi } from '@/services/kugou/kugouEngine';
 import { clearCachedResolvedStream, resolvePlayableStream } from '@/services/playback/urlResolver';
 import { fetchLyricsForSong } from '@/services/playback/krcParser';
 import { DEFAULT_APPLE_PALETTE, extractPaletteFromCoverUrl } from '@/services/playback/coverPalette';
@@ -128,10 +128,11 @@ export const usePlayerStore = defineStore('player', () => {
   }
 
   function pushRecent(song: Song) {
+    const cleaned = cleanSongTitleAndArtist(song.title, song.artist);
     const clean: Song = {
       ...song,
-      title: stripAudioExtension(song.title) || song.title,
-      artist: stripAudioExtension(song.artist) || song.artist,
+      title: cleaned.title,
+      artist: cleaned.artist,
     };
     const filtered = recentPlays.value.filter((s) => s.id !== clean.id && s.hash !== clean.hash);
     recentPlays.value = [clean, ...filtered].slice(0, 120);
@@ -239,35 +240,112 @@ export const usePlayerStore = defineStore('player', () => {
     return (currentIndex.value + 1) % queue.value.length;
   }
 
-  function scheduleNextTrackPrefetch(expectedSeq: number) {
+  function pickUpcomingIndices(count = 3): number[] {
+    if (queue.value.length <= 1 || playMode.value === 'repeat-one') return [];
+    const maxItems = Math.min(count, queue.value.length - 1);
+    const picked: number[] = [];
+    const used = new Set<number>([currentIndex.value]);
+
+    if (playMode.value === 'shuffle') {
+      if (
+        shuffleNextIndexCache >= 0 &&
+        shuffleNextIndexCache < queue.value.length &&
+        !used.has(shuffleNextIndexCache)
+      ) {
+        picked.push(shuffleNextIndexCache);
+        used.add(shuffleNextIndexCache);
+      }
+      let guard = 0;
+      while (picked.length < maxItems && guard < 40) {
+        guard += 1;
+        const cand = Math.floor(Math.random() * queue.value.length);
+        if (!used.has(cand)) {
+          used.add(cand);
+          picked.push(cand);
+        }
+      }
+      if (picked.length > 0) shuffleNextIndexCache = picked[0];
+      return picked;
+    }
+
+    for (let step = 1; step <= maxItems; step += 1) {
+      const idx = (currentIndex.value + step) % queue.value.length;
+      if (!used.has(idx)) {
+        used.add(idx);
+        picked.push(idx);
+      }
+    }
+    return picked;
+  }
+
+  /**
+   * Resolves up to 3 upcoming tracks and pushes them into ExoPlayer's NATIVE playlist queue.
+   * Ensures uninterrupted screen-off playback (e.g., cycling in pocket) and instant 0ms Bluetooth skipping!
+   */
+  function scheduleNextTrackPrefetch(expectedSeq: number, delayMs = 1200) {
     if (prefetchTimer) clearTimeout(prefetchTimer);
     prefetchTimer = setTimeout(async () => {
       if (expectedSeq !== trackSeq) return;
-      const nextIdx = pickUpcomingIndex();
-      if (nextIdx < 0 || nextIdx === currentIndex.value) return;
-      const nextSong = queue.value[nextIdx];
-      if (!nextSong) return;
-      try {
-        const resolved = await resolvePlayableStream(nextSong, settingsStore.quality, {
-          enableUnblock: settingsStore.enableUnblock,
-        });
-        if (expectedSeq !== trackSeq) return;
-        await echoPlayer.prepareNext({
-          url: resolved.url,
-          headers: resolved.headers,
-          metadata: {
-            title: nextSong.title,
-            artist: nextSong.artist,
-            album: nextSong.album,
-            coverUrl: nextSong.coverUrl,
-            durationMs: (nextSong.duration || 0) * 1000,
-          },
-          cacheKey: getTrackKey(nextSong),
-        });
-      } catch {
-        // silent background prefetch
+      if (playMode.value === 'repeat-one') {
+        await echoPlayer.clearNext();
+        return;
       }
-    }, 3000);
+
+      // If FM queue is near the end, fetch more tracks proactively before screen sleeps
+      if (playMode.value === 'fm' && queue.value.length - currentIndex.value <= 2) {
+        try {
+          const more = await kugouApi.getPersonalFm();
+          if (expectedSeq === trackSeq && more.length > 0) {
+            queue.value.push(...more);
+          }
+        } catch {
+          // non-fatal
+        }
+      }
+
+      const upcomingIndices = pickUpcomingIndices(3);
+      if (!upcomingIndices.length) {
+        await echoPlayer.clearNext();
+        return;
+      }
+
+      const resolvedTracks: UpcomingNativeTrack[] = [];
+      for (const qIdx of upcomingIndices) {
+        if (expectedSeq !== trackSeq) return;
+        const nextSong = queue.value[qIdx];
+        if (!nextSong) continue;
+        try {
+          const resolved = await resolvePlayableStream(nextSong, settingsStore.quality, {
+            enableUnblock: settingsStore.enableUnblock,
+          });
+          if (expectedSeq !== trackSeq) return;
+          resolvedTracks.push({
+            mediaId: `pt_${expectedSeq}_${qIdx}_${nextSong.id}`,
+            queueIndex: qIdx,
+            url: resolved.url,
+            headers: resolved.headers,
+            metadata: {
+              title: nextSong.title,
+              artist: nextSong.artist,
+              album: nextSong.album,
+              coverUrl: nextSong.coverUrl,
+              durationMs: (nextSong.duration || 0) * 1000,
+            },
+            cacheKey: getTrackKey(nextSong),
+          });
+          // Push incrementally as soon as the immediate next track is ready!
+          if (resolvedTracks.length === 1) {
+            await echoPlayer.syncUpcomingTracks([...resolvedTracks]);
+          }
+        } catch {
+          // Skip unresolvable track gracefully so remaining lookahead still loads
+        }
+      }
+
+      if (expectedSeq === trackSeq && resolvedTracks.length > 1) {
+        await echoPlayer.syncUpcomingTracks(resolvedTracks);
+      }
+    }, delayMs);
   }
 
   async function bindNativeListeners() {
@@ -325,6 +403,41 @@ export const usePlayerStore = defineStore('player', () => {
       else if (ev.command === 'toggleFavorite' && currentSong.value) void toggleFavorite(currentSong.value);
       else if (ev.command === 'cyclePlayMode') cyclePlayMode();
     });
+
+    await echoPlayer.onTrackAutoAdvanced((ev) => {
+      // ExoPlayer seamlessly advanced natively (screen-off or Bluetooth headset skip)
+      trackSeq = Math.max(trackSeq, ev.trackSeq);
+      if (ev.queueIndex >= 0 && ev.queueIndex < queue.value.length) {
+        currentIndex.value = ev.queueIndex;
+      }
+      shuffleNextIndexCache = -1;
+      lastLiveLyricSent = '';
+      lastStatSampleAt = 0;
+      currentTimeMs.value = 0;
+      isPlaying.value = true;
+      isBuffering.value = false;
+
+      const song = currentSong.value;
+      if (song) {
+        durationMs.value = (song.duration || 0) * 1000;
+        void refreshCoverPalette(song.coverUrl);
+        void loadLyrics(song);
+        pushRecent(song);
+        statsStore.recordSongPlay(song);
+        void persistQueue();
+        void echoPlayer.setFavoriteState(isCurrentFavorite.value);
+      }
+
+      if (sleepTimerMode.value === 'track') {
+        clearSleepTimer();
+        void echoPlayer.pause();
+        isPlaying.value = false;
+        return;
+      }
+
+      // Immediately top up the next 3 upcoming tracks in ExoPlayer
+      scheduleNextTrackPrefetch(trackSeq, 600);
+    });
   }
 
   async function hydrate() {
@@ -333,11 +446,14 @@ export const usePlayerStore = defineStore('player', () => {
       echoSystem.kvGetJson<Song[]>(RECENT_KEY, []),
       echoSystem.kvGetJson<PersistedQueue>(QUEUE_KEY, { queue: [], currentIndex: -1, playMode: 'sequence' }),
     ]);
-    const cleanSong = (s: Song): Song => ({
-      ...s,
-      title: stripAudioExtension(s.title) || s.title,
-      artist: stripAudioExtension(s.artist) || s.artist,
-    });
+    const cleanSong = (s: Song): Song => {
+      const cleaned = cleanSongTitleAndArtist(s.title, s.artist);
+      return {
+        ...s,
+        title: cleaned.title,
+        artist: cleaned.artist,
+      };
+    };
     recentPlays.value = Array.isArray(savedRecent) ? savedRecent.map(cleanSong) : [];
     queue.value = Array.isArray(savedQueue.queue) ? savedQueue.queue.map(cleanSong) : [];
     currentIndex.value =
@@ -435,6 +551,7 @@ export const usePlayerStore = defineStore('player', () => {
         autoPlay,
         trackSeq: seq,
         cacheKey: getTrackKey(song),
+        queueIndex: currentIndex.value,
       });
       if (seq === trackSeq) {
         if (playbackSpeed.value !== 1) {
@@ -594,6 +711,7 @@ export const usePlayerStore = defineStore('player', () => {
     shuffleNextIndexCache = -1;
     void echoPlayer.setRepeatOne(playMode.value === 'repeat-one');
     void persistQueue();
+    if (trackSeq > 0) scheduleNextTrackPrefetch(trackSeq, 400);
   }
 
   function addToQueueNext(song: Song) {
@@ -612,7 +730,31 @@ export const usePlayerStore = defineStore('player', () => {
       queue.value.splice(currentIndex.value + 1, 0, song);
     }
     void persistQueue();
+    if (trackSeq > 0) scheduleNextTrackPrefetch(trackSeq, 300);
     ui.showToast('已添加到下一首播放');
+  }
+
+  function moveQueueItemNext(index: number) {
+    if (index < 0 || index >= queue.value.length || index === currentIndex.value) return;
+    echoSystem.haptic('selection');
+    const [item] = queue.value.splice(index, 1);
+    if (index < currentIndex.value) {
+      currentIndex.value -= 1;
+    }
+    queue.value.splice(currentIndex.value + 1, 0, item);
+    void persistQueue();
+    if (trackSeq > 0) scheduleNextTrackPrefetch(trackSeq, 300);
+    useUiStore().showToast(`已置顶「${item.title}」为下一首`);
+  }
+
+  function clearQueue() {
+    echoSystem.haptic('medium');
+    queue.value = [];
+    currentIndex.value = -1;
+    shuffleNextIndexCache = -1;
+    isPlaying.value = false;
+    void echoPlayer.stop();
+    void persistQueue();
   }
 
   function removeFromQueue(index: number) {
@@ -629,6 +771,9 @@ export const usePlayerStore = defineStore('player', () => {
       void loadAndPlayCurrent(isPlaying.value);
     } else if (index < currentIndex.value) {
       currentIndex.value -= 1;
+      if (trackSeq > 0) scheduleNextTrackPrefetch(trackSeq, 400);
+    } else if (trackSeq > 0) {
+      scheduleNextTrackPrefetch(trackSeq, 400);
     }
     void persistQueue();
   }
@@ -781,6 +926,8 @@ export const usePlayerStore = defineStore('player', () => {
     setPlaybackSpeed,
     cyclePlayMode,
     addToQueueNext,
+    moveQueueItemNext,
+    clearQueue,
     removeFromQueue,
     applyUnblockCandidate,
     syncFavoritesFromPlaylist,

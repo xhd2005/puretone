@@ -298,6 +298,57 @@ export function stripAudioExtension(raw?: string): string {
   return String(raw || '').trim().replace(AUDIO_EXT_RE, '').trim();
 }
 
+function normArtistCompare(s: string): string {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/[\s/\\、,，&·・]+/g, '')
+    .trim();
+}
+
+/**
+ * Strips audio extensions (.mp3/.flac/...) AND redundant "Artist - " prefixes that KuGou
+ * cloud playlists often bake into song filenames even when `artist` is already provided.
+ */
+export function cleanSongTitleAndArtist(
+  rawTitle?: string,
+  rawArtist?: string,
+): { title: string; artist: string } {
+  let title = stripAudioExtension(rawTitle);
+  let artist = stripAudioExtension(rawArtist);
+
+  const sepMatch = /\s+[-–—]\s+/.exec(title);
+  if (sepMatch && sepMatch.index > 0) {
+    const left = stripAudioExtension(title.slice(0, sepMatch.index));
+    const right = stripAudioExtension(title.slice(sepMatch.index + sepMatch[0].length));
+    if (left && right) {
+      if (!artist || artist === '未知歌手') {
+        artist = left;
+        title = right;
+      } else {
+        const normLeft = normArtistCompare(left);
+        const normArt = normArtistCompare(artist);
+        const primaryArt = normArtistCompare(artist.split(/[/、&,，]/)[0] || '');
+        const primaryLeft = normArtistCompare(left.split(/[/、&,，]/)[0] || '');
+        if (
+          normLeft &&
+          normArt &&
+          (normLeft === normArt ||
+            normLeft.includes(normArt) ||
+            normArt.includes(normLeft) ||
+            (primaryArt.length >= 2 && primaryArt === primaryLeft))
+        ) {
+          title = right;
+        }
+      }
+    }
+  }
+
+  return {
+    title: title || '未知歌曲',
+    artist: artist || '未知歌手',
+  };
+}
+
 export function normalizeSong(raw: Record<string, any>): Song {
   const hash128 = String(raw.hash ?? raw.FileHash ?? raw.filehash ?? raw.audio_info?.hash ?? '').trim();
   const hash320 = String(
@@ -308,9 +359,8 @@ export function normalizeSong(raw: Record<string, any>): Song {
   ).trim();
 
   const hash = hash128 || hash320 || hashFlac;
-  const rawName = stripAudioExtension(raw.songname ?? raw.SongName ?? raw.ori_audio_name ?? raw.name ?? raw.filename ?? '');
-  let title = rawName;
-  let artist = stripAudioExtension(
+  const rawName = String(raw.songname ?? raw.SongName ?? raw.ori_audio_name ?? raw.name ?? raw.filename ?? '');
+  const rawArtist = String(
     raw.author_name ??
       raw.singername ??
       raw.SingerName ??
@@ -321,12 +371,7 @@ export function normalizeSong(raw: Record<string, any>): Song {
         ? raw.Singers.map((s: any) => s?.name).filter(Boolean).join(' / ')
         : ''),
   );
-
-  if (!artist && rawName.includes(' - ')) {
-    const idx = rawName.indexOf(' - ');
-    artist = stripAudioExtension(rawName.slice(0, idx));
-    title = stripAudioExtension(rawName.slice(idx + 3));
-  }
+  const { title, artist } = cleanSongTitleAndArtist(rawName, rawArtist);
 
   const rawDur = Number(
     raw.time_length ?? raw.timelength ?? raw.duration ?? raw.Duration ?? raw.audio_info?.duration ?? 0,

@@ -17,7 +17,9 @@ import com.getcapacitor.annotation.CapacitorPlugin
 import com.google.common.util.concurrent.ListenableFuture
 import com.xhd2005.puretone.player.EchoPlaybackService
 import com.xhd2005.puretone.player.PlayerBridgeListener
+import com.xhd2005.puretone.player.QueuedTrackEntry
 import com.xhd2005.puretone.player.TrackMetadataPayload
+import org.json.JSONObject
 
 @OptIn(UnstableApi::class)
 @CapacitorPlugin(name = "EchoPlayer")
@@ -117,10 +119,60 @@ class EchoPlayerPlugin : Plugin(), PlayerBridgeListener {
         val autoPlay = call.getBoolean("autoPlay", true) ?: true
         val trackSeq = call.getInt("trackSeq") ?: 0
         val cacheKey = call.getString("cacheKey")?.takeIf { it.isNotBlank() }
+        val queueIndex = call.getInt("queueIndex") ?: -1
 
         startForegroundPlaybackServiceSafe()
         ensureServiceBound { svc ->
-            svc.loadTrack(url, headers, metadata, autoPlay, trackSeq, cacheKey)
+            svc.loadTrack(url, headers, metadata, autoPlay, trackSeq, cacheKey, queueIndex)
+            call.resolve()
+        }
+    }
+
+    @PluginMethod
+    fun syncUpcomingTracks(call: PluginCall) {
+        val rawArr = call.getArray("tracks")
+        val entries = mutableListOf<QueuedTrackEntry>()
+        if (rawArr != null) {
+            for (i in 0 until rawArr.length()) {
+                val itemObj = rawArr.optJSONObject(i) ?: continue
+                val url = itemObj.optString("url", "").trim()
+                if (url.isEmpty()) continue
+                val metaJson = itemObj.optJSONObject("metadata")
+                val cover = metaJson?.optString("coverUrl", "")?.takeIf { it.isNotBlank() && it != "null" }
+                val meta = TrackMetadataPayload(
+                    title = metaJson?.optString("title", "未知歌曲") ?: "未知歌曲",
+                    artist = metaJson?.optString("artist", "未知歌手") ?: "未知歌手",
+                    album = metaJson?.optString("album", "") ?: "",
+                    coverUrl = cover,
+                    durationMs = metaJson?.optLong("durationMs", 0L) ?: 0L,
+                )
+                val headersMap = mutableMapOf<String, String>()
+                val hJson: JSONObject? = itemObj.optJSONObject("headers")
+                if (hJson != null) {
+                    val keys = hJson.keys()
+                    while (keys.hasNext()) {
+                        val k = keys.next()
+                        if (!hJson.isNull(k)) headersMap[k] = hJson.optString(k, "")
+                    }
+                }
+                val qIdx = itemObj.optInt("queueIndex", -1)
+                val cKey = itemObj.optString("cacheKey", "").takeIf { it.isNotBlank() && it != "null" }
+                val mId = itemObj.optString("mediaId", "").takeIf { it.isNotBlank() }
+                    ?: "pt_up_${i}_${qIdx}_${meta.title.hashCode()}"
+                entries.add(
+                    QueuedTrackEntry(
+                        mediaId = mId,
+                        queueIndex = qIdx,
+                        url = url,
+                        headers = headersMap,
+                        metadata = meta,
+                        cacheKey = cKey,
+                    ),
+                )
+            }
+        }
+        ensureServiceBound { svc ->
+            svc.syncUpcomingTracks(entries)
             call.resolve()
         }
     }
@@ -132,10 +184,12 @@ class EchoPlayerPlugin : Plugin(), PlayerBridgeListener {
             call.resolve()
             return
         }
+        val headers = parseHeaders(call.getObject("headers"))
         val metadata = parseMetadata(call.getObject("metadata"))
         val cacheKey = call.getString("cacheKey")?.takeIf { it.isNotBlank() }
+        val queueIndex = call.getInt("queueIndex") ?: -1
         ensureServiceBound { svc ->
-            svc.prepareNextTrack(url, metadata, cacheKey)
+            svc.prepareNextTrack(url, headers, metadata, cacheKey, queueIndex)
             call.resolve()
         }
     }
@@ -317,5 +371,14 @@ class EchoPlayerPlugin : Plugin(), PlayerBridgeListener {
         val data = JSObject().put("command", command)
         if (positionMs != null) data.put("positionMs", positionMs)
         notifyListeners("mediaCommand", data)
+    }
+
+    override fun onNativeTrackAdvanced(queueIndex: Int, trackSeq: Int) {
+        notifyListeners(
+            "trackAutoAdvanced",
+            JSObject()
+                .put("queueIndex", queueIndex)
+                .put("trackSeq", trackSeq),
+        )
     }
 }

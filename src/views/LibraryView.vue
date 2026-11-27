@@ -14,6 +14,7 @@ import {
 import { useAccountsStore } from '@/stores/accounts';
 import { usePlayerStore } from '@/stores/player';
 import { useUiStore } from '@/stores/ui';
+import { useI18n } from '@/i18n';
 import { useCollapsingTitle } from '@/composables/useCollapsingTitle';
 import AvatarButton from '@/components/AvatarButton.vue';
 import PlaylistCover from '@/components/PlaylistCover.vue';
@@ -22,6 +23,7 @@ const router = useRouter();
 const accounts = useAccountsStore();
 const player = usePlayerStore();
 const ui = useUiStore();
+const { t } = useI18n();
 const { largeTitleOpacity, compactTitleOpacity, headerGlassActive, onScroll } = useCollapsingTitle();
 
 const playlists = ref<PlaylistSummary[]>([]);
@@ -70,7 +72,7 @@ watch(() => accounts.activeAccount?.userid, () => void fetchPlaylists());
           class="text-[17px] font-bold tracking-tight text-[var(--text-primary)] pointer-events-none"
           :style="{ opacity: compactTitleOpacity }"
         >
-          资料库
+          {{ t('library.title') }}
         </span>
         <AvatarButton />
       </div>
@@ -82,7 +84,7 @@ watch(() => accounts.activeAccount?.userid, () => void fetchPlaylists());
           class="text-[34px] font-bold tracking-[-0.025em] leading-none text-[var(--text-primary)]"
           :style="{ opacity: largeTitleOpacity }"
         >
-          资料库
+          {{ t('library.title') }}
         </h1>
       </div>
 
@@ -96,7 +98,7 @@ watch(() => accounts.activeAccount?.userid, () => void fetchPlaylists());
         >
           <div class="flex items-center gap-3.5">
             <Icon :icon="iconHeartFilled" class="w-6 h-6 am-accent-text" />
-            <span class="text-[18px] font-normal text-[var(--text-primary)]">我喜欢的音乐</span>
+            <span class="text-[18px] font-normal text-[var(--text-primary)]">{{ t('library.favorites') }}</span>
           </div>
           <div class="flex items-center gap-1 text-[var(--text-tertiary)]">
             <span class="text-[14px] tabular-nums">{{ favoritePlaylist.trackCount }}</span>
@@ -112,7 +114,7 @@ watch(() => accounts.activeAccount?.userid, () => void fetchPlaylists());
         >
           <div class="flex items-center gap-3.5">
             <Icon :icon="iconClock" class="w-6 h-6 am-accent-text" />
-            <span class="text-[18px] font-normal text-[var(--text-primary)]">最近播放</span>
+            <span class="text-[18px] font-normal text-[var(--text-primary)]">{{ t('library.recent') }}</span>
           </div>
           <div class="flex items-center gap-1 text-[var(--text-tertiary)]">
             <span class="text-[14px] tabular-nums">{{ player.recentPlays.length }}</span>
@@ -122,19 +124,19 @@ watch(() => accounts.activeAccount?.userid, () => void fetchPlaylists());
       </div>
 
       <div v-if="!accounts.isLoggedIn" class="px-5 py-12 text-center">
-        <p class="text-[15px] text-[var(--text-secondary)]">登录酷狗账号以同步你的歌单和红心歌曲</p>
+        <p class="text-[15px] text-[var(--text-secondary)]">{{ t('library.loginPrompt') }}</p>
         <button
           type="button"
           class="mt-4 px-6 h-10 rounded-full am-accent-bg text-white text-[15px] font-semibold border-0 am-tap"
           @click="ui.loginModalOpen = true"
         >
-          登录账号
+          {{ t('home.loginNow') }}
         </button>
       </div>
 
       <!-- Playlists 2-Column Apple Music Grid with 2x2 Cover Collage -->
       <section v-else class="px-5 mt-6">
-        <h2 class="text-[21px] font-bold tracking-tight text-[var(--text-primary)] mb-3.5">歌单</h2>
+        <h2 class="text-[21px] font-bold tracking-tight text-[var(--text-primary)] mb-3.5">{{ t('library.playlists') }}</h2>
 
         <div v-if="loading && !playlists.length" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
           <div v-for="i in 4" :key="i">
@@ -161,7 +163,7 @@ watch(() => accounts.activeAccount?.userid, () => void fetchPlaylists());
               {{ pl.name }}
             </div>
             <div class="text-[13px] text-[var(--text-secondary)] truncate">
-              {{ pl.trackCount }} 首歌曲
+              {{ t('common.songsCount', { count: pl.trackCount }) }}
             </div>
           </div>
         </div>

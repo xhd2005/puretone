@@ -5,6 +5,7 @@ import android.os.Bundle
 import androidx.activity.OnBackPressedCallback
 import androidx.core.view.WindowCompat
 import com.getcapacitor.BridgeActivity
+import com.xhd2005.puretone.player.EchoPlaybackService
 import com.xhd2005.puretone.plugins.EchoHttpPlugin
 import com.xhd2005.puretone.plugins.EchoPlayerPlugin
 import com.xhd2005.puretone.plugins.EchoSystemPlugin
@@ -29,6 +30,18 @@ class MainActivity : BridgeActivity() {
                 }
             }
         })
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // Keep lightweight WebView JS timers alive while music is actively playing in background
+        // (e.g. screen-off pocket playback during cycling) so upcoming tracks keep pre-resolving.
+        if (EchoPlaybackService.isActivelyPlaying()) {
+            try {
+                bridge?.webView?.resumeTimers()
+            } catch (_: Exception) {
+            }
+        }
     }
 
     override fun onNewIntent(intent: Intent) {

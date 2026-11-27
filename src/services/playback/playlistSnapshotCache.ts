@@ -1,6 +1,6 @@
 import type { PlaylistSortMode, Song } from '@/types/music';
 import { echoSystem } from '@/native/echoSystem';
-import { stripAudioExtension } from '@/services/kugou/kugouEngine';
+import { cleanSongTitleAndArtist } from '@/services/kugou/kugouEngine';
 
 export interface PlaylistSnapshot {
   key: string;
@@ -96,11 +96,14 @@ export async function readPlaylistSnapshot(key: string): Promise<PlaylistSnapsho
   if (!snap || !Array.isArray(snap.songs)) return null;
   return {
     ...snap,
-    songs: snap.songs.map((s) => ({
-      ...s,
-      title: stripAudioExtension(s.title) || s.title,
-      artist: stripAudioExtension(s.artist) || s.artist,
-    })),
+    songs: snap.songs.map((s) => {
+      const cleaned = cleanSongTitleAndArtist(s.title, s.artist);
+      return {
+        ...s,
+        title: cleaned.title,
+        artist: cleaned.artist,
+      };
+    }),
   };
 }
 

@@ -45,6 +45,20 @@ export interface MediaCommandEvent {
   positionMs?: number;
 }
 
+export interface TrackAutoAdvancedEvent {
+  queueIndex: number;
+  trackSeq: number;
+}
+
+export interface UpcomingNativeTrack {
+  mediaId?: string;
+  queueIndex: number;
+  url: string;
+  headers?: Record<string, string>;
+  metadata: PlayerTrackMetadata;
+  cacheKey?: string;
+}
+
 export type EqPresetId = 'flat' | 'vocal' | 'bass' | 'night' | 'live';
 
 export interface AudioCacheStats {
@@ -60,12 +74,15 @@ export interface EchoPlayerPluginInterface {
     autoPlay?: boolean;
     trackSeq: number;
     cacheKey?: string;
+    queueIndex?: number;
   }): Promise<void>;
+  syncUpcomingTracks(options: { tracks: UpcomingNativeTrack[] }): Promise<void>;
   prepareNext(options: {
     url: string;
     headers?: Record<string, string>;
     metadata: PlayerTrackMetadata;
     cacheKey?: string;
+    queueIndex?: number;
   }): Promise<void>;
   clearNext(): Promise<void>;
   play(): Promise<void>;
@@ -88,6 +105,10 @@ export interface EchoPlayerPluginInterface {
   addListener(eventName: 'stateChange', listener: (ev: PlayerStateEvent) => void): Promise<PluginListenerHandle>;
   addListener(eventName: 'playerError', listener: (ev: PlayerErrorEvent) => void): Promise<PluginListenerHandle>;
   addListener(eventName: 'mediaCommand', listener: (ev: MediaCommandEvent) => void): Promise<PluginListenerHandle>;
+  addListener(
+    eventName: 'trackAutoAdvanced',
+    listener: (ev: TrackAutoAdvancedEvent) => void,
+  ): Promise<PluginListenerHandle>;
 }
 
 const EchoPlayerNative = registerPlugin<EchoPlayerPluginInterface>('EchoPlayer');
@@ -281,6 +302,11 @@ export const echoPlayer = {
     if (Capacitor.isNativePlatform()) return EchoPlayerNative.load(options);
     return getWebFallback().load(options);
   },
+  async syncUpcomingTracks(tracks: UpcomingNativeTrack[]) {
+    if (Capacitor.isNativePlatform()) {
+      return EchoPlayerNative.syncUpcomingTracks({ tracks }).catch(() => {});
+    }
+  },
   async prepareNext(options: Parameters<EchoPlayerPluginInterface['prepareNext']>[0]) {
     if (Capacitor.isNativePlatform()) return EchoPlayerNative.prepareNext(options);
   },
@@ -379,5 +405,12 @@ export const echoPlayer = {
       return () => void h.remove();
     }
     return getWebFallback().on('mediaCommand', cb);
+  },
+  async onTrackAutoAdvanced(cb: (ev: TrackAutoAdvancedEvent) => void): Promise<() => void> {
+    if (Capacitor.isNativePlatform()) {
+      const h = await EchoPlayerNative.addListener('trackAutoAdvanced', cb);
+      return () => void h.remove();
+    }
+    return () => {};
   },
 };

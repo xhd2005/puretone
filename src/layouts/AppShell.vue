@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, onUnmounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { Icon } from '@iconify/vue';
 import iconHome from '@iconify/icons-tabler/home';
 import iconPlaylist from '@iconify/icons-tabler/books';
 import iconSearch from '@iconify/icons-tabler/search';
 import { useUiStore } from '@/stores/ui';
+import { useI18n } from '@/i18n';
 import { echoSystem } from '@/native/echoSystem';
 import MiniPlayerPill from '@/components/MiniPlayerPill.vue';
 import AvatarButton from '@/components/AvatarButton.vue';
@@ -14,17 +15,35 @@ import PureToneMark from '@/components/PureToneMark.vue';
 const route = useRoute();
 const router = useRouter();
 const ui = useUiStore();
+const { t } = useI18n();
 
 const activeTab = computed(() => String(route.meta?.tab || 'home'));
+const transitionName = ref<'ios-push' | 'ios-pop' | 'ios-tab'>('ios-tab');
 
-const tabs = [
-  { id: 'home', path: '/home', label: '主页', icon: iconHome },
-  { id: 'library', path: '/library', label: '资料库', icon: iconPlaylist },
-  { id: 'search', path: '/search', label: '搜索', icon: iconSearch },
-];
+const removeBeforeEach = router.beforeEach((to, from) => {
+  const toDepth = Number(to.meta?.depth ?? 0);
+  const fromDepth = Number(from.meta?.depth ?? 0);
+  if (toDepth > fromDepth) {
+    transitionName.value = 'ios-push';
+  } else if (toDepth < fromDepth) {
+    transitionName.value = 'ios-pop';
+  } else {
+    transitionName.value = 'ios-tab';
+  }
+});
+
+onUnmounted(() => {
+  removeBeforeEach();
+});
+
+const tabs = computed(() => [
+  { id: 'home', path: '/home', label: t('nav.home'), icon: iconHome },
+  { id: 'library', path: '/library', label: t('nav.library'), icon: iconPlaylist },
+  { id: 'search', path: '/search', label: t('nav.search'), icon: iconSearch },
+]);
 
 const activeTabIndex = computed(() => {
-  const idx = tabs.findIndex((t) => t.id === activeTab.value);
+  const idx = tabs.value.findIndex((tItem) => tItem.id === activeTab.value);
   return idx >= 0 ? idx : 0;
 });
 
@@ -42,7 +61,7 @@ function goTab(path: string) {
         <div class="pt-[calc(var(--safe-top)+18px)] px-4 pb-4 flex items-center justify-between">
           <div class="flex items-center gap-2.5">
             <PureToneMark :size="30" />
-            <span class="text-[19px] font-bold tracking-tight text-[var(--text-primary)]">纯音</span>
+            <span class="text-[19px] font-bold tracking-tight text-[var(--text-primary)]">{{ t('app.name') }}</span>
           </div>
           <AvatarButton />
         </div>
@@ -66,12 +85,14 @@ function goTab(path: string) {
         </nav>
       </aside>
 
-      <!-- Main Viewport -->
-      <main class="flex-1 min-w-0 h-full relative overflow-hidden">
-        <router-view v-slot="{ Component }">
-          <KeepAlive include="HomeView,LibraryView,SearchView">
-            <component :is="Component" />
-          </KeepAlive>
+      <!-- Main Viewport with Directional iOS 26 Transitions -->
+      <main class="flex-1 min-w-0 h-full relative overflow-hidden bg-[var(--bg-canvas)]">
+        <router-view v-slot="{ Component, route: currentRoute }">
+          <Transition :name="transitionName">
+            <KeepAlive include="HomeView,LibraryView,SearchView">
+              <component :is="Component" :key="currentRoute.meta?.depth ? currentRoute.fullPath : String(currentRoute.name)" class="page-layer" />
+            </KeepAlive>
+          </Transition>
         </router-view>
 
         <!-- Bottom subtle fade mask so scrolled content melts smoothly behind Liquid Glass capsules -->
@@ -84,7 +105,7 @@ function goTab(path: string) {
 
         <!-- Floating iOS 26 Liquid Glass Capsule Tab Bar (< 768px) -->
         <div class="tabbar-holder md:hidden">
-          <nav class="lg-tabbar lg-capsule" aria-label="主导航">
+          <nav class="lg-tabbar lg-capsule" aria-label="Main Navigation">
             <!-- Animated Sliding Liquid Glass Lens Indicator -->
             <div
               class="lg-tab-indicator"
@@ -140,6 +161,12 @@ function goTab(path: string) {
   transform: scale3d(0.95, 0.95, 1) translate3d(0, 6px, 0);
   border-radius: 24px;
   overflow: hidden;
+}
+
+.page-layer {
+  width: 100%;
+  height: 100%;
+  background-color: var(--bg-canvas);
 }
 
 .tablet-sidebar {

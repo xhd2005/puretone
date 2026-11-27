@@ -8,10 +8,12 @@ import iconArrowsShuffle from '@iconify/icons-tabler/arrows-shuffle';
 import type { Song } from '@/types/music';
 import { kugouApi } from '@/services/kugou/kugouEngine';
 import { usePlayerStore } from '@/stores/player';
+import { useI18n } from '@/i18n';
 import SongRow from '@/components/SongRow.vue';
 
 const router = useRouter();
 const player = usePlayerStore();
+const { t } = useI18n();
 const songs = ref<Song[]>([]);
 const loading = ref(true);
 
@@ -42,9 +44,9 @@ function shufflePlay() {
           @click="router.back()"
         >
           <Icon :icon="iconChevronLeft" class="w-6 h-6" />
-          <span>主页</span>
+          <span>{{ t('common.back') }}</span>
         </button>
-        <span class="text-[16px] font-semibold text-[var(--text-primary)]">每日推荐</span>
+        <span class="text-[16px] font-semibold text-[var(--text-primary)]">{{ t('daily.title') }}</span>
         <span class="w-12" />
       </div>
     </header>
@@ -55,8 +57,8 @@ function shufflePlay() {
           <span class="text-[13px] font-semibold uppercase tracking-widest opacity-85">Daily Mix</span>
           <span class="text-[36px] font-bold tracking-tight mt-1">{{ todayLabel }}</span>
         </div>
-        <h1 class="text-[24px] font-bold tracking-tight mt-4 text-[var(--text-primary)]">每日精选推荐</h1>
-        <p class="text-[13px] text-[var(--text-secondary)] mt-1">每天根据你的品味刷新 · 共 {{ songs.length }} 首</p>
+        <h1 class="text-[24px] font-bold tracking-tight mt-4 text-[var(--text-primary)]">{{ t('daily.title') }}</h1>
+        <p class="text-[13px] text-[var(--text-secondary)] mt-1">{{ t('daily.subtitle') }} · {{ t('common.songsCount', { count: songs.length }) }}</p>
 
         <div class="grid grid-cols-2 gap-3 mt-5 max-w-sm mx-auto">
           <button
@@ -66,7 +68,7 @@ function shufflePlay() {
             @click="player.playQueue(songs, 0)"
           >
             <Icon :icon="iconPlayerPlayFilled" class="w-4 h-4" />
-            <span>播放</span>
+            <span>{{ t('common.play') }}</span>
           </button>
           <button
             type="button"
@@ -75,12 +77,12 @@ function shufflePlay() {
             @click="shufflePlay"
           >
             <Icon :icon="iconArrowsShuffle" class="w-4 h-4" />
-            <span>随机播放</span>
+            <span>{{ t('common.shuffle') }}</span>
           </button>
         </div>
       </div>
 
-      <div v-if="loading" class="py-12 text-center text-[14px] text-[var(--text-secondary)]">正在加载每日推荐…</div>
+      <div v-if="loading" class="py-12 text-center text-[14px] text-[var(--text-secondary)]">{{ t('common.loading') }}</div>
       <div v-else>
         <SongRow
           v-for="(song, idx) in songs"

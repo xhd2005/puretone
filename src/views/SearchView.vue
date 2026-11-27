@@ -9,6 +9,7 @@ import { kugouApi } from '@/services/kugou/kugouEngine';
 import { getPlaylistCacheKey } from '@/services/playback/playlistCoverResolver';
 import { echoSystem } from '@/native/echoSystem';
 import { usePlayerStore } from '@/stores/player';
+import { useI18n } from '@/i18n';
 import { useCollapsingTitle } from '@/composables/useCollapsingTitle';
 import AvatarButton from '@/components/AvatarButton.vue';
 import SongRow from '@/components/SongRow.vue';
@@ -16,6 +17,7 @@ import PlaylistCover from '@/components/PlaylistCover.vue';
 
 const router = useRouter();
 const player = usePlayerStore();
+const { t } = useI18n();
 const { largeTitleOpacity, compactTitleOpacity, headerGlassActive, onScroll } = useCollapsingTitle();
 
 const HISTORY_KEY = 'search.history.v1';
@@ -98,7 +100,7 @@ function clearHistory() {
           class="text-[17px] font-bold tracking-tight text-[var(--text-primary)] pointer-events-none"
           :style="{ opacity: compactTitleOpacity }"
         >
-          搜索
+          {{ t('search.title') }}
         </span>
         <AvatarButton />
       </div>
@@ -110,7 +112,7 @@ function clearHistory() {
           class="text-[34px] font-bold tracking-[-0.025em] leading-none text-[var(--text-primary)]"
           :style="{ opacity: largeTitleOpacity }"
         >
-          搜索
+          {{ t('search.title') }}
         </h1>
       </div>
 
@@ -122,7 +124,7 @@ function clearHistory() {
             v-model="query"
             type="search"
             enterkeyhint="search"
-            placeholder="艺人、歌曲、歌词与歌单"
+            :placeholder="t('search.placeholder')"
             class="flex-1 bg-transparent border-0 outline-none text-[16px] text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]"
           />
           <button
@@ -160,7 +162,7 @@ function clearHistory() {
               :class="activeTab === 'song' ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-sm' : 'bg-transparent text-[var(--text-secondary)]'"
               @click="echoSystem.haptic('selection'); activeTab = 'song'"
             >
-              单曲 ({{ songs.length }})
+              {{ t('search.songsTab') }} ({{ songs.length }})
             </button>
             <button
               type="button"
@@ -168,15 +170,15 @@ function clearHistory() {
               :class="activeTab === 'playlist' ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-sm' : 'bg-transparent text-[var(--text-secondary)]'"
               @click="echoSystem.haptic('selection'); activeTab = 'playlist'"
             >
-              歌单 ({{ playlists.length }})
+              {{ t('search.playlistsTab') }} ({{ playlists.length }})
             </button>
           </div>
         </div>
 
-        <div v-if="searching" class="py-12 text-center text-[14px] text-[var(--text-secondary)]">正在搜索…</div>
+        <div v-if="searching" class="py-12 text-center text-[14px] text-[var(--text-secondary)]">{{ t('search.searching') }}</div>
 
         <div v-else-if="activeTab === 'song'">
-          <div v-if="!songs.length" class="py-12 text-center text-[14px] text-[var(--text-secondary)]">未找到相关歌曲</div>
+          <div v-if="!songs.length" class="py-12 text-center text-[14px] text-[var(--text-secondary)]">{{ t('search.noResults') }}</div>
           <SongRow
             v-for="(song, idx) in songs"
             :key="song.hash || `${song.id}-${idx}`"
@@ -232,7 +234,7 @@ function clearHistory() {
         </section>
 
         <section v-if="hotKeywords.length">
-          <h2 class="text-[17px] font-bold text-[var(--text-primary)] mb-2.5">大家在听</h2>
+          <h2 class="text-[17px] font-bold text-[var(--text-primary)] mb-2.5">{{ t('search.hotTitle') }}</h2>
           <div class="flex flex-wrap gap-2">
             <button
               v-for="kw in hotKeywords"

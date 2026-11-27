@@ -9,6 +9,7 @@ import iconMusic from '@iconify/icons-tabler/music';
 import type { LyricLine } from '@/types/music';
 import { usePlayerStore } from '@/stores/player';
 import { useUiStore } from '@/stores/ui';
+import { useI18n } from '@/i18n';
 import { useDraggableSheet } from '@/composables/useDraggableSheet';
 import { fetchLyricsForSong } from '@/services/playback/krcParser';
 import { echoSystem } from '@/native/echoSystem';
@@ -17,6 +18,7 @@ type PosterTheme = 'fluid' | 'paper' | 'vinyl';
 
 const player = usePlayerStore();
 const ui = useUiStore();
+const { t } = useI18n();
 
 const scrollRef = ref<HTMLElement | null>(null);
 const loading = ref(false);
@@ -35,11 +37,11 @@ const dragSheet = useDraggableSheet({
   },
 });
 
-const themes: Array<{ id: PosterTheme; label: string }> = [
-  { id: 'fluid', label: '流光渐变' },
-  { id: 'paper', label: '极简留白' },
-  { id: 'vinyl', label: '黑胶暗夜' },
-];
+const themes = computed<Array<{ id: PosterTheme; label: string }>>(() => [
+  { id: 'fluid', label: t('poster.themeFluid') },
+  { id: 'paper', label: t('poster.themePaper') },
+  { id: 'vinyl', label: t('poster.themeVinyl') },
+]);
 
 const selectedLines = computed(() =>
   selectedIndices.value
@@ -400,8 +402,8 @@ const previewCardStyle = computed(() => {
             </div>
             <div class="flex items-center justify-between px-5 pt-1 pb-3 am-hairline-b">
               <div>
-                <h2 class="text-[18px] font-bold tracking-tight text-[var(--text-primary)]">歌词海报卡片</h2>
-                <p class="text-[11px] text-[var(--text-secondary)]">点选 1–4 句歌词生成 1080P 高清海报</p>
+                <h2 class="text-[18px] font-bold tracking-tight text-[var(--text-primary)]">{{ t('poster.title') }}</h2>
+                <p class="text-[11px] text-[var(--text-secondary)]">{{ t('poster.sub') }}</p>
               </div>
               <button
                 type="button"
@@ -477,14 +479,14 @@ const previewCardStyle = computed(() => {
             <!-- Lyric Line Picker -->
             <div class="space-y-2">
               <div class="flex items-center justify-between text-[12px] text-[var(--text-secondary)] px-0.5">
-                <span>选择歌词（已选 {{ selectedIndices.length }}/4 句）</span>
+                <span>{{ t('poster.pickedCount', { count: selectedIndices.length }) }}</span>
               </div>
 
               <div v-if="loading" class="py-6 text-center text-[13px] text-[var(--text-secondary)]">
-                正在加载同步歌词…
+                {{ t('poster.loading') }}
               </div>
               <div v-else-if="!lines.length" class="py-4 text-center text-[12px] text-[var(--text-secondary)]">
-                当前曲目暂无同步歌词，将使用曲名生成极简封面海报
+                {{ t('poster.noLyrics') }}
               </div>
               <div v-else class="space-y-1.5 max-h-[180px] am-scroll pr-1">
                 <button
@@ -519,7 +521,7 @@ const previewCardStyle = computed(() => {
               @click="handleSavePoster"
             >
               <Icon :icon="iconDownload" class="w-4.5 h-4.5" />
-              <span>{{ saving ? '保存中…' : '保存到相册' }}</span>
+              <span>{{ saving ? t('poster.saving') : t('poster.save') }}</span>
             </button>
             <button
               type="button"
@@ -528,7 +530,7 @@ const previewCardStyle = computed(() => {
               @click="handleSharePoster"
             >
               <Icon :icon="iconShare" class="w-4.5 h-4.5 am-accent-text" />
-              <span>{{ sharing ? '准备中…' : '分享海报' }}</span>
+              <span>{{ sharing ? t('poster.sharing') : t('poster.share') }}</span>
             </button>
           </div>
         </div>

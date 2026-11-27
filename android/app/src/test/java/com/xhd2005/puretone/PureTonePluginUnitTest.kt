@@ -44,8 +44,13 @@ class PureTonePluginUnitTest {
     }
 
     @Test
-    fun computeEqBandGains_producesExpectedCurvesForPresets() {
+    fun computeEqBandGains_producesZeroClippingSubtractiveCurvesForPresets() {
         val freqs = intArrayOf(60, 230, 910, 3600, 14000)
+        for (preset in listOf("flat", "vocal", "bass", "night", "live")) {
+            val gains = EchoPlaybackService.computeEqBandGains(preset, freqs)
+            assertTrue("Preset $preset must never exceed 0 mB to prevent digital clipping", gains.all { it <= 0 })
+        }
+
         val flat = EchoPlaybackService.computeEqBandGains("flat", freqs)
         assertTrue(flat.all { it == 0 })
 
@@ -53,10 +58,10 @@ class PureTonePluginUnitTest {
         assertTrue(bass[0] > bass[2])
 
         val vocal = EchoPlaybackService.computeEqBandGains("vocal", freqs)
-        assertTrue(vocal[2] > vocal[0])
+        assertTrue(vocal[2] > vocal[0] && vocal[2] == 0)
 
         val night = EchoPlaybackService.computeEqBandGains("night", freqs)
-        assertTrue(night[4] < 0 && night[0] > 0)
+        assertTrue(night[4] < night[0] && night[4] <= -450)
     }
 
     @Test

@@ -12,6 +12,7 @@ import iconClock from '@iconify/icons-tabler/clock';
 import type { Song } from '@/types/music';
 import { usePlayerStore } from '@/stores/player';
 import { useUiStore } from '@/stores/ui';
+import { useI18n } from '@/i18n';
 import { useCollapsingTitle } from '@/composables/useCollapsingTitle';
 import { echoSystem } from '@/native/echoSystem';
 import SongRow from '@/components/SongRow.vue';
@@ -19,6 +20,7 @@ import SongRow from '@/components/SongRow.vue';
 const router = useRouter();
 const player = usePlayerStore();
 const ui = useUiStore();
+const { t } = useI18n();
 const { largeTitleOpacity, compactTitleOpacity, headerGlassActive, onScroll } = useCollapsingTitle();
 
 const searchOpen = ref(false);
@@ -63,7 +65,7 @@ function handleClearAll() {
   if (!player.recentPlays.length) return;
   echoSystem.haptic('medium');
   player.clearRecentPlays();
-  ui.showToast('已清空最近播放记录');
+  ui.showToast(t('recent.cleared'));
 }
 </script>
 
@@ -77,14 +79,14 @@ function handleClearAll() {
           @click="router.back()"
         >
           <Icon :icon="iconChevronLeft" class="w-6 h-6" />
-          <span>返回</span>
+          <span>{{ t('common.back') }}</span>
         </button>
 
         <span
           class="text-[16px] font-semibold truncate flex-1 text-center text-[var(--text-primary)] pointer-events-none"
           :style="{ opacity: searchOpen ? 1 : compactTitleOpacity }"
         >
-          最近播放
+          {{ t('recent.title') }}
         </span>
 
         <div class="flex items-center gap-0.5 shrink-0">
@@ -92,7 +94,7 @@ function handleClearAll() {
             v-if="player.recentPlays.length"
             type="button"
             class="w-9 h-9 rounded-full bg-transparent border-0 flex items-center justify-center text-[var(--text-secondary)] am-tap"
-            aria-label="清空记录"
+            :aria-label="t('common.clear')"
             @click="handleClearAll"
           >
             <Icon :icon="iconTrash" class="w-4.5 h-4.5" />
@@ -100,7 +102,7 @@ function handleClearAll() {
           <button
             type="button"
             class="w-9 h-9 rounded-full bg-transparent border-0 flex items-center justify-center am-accent-text am-tap"
-            aria-label="搜索最近播放"
+            :aria-label="t('search.title')"
             @click="toggleSearch"
           >
             <Icon :icon="searchOpen ? iconX : iconSearch" class="w-5 h-5" />
@@ -115,7 +117,7 @@ function handleClearAll() {
             ref="searchInputRef"
             v-model="searchQuery"
             type="search"
-            placeholder="搜索最近听过的歌曲或歌手…"
+            :placeholder="t('recent.searchPlaceholder')"
             class="flex-1 bg-transparent border-0 outline-none text-[14px] text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]"
           />
           <button
@@ -136,10 +138,10 @@ function handleClearAll() {
           class="text-[34px] font-bold tracking-[-0.025em] leading-none text-[var(--text-primary)]"
           :style="{ opacity: largeTitleOpacity }"
         >
-          最近播放
+          {{ t('recent.title') }}
         </h1>
         <p class="text-[13px] text-[var(--text-secondary)] mt-2 tabular-nums">
-          共 {{ player.recentPlays.length }} 首近期聆听记录
+          {{ t('common.totalSongs', { count: player.recentPlays.length }) }}
         </p>
 
         <div v-if="filteredSongs.length" class="grid grid-cols-2 gap-3 mt-4 max-w-sm">
@@ -149,7 +151,7 @@ function handleClearAll() {
             @click="player.playQueue(filteredSongs, 0)"
           >
             <Icon :icon="iconPlayerPlayFilled" class="w-4 h-4" />
-            <span>播放全部</span>
+            <span>{{ t('common.playAll') }}</span>
           </button>
           <button
             type="button"
@@ -157,7 +159,7 @@ function handleClearAll() {
             @click="shufflePlay"
           >
             <Icon :icon="iconArrowsShuffle" class="w-4 h-4" />
-            <span>随机播放</span>
+            <span>{{ t('common.shuffle') }}</span>
           </button>
         </div>
       </div>
@@ -166,12 +168,12 @@ function handleClearAll() {
         <div class="w-14 h-14 rounded-2xl bg-[var(--bg-subtle)] mx-auto flex items-center justify-center text-[var(--text-tertiary)] mb-3">
           <Icon :icon="iconClock" class="w-7 h-7" />
         </div>
-        <div class="text-[16px] font-semibold text-[var(--text-primary)]">暂无播放记录</div>
-        <p class="text-[13px] text-[var(--text-secondary)] mt-1">播放任意歌曲后，这里会自动为你留存聆听足迹</p>
+        <div class="text-[16px] font-semibold text-[var(--text-primary)]">{{ t('recent.empty') }}</div>
+        <p class="text-[13px] text-[var(--text-secondary)] mt-1">{{ t('recent.emptySub') }}</p>
       </div>
 
       <div v-else-if="searchQuery.trim() && !filteredSongs.length" class="py-12 text-center text-[14px] text-[var(--text-secondary)]">
-        未找到“{{ searchQuery }}”
+        {{ t('playlist.notFound', { query: searchQuery }) }}
       </div>
 
       <div v-else>

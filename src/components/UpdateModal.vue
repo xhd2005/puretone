@@ -6,11 +6,13 @@ import iconExternalLink from '@iconify/icons-tabler/external-link';
 import iconX from '@iconify/icons-tabler/x';
 import iconSparkles from '@iconify/icons-tabler/sparkles';
 import { useUiStore } from '@/stores/ui';
+import { useI18n } from '@/i18n';
 import { echoSystem } from '@/native/echoSystem';
 import { formatBytes, skipUpdateVersion } from '@/services/update/updateService';
 import PureToneMark from './PureToneMark.vue';
 
 const ui = useUiStore();
+const { t } = useI18n();
 const info = computed(() => ui.updateReleaseInfo);
 
 const downloading = ref(false);
@@ -130,13 +132,13 @@ async function handleSkip() {
             <PureToneMark :size="44" />
             <div class="min-w-0">
               <div class="flex items-center gap-1.5">
-                <span class="text-[19px] font-bold tracking-tight text-[var(--text-primary)]">发现新版本</span>
+                <span class="text-[19px] font-bold tracking-tight text-[var(--text-primary)]">{{ t('update.found') }}</span>
                 <span class="px-2 py-0.5 rounded-full am-accent-bg text-white text-[11px] font-bold">
                   v{{ info.latestVersion }}
                 </span>
               </div>
               <div class="text-[12px] text-[var(--text-secondary)] mt-0.5 tabular-nums">
-                当前 v{{ info.currentVersion }}
+                {{ t('update.current', { ver: info.currentVersion }) }}
                 <template v-if="info.apkSizeBytes"> · {{ formatBytes(info.apkSizeBytes) }}</template>
                 <template v-if="info.publishedAt"> · {{ info.publishedAt }}</template>
               </div>
@@ -157,7 +159,7 @@ async function handleSkip() {
         <div class="flex-1 am-scroll py-3.5 space-y-2">
           <div class="flex items-center gap-1.5 text-[12px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
             <Icon :icon="iconSparkles" class="w-3.5 h-3.5 am-accent-text" />
-            <span>更新日志</span>
+            <span>{{ t('update.changelog') }}</span>
           </div>
 
           <div class="rounded-[18px] bg-[var(--bg-card)] p-4 space-y-2 text-[14px] leading-relaxed">
@@ -201,7 +203,7 @@ async function handleSkip() {
             @click="handleDownloadInstall"
           >
             <Icon :icon="iconDownload" class="w-4.5 h-4.5" />
-            <span>{{ downloading ? `正在下载 ${progressPct}%…` : '立即下载并安装' }}</span>
+            <span>{{ downloading ? t('update.downloading', { pct: progressPct }) : t('update.downloadNow') }}</span>
           </button>
 
           <div class="grid grid-cols-2 gap-2">
@@ -211,7 +213,7 @@ async function handleSkip() {
               @click="handleOpenBrowser"
             >
               <Icon :icon="iconExternalLink" class="w-4 h-4" />
-              <span>浏览器下载</span>
+              <span>{{ t('update.browserDownload') }}</span>
             </button>
             <button
               type="button"
@@ -219,7 +221,7 @@ async function handleSkip() {
               :disabled="downloading"
               @click="handleSkip"
             >
-              稍后提醒
+              {{ t('update.later') }}
             </button>
           </div>
         </div>

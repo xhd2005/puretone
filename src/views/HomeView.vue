@@ -17,6 +17,7 @@ import { readPlaylistSnapshot } from '@/services/playback/playlistSnapshotCache'
 import { useAccountsStore } from '@/stores/accounts';
 import { usePlayerStore } from '@/stores/player';
 import { useUiStore } from '@/stores/ui';
+import { useI18n } from '@/i18n';
 import { useCollapsingTitle } from '@/composables/useCollapsingTitle';
 import AvatarButton from '@/components/AvatarButton.vue';
 import PlaylistCover from '@/components/PlaylistCover.vue';
@@ -26,6 +27,7 @@ const router = useRouter();
 const accounts = useAccountsStore();
 const player = usePlayerStore();
 const ui = useUiStore();
+const { t } = useI18n();
 const { largeTitleOpacity, compactTitleOpacity, headerGlassActive, onScroll } = useCollapsingTitle();
 
 const dailySongs = ref<Song[]>([]);
@@ -105,7 +107,7 @@ watch(() => accounts.activeAccount?.userid, () => void loadHomeData());
           class="text-[17px] font-bold tracking-tight text-[var(--text-primary)] pointer-events-none"
           :style="{ opacity: compactTitleOpacity }"
         >
-          主页
+          {{ t('home.title') }}
         </span>
         <AvatarButton />
       </div>
@@ -118,7 +120,7 @@ watch(() => accounts.activeAccount?.userid, () => void loadHomeData());
           class="text-[34px] font-bold tracking-[-0.025em] leading-none text-[var(--text-primary)]"
           :style="{ opacity: largeTitleOpacity }"
         >
-          主页
+          {{ t('home.title') }}
         </h1>
       </div>
 
@@ -129,25 +131,25 @@ watch(() => accounts.activeAccount?.userid, () => void loadHomeData());
             <PureToneMark :size="40" />
             <div>
               <div class="text-[19px] font-bold tracking-tight text-[var(--text-primary)]">
-                纯音 · PureTone
+                {{ t('app.fullName') }}
               </div>
-              <div class="text-[12px] text-[var(--text-secondary)]">极简无广告 · 每日畅听</div>
+              <div class="text-[12px] text-[var(--text-secondary)]">{{ t('home.loginCardTitle') }}</div>
             </div>
           </div>
           <p class="text-[14px] text-[var(--text-secondary)] leading-relaxed">
-            登录酷狗概念版账号即可同步全部歌单、每日推荐、私人电台，并在启动时自动领取畅听 VIP。
+            {{ t('home.loginCardDesc') }}
           </p>
           <button
             type="button"
             class="mt-4 px-5 h-10 rounded-full am-accent-bg text-white text-[15px] font-semibold border-0 am-tap"
             @click="ui.loginModalOpen = true"
           >
-            立即登录
+            {{ t('home.loginNow') }}
           </button>
         </div>
       </div>
 
-      <!-- 1. Apple Music 2-Column Editorial Poster Duo (每日精选 + 私人电台) -->
+      <!-- 1. Apple Music 2-Column Editorial Poster Duo -->
       <section class="px-5 mt-3">
         <div class="grid grid-cols-2 gap-3.5">
           <!-- Poster A: Daily Mix -->
@@ -165,15 +167,15 @@ watch(() => accounts.activeAccount?.userid, () => void loadHomeData());
                 <span>{{ todayLabel }}</span>
               </div>
               <div class="mt-auto">
-                <div class="text-[19px] font-bold text-white tracking-tight leading-tight">每日精选</div>
+                <div class="text-[19px] font-bold text-white tracking-tight leading-tight">{{ t('home.dailyCurated') }}</div>
                 <div class="flex items-center justify-between gap-2 mt-1.5">
                   <span class="text-[12px] text-white/75 truncate">
-                    {{ dailySongs.length ? `${dailySongs.length} 首专属品味` : '每日灵感更新' }}
+                    {{ dailySongs.length ? t('common.songsCount', { count: dailySongs.length }) : t('home.dailySubtitle') }}
                   </span>
                   <button
                     type="button"
                     class="poster-play-btn lg-fluid-btn am-tap shrink-0"
-                    aria-label="播放每日精选"
+                    :aria-label="t('common.play')"
                     @click.stop="dailySongs.length ? player.playQueue(dailySongs, 0) : router.push('/daily')"
                   >
                     <Icon :icon="iconPlayerPlayFilled" class="w-4 h-4 translate-x-[1px] text-white" />
@@ -195,12 +197,12 @@ watch(() => accounts.activeAccount?.userid, () => void loadHomeData());
             <div class="poster-body">
               <div class="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest text-white/85">
                 <Icon :icon="iconRadio" class="w-3 h-3" />
-                <span>STATION</span>
+                <span>{{ t('home.fmLabel') }}</span>
               </div>
               <div class="mt-auto">
-                <div class="text-[19px] font-bold text-white tracking-tight leading-tight">私人电台</div>
+                <div class="text-[19px] font-bold text-white tracking-tight leading-tight">{{ t('home.fmTitle') }}</div>
                 <div class="flex items-center justify-between gap-2 mt-1.5">
-                  <span class="text-[12px] text-white/75 truncate">为你持续调频</span>
+                  <span class="text-[12px] text-white/75 truncate">{{ t('home.fmSubtitle') }}</span>
                   <div class="poster-play-btn lg-fluid-btn shrink-0">
                     <Icon :icon="iconPlayerPlayFilled" class="w-4 h-4 translate-x-[1px] text-white" />
                   </div>
@@ -219,7 +221,7 @@ watch(() => accounts.activeAccount?.userid, () => void loadHomeData());
             class="flex items-center gap-1 bg-transparent border-0 p-0 text-[21px] font-bold tracking-tight text-[var(--text-primary)] am-tap"
             @click="router.push('/daily')"
           >
-            <span>今日推荐单曲</span>
+            <span>{{ t('home.dailyTitle') }}</span>
             <Icon :icon="iconChevronRight" class="w-5 h-5 text-[var(--text-tertiary)]" />
           </button>
           <button
@@ -228,7 +230,7 @@ watch(() => accounts.activeAccount?.userid, () => void loadHomeData());
             class="text-[14px] font-semibold am-accent-text bg-transparent border-0 p-0 am-tap"
             @click="player.playQueue(dailySongs, 0)"
           >
-            播放全部
+            {{ t('common.playAll') }}
           </button>
         </div>
 
@@ -276,7 +278,7 @@ watch(() => accounts.activeAccount?.userid, () => void loadHomeData());
             class="flex items-center gap-1 bg-transparent border-0 p-0 text-[21px] font-bold tracking-tight text-[var(--text-primary)] am-tap"
             @click="router.push('/recent')"
           >
-            <span>最近播放</span>
+            <span>{{ t('home.recentPlays') }}</span>
             <Icon :icon="iconChevronRight" class="w-5 h-5 text-[var(--text-tertiary)]" />
           </button>
         </div>
@@ -308,7 +310,7 @@ watch(() => accounts.activeAccount?.userid, () => void loadHomeData());
             class="flex items-center gap-1 bg-transparent border-0 p-0 text-[21px] font-bold tracking-tight text-[var(--text-primary)] am-tap"
             @click="router.push('/library')"
           >
-            <span>你的歌单</span>
+            <span>{{ t('home.yourPlaylists') }}</span>
             <Icon :icon="iconChevronRight" class="w-5 h-5 text-[var(--text-tertiary)]" />
           </button>
         </div>
@@ -328,7 +330,7 @@ watch(() => accounts.activeAccount?.userid, () => void loadHomeData());
               />
             </div>
             <div class="text-[14px] font-medium text-[var(--text-primary)] truncate mt-2">{{ pl.name }}</div>
-            <div class="text-[12px] text-[var(--text-secondary)]">{{ pl.trackCount }} 首</div>
+            <div class="text-[12px] text-[var(--text-secondary)]">{{ t('common.songsCount', { count: pl.trackCount }) }}</div>
           </div>
         </div>
       </section>

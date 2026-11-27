@@ -15,11 +15,13 @@ import iconMusic from '@iconify/icons-tabler/music';
 import type { SleepTimerMode } from '@/types/music';
 import { usePlayerStore } from '@/stores/player';
 import { useUiStore } from '@/stores/ui';
+import { useI18n } from '@/i18n';
 import { useDraggableSheet } from '@/composables/useDraggableSheet';
 import { echoSystem } from '@/native/echoSystem';
 
 const player = usePlayerStore();
 const ui = useUiStore();
+const { t } = useI18n();
 
 const song = computed(() => ui.actionSheetSong);
 const isFav = computed(() => Boolean(song.value?.hash && player.favoriteHashes.has(song.value.hash.toLowerCase())));
@@ -36,13 +38,13 @@ watch(song, (next) => {
 
 const speedOptions = [0.75, 1, 1.25, 1.5];
 
-const sleepOptions: Array<{ id: SleepTimerMode; label: string }> = [
-  { id: 'off', label: '关闭' },
-  { id: '15', label: '15分' },
-  { id: '30', label: '30分' },
-  { id: '60', label: '60分' },
-  { id: 'track', label: '播完本曲' },
-];
+const sleepOptions = computed<Array<{ id: SleepTimerMode; label: string }>>(() => [
+  { id: 'off', label: t('song.sleepOff') },
+  { id: '15', label: t('song.sleep15') },
+  { id: '30', label: t('song.sleep30') },
+  { id: '60', label: t('song.sleep60') },
+  { id: 'track', label: t('song.sleepTrack') },
+]);
 
 function close() {
   ui.actionSheetSong = null;
@@ -123,7 +125,7 @@ async function copyTitle() {
                   v-if="song.hashFlac"
                   class="px-1.5 py-0.5 rounded-[5px] bg-[var(--bg-subtle)] text-[9px] font-bold text-[var(--text-secondary)] shrink-0"
                 >
-                  无损
+                  {{ t('song.lossless') }}
                 </span>
               </div>
               <div class="text-[13px] truncate text-[var(--text-secondary)] mt-0.5">
@@ -133,7 +135,7 @@ async function copyTitle() {
             <button
               type="button"
               class="w-8 h-8 rounded-full bg-[var(--bg-subtle)] border-0 flex items-center justify-center text-[var(--text-secondary)] am-tap shrink-0"
-              aria-label="关闭"
+              :aria-label="t('common.close')"
               @click="close"
             >
               <Icon :icon="iconX" class="w-4 h-4" />
@@ -146,7 +148,7 @@ async function copyTitle() {
               <span class="quick-tile-icon bg-[#5856d6]/12 text-[#5856d6]">
                 <Icon :icon="iconPlayerTrackNext" class="w-5 h-5" />
               </span>
-              <span class="text-[12px] font-semibold text-[var(--text-primary)]">下一首</span>
+              <span class="text-[12px] font-semibold text-[var(--text-primary)]">{{ t('song.playNext') }}</span>
             </button>
 
             <button type="button" class="quick-tile am-tap" @click="toggleFav">
@@ -156,21 +158,21 @@ async function copyTitle() {
               >
                 <Icon :icon="isFav ? iconHeartFilled : iconHeart" class="w-5 h-5" />
               </span>
-              <span class="text-[12px] font-semibold text-[var(--text-primary)]">{{ isFav ? '已喜欢' : '红心' }}</span>
+              <span class="text-[12px] font-semibold text-[var(--text-primary)]">{{ isFav ? t('song.favorited') : t('song.favorite') }}</span>
             </button>
 
             <button type="button" class="quick-tile am-tap" @click="openPoster">
               <span class="quick-tile-icon bg-[#ff9500]/14 text-[#e08200]">
                 <Icon :icon="iconPhoto" class="w-5 h-5" />
               </span>
-              <span class="text-[12px] font-semibold text-[var(--text-primary)]">歌词海报</span>
+              <span class="text-[12px] font-semibold text-[var(--text-primary)]">{{ t('song.poster') }}</span>
             </button>
 
             <button type="button" class="quick-tile am-tap" @click="openUnblock">
               <span class="quick-tile-icon bg-[#34c759]/14 text-[#2fb350]">
                 <Icon :icon="iconSparkles" class="w-5 h-5" />
               </span>
-              <span class="text-[12px] font-semibold text-[var(--text-primary)]">换源解灰</span>
+              <span class="text-[12px] font-semibold text-[var(--text-primary)]">{{ t('song.unblock') }}</span>
             </button>
           </div>
 
@@ -181,7 +183,7 @@ async function copyTitle() {
               <div class="flex items-center justify-between mb-2">
                 <div class="flex items-center gap-1.5 text-[13px] font-semibold text-[var(--text-primary)]">
                   <Icon :icon="iconGauge" class="w-4 h-4 am-accent-text" />
-                  <span>播放倍速</span>
+                  <span>{{ t('song.speed') }}</span>
                 </div>
                 <span class="text-[12px] font-semibold am-accent-text tabular-nums">{{ player.playbackSpeed }}x</span>
               </div>
@@ -198,7 +200,7 @@ async function copyTitle() {
                   "
                   @click="player.setPlaybackSpeed(spd)"
                 >
-                  {{ spd === 1 ? '1.0x 原速' : `${spd}x` }}
+                  {{ spd === 1 ? t('song.speedNormal') : `${spd}x` }}
                 </button>
               </div>
             </div>
@@ -207,7 +209,7 @@ async function copyTitle() {
               <div class="flex items-center justify-between mb-2">
                 <div class="flex items-center gap-1.5 text-[13px] font-semibold text-[var(--text-primary)]">
                   <Icon :icon="iconMoon" class="w-4 h-4 am-accent-text" />
-                  <span>睡眠定时</span>
+                  <span>{{ t('song.sleepTimer') }}</span>
                 </div>
                 <span v-if="player.sleepTimerBadge" class="text-[12px] font-semibold am-accent-text tabular-nums">
                   {{ player.sleepTimerBadge }}
@@ -235,11 +237,11 @@ async function copyTitle() {
           <!-- Compact Secondary Actions -->
           <div class="rounded-[20px] bg-[var(--bg-card)] overflow-hidden divide-y divide-[var(--hairline)] shadow-xs">
             <button type="button" class="sheet-item am-tap" @click="playNow">
-              <span>立即播放此曲</span>
+              <span>{{ t('song.playNow') }}</span>
               <Icon :icon="iconPlayerPlay" class="w-5 h-5 text-[var(--text-secondary)]" />
             </button>
             <button type="button" class="sheet-item am-tap" @click="copyTitle">
-              <span>复制歌名与歌手</span>
+              <span>{{ t('song.copyMeta') }}</span>
               <Icon :icon="iconCopy" class="w-5 h-5 text-[var(--text-secondary)]" />
             </button>
           </div>

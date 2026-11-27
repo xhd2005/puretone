@@ -22,6 +22,7 @@ import {
 } from '@/services/playback/playlistSnapshotCache';
 import { usePlayerStore } from '@/stores/player';
 import { useUiStore } from '@/stores/ui';
+import { useI18n } from '@/i18n';
 import { echoSystem } from '@/native/echoSystem';
 import SongRow from '@/components/SongRow.vue';
 import PlaylistCover from '@/components/PlaylistCover.vue';
@@ -30,9 +31,10 @@ const route = useRoute();
 const router = useRouter();
 const player = usePlayerStore();
 const ui = useUiStore();
+const { t } = useI18n();
 
 const id = computed(() => decodeURIComponent(String(route.params.id || '')));
-const name = computed(() => String(route.query.name || '歌单'));
+const name = computed(() => String(route.query.name || t('playlist.defaultName')));
 const cover = computed(() => String(route.query.cover || ''));
 const listId = computed(() => String(route.query.listId || ''));
 const expectedCount = computed(() => Math.max(0, Number(route.query.count || 0)));
@@ -54,13 +56,13 @@ watch(isFavorite, (fav) => {
   sortMode.value = fav ? 'newest' : 'default';
 });
 
-const SORT_LABELS: Record<PlaylistSortMode, string> = {
-  default: '默认排序',
-  newest: '最新添加',
-  oldest: '最早添加',
-  title: '按歌名',
-  artist: '按歌手',
-};
+const sortLabelMap = computed<Record<PlaylistSortMode, string>>(() => ({
+  default: t('sort.default'),
+  newest: t('sort.newest'),
+  oldest: t('sort.oldest'),
+  title: t('sort.title'),
+  artist: t('sort.artist'),
+}));
 
 const availableSortModes = computed<PlaylistSortMode[]>(() =>
   isFavorite.value ? ['newest', 'oldest', 'title', 'artist'] : ['default', 'newest', 'title', 'artist'],
@@ -72,7 +74,7 @@ function cycleSortMode() {
   const idx = modes.indexOf(sortMode.value);
   const next = modes[(idx + 1) % modes.length];
   sortMode.value = next;
-  ui.showToast(`排序：${SORT_LABELS[next]}`);
+  ui.showToast(t('sort.toast', { label: sortLabelMap.value[next] }));
 }
 
 // Zero-overlap crossfade calibrated to the centered 216px hero header:
@@ -243,7 +245,7 @@ onUnmounted(() => {
           @click="router.back()"
         >
           <Icon :icon="iconChevronLeft" class="w-6 h-6" />
-          <span>返回</span>
+          <span>{{ t('common.back') }}</span>
         </button>
 
         <span
@@ -257,7 +259,7 @@ onUnmounted(() => {
           <button
             type="button"
             class="w-9 h-9 rounded-full bg-transparent border-0 flex items-center justify-center am-accent-text am-tap"
-            :aria-label="`切换排序：${SORT_LABELS[sortMode]}`"
+            :aria-label="sortLabelMap[sortMode]"
             @click="cycleSortMode"
           >
             <Icon :icon="iconArrowsSort" class="w-5 h-5" />
@@ -265,7 +267,7 @@ onUnmounted(() => {
           <button
             type="button"
             class="w-9 h-9 rounded-full bg-transparent border-0 flex items-center justify-center am-accent-text am-tap"
-            aria-label="歌单内搜索"
+            :aria-label="t('search.title')"
             @click="toggleSearch"
           >
             <Icon :icon="searchOpen ? iconX : iconSearch" class="w-5 h-5" />
@@ -281,7 +283,7 @@ onUnmounted(() => {
             ref="searchInputRef"
             v-model="searchQuery"
             type="search"
-            placeholder="在当前歌单中搜索歌名、歌手或专辑…"
+            :placeholder="t('playlist.searchPlaceholder')"
             class="flex-1 bg-transparent border-0 outline-none text-[14px] text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]"
           />
           <button
@@ -316,20 +318,20 @@ onUnmounted(() => {
         </h1>
 
         <div class="flex items-center justify-center flex-wrap gap-2 mt-1.5 text-[13px] text-[var(--text-secondary)]">
-          <span class="tabular-nums">共 {{ displayTotal }} 首歌曲</span>
+          <span class="tabular-nums">{{ t('common.totalSongs', { count: displayTotal }) }}</span>
           <button
             type="button"
             class="px-2.5 py-0.5 rounded-full bg-[var(--bg-subtle)] text-[11px] font-medium text-[var(--text-secondary)] border-0 inline-flex items-center gap-1 am-tap"
             @click="cycleSortMode"
           >
             <Icon :icon="iconArrowsSort" class="w-3 h-3 am-accent-text" />
-            <span>{{ SORT_LABELS[sortMode] }}</span>
+            <span>{{ sortLabelMap[sortMode] }}</span>
           </button>
           <span
             v-if="syncing"
             class="px-2 py-0.5 rounded-full bg-[var(--bg-subtle)] text-[11px] font-medium am-accent-text tabular-nums"
           >
-            {{ syncProgressCount > 0 ? `正在同步 ${syncProgressCount}/${displayTotal}…` : '同步最新歌单…' }}
+            {{ syncProgressCount > 0 ? t('playlist.syncing', { done: syncProgressCount, total: displayTotal }) : t('playlist.syncLatest') }}
           </span>
         </div>
 
@@ -341,7 +343,7 @@ onUnmounted(() => {
             @click="player.playQueue(filteredSongs, 0)"
           >
             <Icon :icon="iconPlayerPlayFilled" class="w-4 h-4" />
-            <span>播放</span>
+            <span>{{ t('common.play') }}</span>
           </button>
           <button
             type="button"
@@ -350,19 +352,19 @@ onUnmounted(() => {
             @click="shufflePlay"
           >
             <Icon :icon="iconArrowsShuffle" class="w-4 h-4" />
-            <span>随机播放</span>
+            <span>{{ t('common.shuffle') }}</span>
           </button>
         </div>
       </div>
 
       <div v-if="loading && !songs.length" class="py-12 text-center text-[14px] text-[var(--text-secondary)]">
-        正在加载歌曲列表…
+        {{ t('playlist.loading') }}
       </div>
       <div v-else-if="searchQuery.trim() && !filteredSongs.length" class="py-12 text-center text-[14px] text-[var(--text-secondary)]">
-        歌单内未找到“{{ searchQuery }}”
+        {{ t('playlist.notFound', { query: searchQuery }) }}
       </div>
       <div v-else-if="!songs.length" class="py-12 text-center text-[14px] text-[var(--text-secondary)]">
-        歌单暂时为空
+        {{ t('playlist.empty') }}
       </div>
       <div v-else>
         <div

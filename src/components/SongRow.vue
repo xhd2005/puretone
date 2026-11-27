@@ -14,6 +14,7 @@ import iconPlaylistAdd from '@iconify/icons-tabler/playlist-add';
 import type { Song } from '@/types/music';
 import { usePlayerStore } from '@/stores/player';
 import { useUiStore } from '@/stores/ui';
+import { useI18n } from '@/i18n';
 import { echoSystem } from '@/native/echoSystem';
 
 const ACTION_WIDTH = 136;
@@ -31,6 +32,7 @@ const emit = defineEmits<{
 
 const player = usePlayerStore();
 const ui = useUiStore();
+const { t } = useI18n();
 
 const isCurrent = computed(
   () => Boolean(player.currentSong && player.currentSong.id === props.song.id && player.currentSong.hash === props.song.hash),
@@ -180,7 +182,7 @@ onUnmounted(() => {
         @click.stop="onSwipePlayNext"
       >
         <Icon :icon="iconPlaylistAdd" class="w-5 h-5" />
-        <span>下一首</span>
+        <span>{{ t('song.playNext') }}</span>
       </button>
       <button
         type="button"
@@ -188,7 +190,7 @@ onUnmounted(() => {
         @click.stop="onSwipeToggleFavorite"
       >
         <Icon :icon="isFavorited ? iconHeartFilled : iconHeart" class="w-5 h-5" />
-        <span>{{ isFavorited ? '取消' : '红心' }}</span>
+        <span>{{ isFavorited ? t('song.unfavorite') : t('song.favorite') }}</span>
       </button>
     </div>
 
@@ -237,8 +239,8 @@ onUnmounted(() => {
             {{ song.title }}
           </div>
           <div class="flex items-center gap-1.5 mt-0.5 min-w-0">
-            <span v-if="song.hashFlac" class="am-badge">无损</span>
-            <span v-if="song.isGray" class="am-badge am-badge-gray">解灰</span>
+            <span v-if="song.hashFlac" class="am-badge">{{ t('song.lossless') }}</span>
+            <span v-if="song.isGray" class="am-badge am-badge-gray">{{ t('song.unblockTag') }}</span>
             <span class="text-[13px] text-[var(--text-secondary)] truncate">
               {{ song.artist }}<template v-if="song.album"> · {{ song.album }}</template>
             </span>

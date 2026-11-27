@@ -7,10 +7,14 @@ import { echoPlayer } from '@/native/echoPlayer';
 
 export type AppearanceMode = 'system' | 'light' | 'dark';
 export type AccentThemeMode = 'dynamic' | 'apple-red';
+export type AppLocale = 'system' | 'zh-CN' | 'zh-TW' | 'en';
+export type LyricFontSize = 'standard' | 'large' | 'xlarge';
 
 export interface PersistedSettings {
   appearance: AppearanceMode;
   accentMode: AccentThemeMode;
+  locale: AppLocale;
+  lyricFontSize: LyricFontSize;
   quality: AudioQuality;
   eqPreset: EqPresetId;
   enableUnblock: boolean;
@@ -31,6 +35,8 @@ const STORAGE_KEY = 'settings.v1';
 const DEFAULTS: PersistedSettings = {
   appearance: 'system',
   accentMode: 'dynamic',
+  locale: 'system',
+  lyricFontSize: 'standard',
   quality: 'flac',
   eqPreset: 'flat',
   enableUnblock: true,
@@ -43,12 +49,15 @@ const DEFAULTS: PersistedSettings = {
   dailyReminderMinute: 0,
   showTranslation: true,
   showCoverLyricsPreview: true,
-  showLockScreenLyrics: true,
+  // Default OFF so lock-screen & live media capsules stay rock-solid (no OS rate-limit freeze)
+  showLockScreenLyrics: false,
 };
 
 export const useSettingsStore = defineStore('settings', () => {
   const appearance = ref<AppearanceMode>(DEFAULTS.appearance);
   const accentMode = ref<AccentThemeMode>(DEFAULTS.accentMode);
+  const locale = ref<AppLocale>(DEFAULTS.locale);
+  const lyricFontSize = ref<LyricFontSize>(DEFAULTS.lyricFontSize);
   const quality = ref<AudioQuality>(DEFAULTS.quality);
   const eqPreset = ref<EqPresetId>(DEFAULTS.eqPreset);
   const enableUnblock = ref<boolean>(DEFAULTS.enableUnblock);
@@ -100,6 +109,8 @@ export const useSettingsStore = defineStore('settings', () => {
     const saved = await echoSystem.kvGetJson<Partial<PersistedSettings>>(STORAGE_KEY, {});
     appearance.value = saved.appearance ?? DEFAULTS.appearance;
     accentMode.value = saved.accentMode ?? DEFAULTS.accentMode;
+    locale.value = saved.locale ?? DEFAULTS.locale;
+    lyricFontSize.value = saved.lyricFontSize ?? DEFAULTS.lyricFontSize;
     quality.value = saved.quality ?? DEFAULTS.quality;
     eqPreset.value = saved.eqPreset ?? DEFAULTS.eqPreset;
     enableUnblock.value = saved.enableUnblock ?? DEFAULTS.enableUnblock;
@@ -123,30 +134,15 @@ export const useSettingsStore = defineStore('settings', () => {
 
   async function persist() {
     if (!hydrated) return;
-    const payload: PersistedSettings = {
-      appearance: appearance.value,
-      accentMode: accentMode.value,
-      quality: quality.value,
-      eqPreset: eqPreset.value,
-      enableUnblock: enableUnblock.value,
-      unblockPlatforms: unblockPlatforms.value,
-      autoClaimOnLaunch: autoClaimOnLaunch.value,
-      autoClaimAllAccounts: autoClaimAllAccounts.value,
-      enableConceptTasks: enableConceptTasks.value,
-      dailyReminderEnabled: dailyReminderEnabled.value,
-      dailyReminderHour: dailyReminderHour.value,
-      dailyReminderMinute: dailyReminderMinute.value,
-      showTranslation: showTranslation.value,
-      showCoverLyricsPreview: showCoverLyricsPreview.value,
-      showLockScreenLyrics: showLockScreenLyrics.value,
-    };
-    await echoSystem.kvSetJson(STORAGE_KEY, payload);
+    await echoSystem.kvSetJson(STORAGE_KEY, exportSnapshot());
   }
 
   watch(
     [
       appearance,
       accentMode,
+      locale,
+      lyricFontSize,
       quality,
       eqPreset,
       enableUnblock,
@@ -188,6 +184,8 @@ export const useSettingsStore = defineStore('settings', () => {
     return {
       appearance: appearance.value,
       accentMode: accentMode.value,
+      locale: locale.value,
+      lyricFontSize: lyricFontSize.value,
       quality: quality.value,
       eqPreset: eqPreset.value,
       enableUnblock: enableUnblock.value,
@@ -207,6 +205,8 @@ export const useSettingsStore = defineStore('settings', () => {
   async function importSnapshot(saved: Partial<PersistedSettings>) {
     if (saved.appearance) appearance.value = saved.appearance;
     if (saved.accentMode) accentMode.value = saved.accentMode;
+    if (saved.locale) locale.value = saved.locale;
+    if (saved.lyricFontSize) lyricFontSize.value = saved.lyricFontSize;
     if (saved.quality) quality.value = saved.quality;
     if (saved.eqPreset) eqPreset.value = saved.eqPreset;
     if (typeof saved.enableUnblock === 'boolean') enableUnblock.value = saved.enableUnblock;
@@ -227,6 +227,8 @@ export const useSettingsStore = defineStore('settings', () => {
   return {
     appearance,
     accentMode,
+    locale,
+    lyricFontSize,
     quality,
     eqPreset,
     enableUnblock,

@@ -237,3 +237,64 @@ body,
 .am-fade-leave-to {
   opacity: 0;
 }
+
+/* iOS 26 Directional Page Transitions (Push right-in / Pop parallax-out / Crisp Tab micro-lift) */
+.ios-push-enter-active,
+.ios-push-leave-active,
+.ios-pop-enter-active,
+.ios-pop-leave-active {
+  position: absolute !important;
+  inset: 0;
+  will-change: transform, opacity;
+  transition:
+    transform 360ms var(--spring-ease),
+    opacity 300ms ease;
+  backface-visibility: hidden;
+}
+
+.ios-push-enter-active {
+  z-index: 6;
+  box-shadow: -12px 0 36px rgba(0, 0, 0, 0.14);
+}
+.ios-push-leave-active {
+  z-index: 4;
+}
+.ios-push-enter-from {
+  transform: translate3d(100%, 0, 0);
+}
+.ios-push-leave-to {
+  transform: translate3d(-22%, 0, 0);
+  opacity: 0.78;
+}
+
+.ios-pop-enter-active {
+  z-index: 4;
+}
+.ios-pop-leave-active {
+  z-index: 6;
+  box-shadow: -12px 0 36px rgba(0, 0, 0, 0.14);
+}
+.ios-pop-enter-from {
+  transform: translate3d(-22%, 0, 0);
+  opacity: 0.78;
+}
+.ios-pop-leave-to {
+  transform: translate3d(100%, 0, 0);
+}
+
+.ios-tab-enter-active,
+.ios-tab-leave-active {
+  position: absolute !important;
+  inset: 0;
+  will-change: transform, opacity;
+  transition:
+    opacity 190ms ease,
+    transform 240ms var(--spring-ease);
+}
+.ios-tab-enter-from {
+  opacity: 0;
+  transform: translate3d(0, 7px, 0);
+}
+.ios-tab-leave-to {
+  opacity: 0;
+}

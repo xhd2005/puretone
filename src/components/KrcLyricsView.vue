@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { usePlayerStore } from '@/stores/player';
 import { useSettingsStore } from '@/stores/settings';
+import { useI18n } from '@/i18n';
 import { echoSystem } from '@/native/echoSystem';
 import type { LyricLine, LyricWord } from '@/types/music';
 
@@ -17,6 +18,9 @@ const emit = defineEmits<{
 
 const player = usePlayerStore();
 const settings = useSettingsStore();
+const { t } = useI18n();
+
+const fontSizeClass = computed(() => `krc-size-${settings.lyricFontSize}`);
 
 const scrollerRef = ref<HTMLElement | null>(null);
 const lineRefs = ref<HTMLElement[]>([]);
@@ -219,11 +223,11 @@ function getLineClass(idx: number) {
     </div>
 
     <div v-else-if="!player.lyrics.lines.length" class="krc-empty">
-      <p class="text-[22px] font-bold text-white/75 tracking-tight">暂无同步歌词</p>
-      <p class="text-[14px] text-white/45 mt-2">纯音乐或暂未匹配到歌词</p>
+      <p class="text-[22px] font-bold text-white/75 tracking-tight">{{ t('lyrics.none') }}</p>
+      <p class="text-[14px] text-white/45 mt-2">{{ t('lyrics.noneSub') }}</p>
     </div>
 
-    <div v-else class="krc-list">
+    <div v-else class="krc-list" :class="fontSizeClass">
       <button
         v-for="(line, idx) in player.lyrics.lines"
         :key="`${line.startMs}-${idx}`"
@@ -320,19 +324,37 @@ function getLineClass(idx: number) {
 }
 
 .krc-main {
-  font-size: 27px;
-  line-height: 1.28;
+  font-size: 25px;
+  line-height: 1.30;
   font-weight: 700;
   letter-spacing: -0.02em;
   word-break: break-word;
 }
 
+.krc-size-large .krc-main {
+  font-size: 29px;
+  line-height: 1.26;
+}
+
+.krc-size-xlarge .krc-main {
+  font-size: 34px;
+  line-height: 1.22;
+}
+
 .krc-trans {
   margin-top: 6px;
-  font-size: 16px;
+  font-size: 15px;
   line-height: 1.4;
   font-weight: 500;
   opacity: 0.78;
+}
+
+.krc-size-large .krc-trans {
+  font-size: 17px;
+}
+
+.krc-size-xlarge .krc-trans {
+  font-size: 19px;
 }
 
 .krc-line.is-active {

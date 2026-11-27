@@ -1,0 +1,6 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">純音</string>
+    <string name="title_activity_main">純音</string>
+    <string name="widget_description">純音 PureTone 桌面音樂播控卡片</string>
+</resources>

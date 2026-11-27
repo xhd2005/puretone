@@ -19,9 +19,12 @@ import iconMusic from '@iconify/icons-tabler/music';
 import iconLanguage from '@iconify/icons-tabler/language';
 import iconMoon from '@iconify/icons-tabler/moon';
 import iconPhoto from '@iconify/icons-tabler/photo';
+import iconPlayerTrackNext from '@iconify/icons-tabler/player-track-next';
+import iconTrash from '@iconify/icons-tabler/trash';
 import { usePlayerStore } from '@/stores/player';
 import { useSettingsStore } from '@/stores/settings';
 import { useUiStore } from '@/stores/ui';
+import { useI18n } from '@/i18n';
 import { echoSystem } from '@/native/echoSystem';
 import FluidCoverBackground from './FluidCoverBackground.vue';
 import KrcLyricsView from './KrcLyricsView.vue';
@@ -29,6 +32,7 @@ import KrcLyricsView from './KrcLyricsView.vue';
 const player = usePlayerStore();
 const settings = useSettingsStore();
 const ui = useUiStore();
+const { t } = useI18n();
 
 // Pointer-captured Scrubber state (works smoothly on BOTH Cover & Lyrics views!)
 const scrubbing = ref(false);
@@ -331,11 +335,17 @@ const playModeIcon = computed(() => {
 });
 
 const playModeLabel = computed(() => {
-  if (player.playMode === 'shuffle') return '随机播放';
-  if (player.playMode === 'repeat-one') return '单曲循环';
-  if (player.playMode === 'fm') return '私人电台';
-  return '列表循环';
+  if (player.playMode === 'shuffle') return t('np.mode.shuffle');
+  if (player.playMode === 'repeat-one') return t('np.mode.repeatOne');
+  if (player.playMode === 'fm') return t('np.mode.fm');
+  return t('np.mode.sequence');
 });
+
+function handleClearQueue() {
+  player.clearQueue();
+  ui.nowPlayingOpen = false;
+  ui.showToast(t('np.queueCleared'));
+}
 </script>
 
 <template>
@@ -530,28 +540,40 @@ const playModeLabel = computed(() => {
           />
         </div>
 
-        <!-- MODE 3: TRANSLUCENT UP NEXT QUEUE -->
+        <!-- MODE 3: TRANSLUCENT UP NEXT QUEUE (with Pin-Next & Clear Queue!) -->
         <div v-else class="flex-1 min-h-0 flex flex-col px-6 pt-3 pb-2">
-          <div class="flex items-center justify-between mb-3">
-            <div>
-              <h2 class="text-[17px] font-bold text-white">待播清单</h2>
-              <p class="text-[12px] text-white/55">{{ player.queue.length }} 首歌曲 · {{ playModeLabel }}</p>
+          <div class="flex items-center justify-between gap-2 mb-3">
+            <div class="min-w-0">
+              <h2 class="text-[17px] font-bold text-white">{{ t('np.upNext') }}</h2>
+              <p class="text-[12px] text-white/55 truncate">
+                {{ t('np.queueMeta', { count: player.queue.length, mode: playModeLabel }) }}
+              </p>
             </div>
-            <button
-              type="button"
-              class="lg-fluid-btn px-3.5 py-2 rounded-full text-white text-[13px] font-medium flex items-center gap-1.5 am-tap"
-              @click="player.cyclePlayMode()"
-            >
-              <Icon :icon="playModeIcon" class="w-4 h-4" />
-              <span>{{ playModeLabel }}</span>
-            </button>
+            <div class="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                class="lg-fluid-btn px-3 py-1.5 rounded-full text-white text-[12px] font-medium flex items-center gap-1.5 am-tap"
+                @click="player.cyclePlayMode()"
+              >
+                <Icon :icon="playModeIcon" class="w-4 h-4" />
+                <span>{{ playModeLabel }}</span>
+              </button>
+              <button
+                type="button"
+                class="lg-fluid-btn w-8 h-8 rounded-full text-white/80 flex items-center justify-center am-tap"
+                :aria-label="t('np.clearQueue')"
+                @click="handleClearQueue"
+              >
+                <Icon :icon="iconTrash" class="w-4 h-4" />
+              </button>
+            </div>
           </div>
 
           <div class="flex-1 am-scroll -mx-2 px-2 space-y-1">
             <div
               v-for="(item, idx) in player.queue"
               :key="`${item.id}-${idx}`"
-              class="flex items-center gap-3 p-2 rounded-xl transition-colors"
+              class="flex items-center gap-2.5 p-2 rounded-xl transition-colors"
               :class="idx === player.currentIndex ? 'bg-white/18' : 'active:bg-white/10'"
               @click="player.playQueue(player.queue, idx)"
             >
@@ -565,9 +587,18 @@ const playModeLabel = computed(() => {
                 <div class="text-[13px] text-white/55 truncate">{{ item.artist }}</div>
               </div>
               <button
+                v-if="idx !== player.currentIndex && idx !== player.currentIndex + 1"
                 type="button"
-                class="w-9 h-9 rounded-full flex items-center justify-center text-white/50 bg-transparent border-0 am-tap"
-                aria-label="移出队列"
+                class="w-8 h-8 rounded-full flex items-center justify-center text-white/65 bg-transparent border-0 am-tap shrink-0"
+                :aria-label="t('np.pinNext')"
+                @click.stop="player.moveQueueItemNext(idx)"
+              >
+                <Icon :icon="iconPlayerTrackNext" class="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                class="w-8 h-8 rounded-full flex items-center justify-center text-white/50 bg-transparent border-0 am-tap shrink-0"
+                aria-label="Remove"
                 @click.stop="player.removeFromQueue(idx)"
               >
                 <Icon :icon="iconX" class="w-4 h-4" />

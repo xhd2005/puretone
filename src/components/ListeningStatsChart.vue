@@ -7,11 +7,13 @@ import iconMusic from '@iconify/icons-tabler/music';
 import { useStatsStore } from '@/stores/stats';
 import { usePlayerStore } from '@/stores/player';
 import { useUiStore } from '@/stores/ui';
+import { useI18n } from '@/i18n';
 import { echoSystem } from '@/native/echoSystem';
 
 const stats = useStatsStore();
 const player = usePlayerStore();
 const ui = useUiStore();
+const { t } = useI18n();
 
 const mode = ref<'7d' | '24h'>('7d');
 const selectedDayIdx = ref<number>(6);
@@ -73,7 +75,7 @@ function playTopStatSong(key: string) {
     <div class="flex items-center justify-between gap-2">
       <div class="flex items-center gap-1.5 text-[15px] font-bold text-[var(--text-primary)]">
         <Icon :icon="iconChartBar" class="w-4.5 h-4.5 am-accent-text" />
-        <span>听歌洞察</span>
+        <span>{{ t('stats.title') }}</span>
       </div>
       <div class="flex p-0.5 rounded-xl bg-[var(--bg-subtle)]">
         <button
@@ -86,7 +88,7 @@ function playTopStatSong(key: string) {
           "
           @click="mode = '7d'"
         >
-          近 7 天
+          {{ t('stats.mode7d') }}
         </button>
         <button
           type="button"
@@ -98,7 +100,7 @@ function playTopStatSong(key: string) {
           "
           @click="mode = '24h'"
         >
-          今日 24h
+          {{ t('stats.mode24h') }}
         </button>
       </div>
     </div>
@@ -106,13 +108,13 @@ function playTopStatSong(key: string) {
     <!-- Primary Metric & Selected Bar Callout -->
     <div class="flex items-end justify-between gap-2">
       <div v-if="mode === '7d'">
-        <div class="text-[11px] font-medium text-[var(--text-secondary)]">近 7 天日均听歌</div>
+        <div class="text-[11px] font-medium text-[var(--text-secondary)]">{{ t('stats.avg7dLabel') }}</div>
         <div class="text-[26px] font-bold tracking-tight text-[var(--text-primary)] tabular-nums leading-tight mt-0.5">
           {{ formatMinutesPretty(weekSeries.avgMinutes) }}
         </div>
       </div>
       <div v-else>
-        <div class="text-[11px] font-medium text-[var(--text-secondary)]">今日累计听歌</div>
+        <div class="text-[11px] font-medium text-[var(--text-secondary)]">{{ t('stats.todayTotalLabel') }}</div>
         <div class="text-[26px] font-bold tracking-tight text-[var(--text-primary)] tabular-nums leading-tight mt-0.5">
           {{ formatMinutesPretty(hourSeries.totalMinutes) }}
         </div>
@@ -125,7 +127,7 @@ function playTopStatSong(key: string) {
       >
         <div class="text-[10px] text-[var(--text-secondary)] font-medium">{{ activeDay.fullLabel }}</div>
         <div class="text-[12px] font-bold am-accent-text tabular-nums">
-          {{ activeDay.minutes }} 分 · {{ activeDay.plays }} 首
+          {{ activeDay.minutes }}{{ t('stats.minShort') }} · {{ activeDay.plays }}{{ t('stats.songUnit') }}
         </div>
       </div>
       <div
@@ -136,7 +138,7 @@ function playTopStatSong(key: string) {
           {{ activeHour.label }} – {{ String((activeHour.hour + 1) % 24).padStart(2, '0') }}:00
         </div>
         <div class="text-[12px] font-bold am-accent-text tabular-nums">
-          {{ activeHour.minutes }} 分 · {{ activeHour.plays }} 首
+          {{ activeHour.minutes }}{{ t('stats.minShort') }} · {{ activeHour.plays }}{{ t('stats.songUnit') }}
         </div>
       </div>
     </div>
@@ -160,7 +162,7 @@ function playTopStatSong(key: string) {
           :style="{ bottom: `${avgLineBottomPct}%` }"
         >
           <div class="flex-1 border-t border-dashed border-[#34c759]/80" />
-          <span class="text-[10px] font-semibold text-[#2fb350] pl-1 shrink-0">日均</span>
+          <span class="text-[10px] font-semibold text-[#2fb350] pl-1 shrink-0">{{ t('stats.avgLine') }}</span>
         </div>
 
         <!-- 7 Interactive Bars -->
@@ -251,28 +253,28 @@ function playTopStatSong(key: string) {
     <!-- Compact Summary Strip -->
     <div class="grid grid-cols-3 gap-2 pt-1 text-center">
       <div class="rounded-2xl bg-[var(--bg-subtle)]/55 py-2.5 px-2">
-        <div class="text-[15px] font-bold text-[var(--text-primary)] tabular-nums">{{ stats.todayPlays }} 首</div>
-        <div class="text-[11px] text-[var(--text-secondary)] mt-0.5">今日播放</div>
+        <div class="text-[15px] font-bold text-[var(--text-primary)] tabular-nums">{{ stats.todayPlays }} {{ t('stats.songUnit') }}</div>
+        <div class="text-[11px] text-[var(--text-secondary)] mt-0.5">{{ t('stats.todayPlays') }}</div>
       </div>
       <div class="rounded-2xl bg-[var(--bg-subtle)]/55 py-2.5 px-2">
         <div class="text-[15px] font-bold text-[var(--text-primary)] tabular-nums truncate">
           {{ stats.totalDurationLabel }}
         </div>
-        <div class="text-[11px] text-[var(--text-secondary)] mt-0.5">纯音累计 · {{ stats.totalPlays }}次</div>
+        <div class="text-[11px] text-[var(--text-secondary)] mt-0.5">{{ t('stats.totalPlaysSub', { count: stats.totalPlays }) }}</div>
       </div>
       <div class="rounded-2xl bg-[var(--bg-subtle)]/55 py-2.5 px-2">
         <div class="text-[15px] font-bold text-[var(--text-primary)] truncate">
           {{ stats.topArtist?.name || '--' }}
         </div>
-        <div class="text-[11px] text-[var(--text-secondary)] mt-0.5">最爱歌手</div>
+        <div class="text-[11px] text-[var(--text-secondary)] mt-0.5">{{ t('stats.topArtist') }}</div>
       </div>
     </div>
 
     <!-- Top Played Songs -->
     <div v-if="stats.topSongs.length" class="pt-3 am-hairline-t space-y-1.5">
       <div class="flex items-center justify-between mb-1">
-        <span class="text-[12px] font-semibold text-[var(--text-secondary)]">常听单曲 Top {{ Math.min(5, stats.topSongs.length) }}</span>
-        <span class="text-[11px] text-[var(--text-tertiary)]">轻点直达播放</span>
+        <span class="text-[12px] font-semibold text-[var(--text-secondary)]">{{ t('stats.topSongs', { count: Math.min(5, stats.topSongs.length) }) }}</span>
+        <span class="text-[11px] text-[var(--text-tertiary)]">{{ t('stats.tapToPlay') }}</span>
       </div>
       <div
         v-for="(item, idx) in stats.topSongs.slice(0, 5)"
@@ -290,7 +292,7 @@ function playTopStatSong(key: string) {
           <div class="text-[11px] text-[var(--text-secondary)] truncate">{{ item.artist }}</div>
         </div>
         <span class="text-[11px] font-semibold text-[var(--text-secondary)] tabular-nums shrink-0">
-          {{ item.count }} 次
+          {{ t('stats.playCount', { count: item.count }) }}
         </span>
         <Icon :icon="iconPlayerPlayFilled" class="w-3.5 h-3.5 text-[var(--text-tertiary)] shrink-0" />
       </div>
