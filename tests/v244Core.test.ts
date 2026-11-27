@@ -3,6 +3,7 @@ import { setActivePinia, createPinia } from 'pinia';
 import {
   computeHeroFlipTransform,
   computeMetaGlideTransform,
+  computeQueueWindow,
 } from '@/utils/heroMorph';
 import {
   convertOkColorsToSrgb,
@@ -89,8 +90,29 @@ describe('v2.4.4 Shared-Element Hero Morph & Bottom Batch Dock', () => {
     expect(onExit).toHaveBeenCalledTimes(1);
   });
 
-  it('reports v2.4.4 as the fallback app version', () => {
-    expect(FALLBACK_APP_VERSION).toBe('2.4.4');
+  it('windows large 1,500-track queues around currentIndex to avoid transition DOM spikes', () => {
+    const win = computeQueueWindow(1477, 100, 15, 45);
+    expect(win.start).toBe(85);
+    expect(win.end).toBe(146);
+    expect(win.end - win.start).toBe(61);
+    expect(win.hasPrev).toBe(true);
+    expect(win.hasNext).toBe(true);
+    expect(win.prevCount).toBe(85);
+    expect(win.nextCount).toBe(1331);
+
+    const startEdge = computeQueueWindow(30, 2, 15, 45);
+    expect(startEdge).toEqual({
+      start: 0,
+      end: 30,
+      hasPrev: false,
+      hasNext: false,
+      prevCount: 0,
+      nextCount: 0,
+    });
+  });
+
+  it('reports v2.4.5 as the fallback app version', () => {
+    expect(FALLBACK_APP_VERSION).toBe('2.4.5');
   });
 });
 

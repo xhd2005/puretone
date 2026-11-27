@@ -35,6 +35,8 @@ const fallbackAvatar = computed(() => String(route.query.avatar || ''));
 const detail = ref<ArtistDetail | null>(null);
 const loadingMeta = ref(true);
 const activeTab = ref<'songs' | 'albums'>('songs');
+const artistTabDir = ref<'am-slide-left' | 'am-slide-right'>('am-slide-left');
+const activeTabIndex = computed(() => (activeTab.value === 'albums' ? 1 : 0));
 
 const songSort = ref<'hot' | 'new'>('hot');
 const songs = ref<Song[]>([]);
@@ -147,6 +149,7 @@ async function loadAlbums(reset = true) {
 
 function switchTab(next: 'songs' | 'albums') {
   if (activeTab.value === next) return;
+  artistTabDir.value = next === 'albums' ? 'am-slide-left' : 'am-slide-right';
   echoSystem.haptic('selection');
   activeTab.value = next;
   if (next === 'albums' && !albumsLoaded.value) {
@@ -351,20 +354,27 @@ watch(artistId, () => void bootstrap());
           </button>
         </div>
 
-        <!-- Songs / Albums Segmented Tabs -->
+        <!-- Songs / Albums Segmented Tabs with Sliding Pill Thumb -->
         <div class="pt-seg-group grid-cols-2">
+          <div
+            class="pt-seg-thumb"
+            :style="{
+              width: 'calc((100% - 6px) / 2)',
+              transform: `translate3d(${activeTabIndex * 100}%, 0, 0)`,
+            }"
+          />
           <button
             type="button"
-            class="pt-seg-btn tabular-nums"
-            :class="activeTab === 'songs' ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-xs' : 'bg-transparent text-[var(--text-secondary)]'"
+            class="pt-seg-btn tabular-nums bg-transparent"
+            :class="activeTab === 'songs' ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)]'"
             @click="switchTab('songs')"
           >
             {{ t('artist.tabSongs') }}<template v-if="detail?.songCount"> ({{ formatCompactCount(detail.songCount, effectiveLocale) }})</template>
           </button>
           <button
             type="button"
-            class="pt-seg-btn tabular-nums"
-            :class="activeTab === 'albums' ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-xs' : 'bg-transparent text-[var(--text-secondary)]'"
+            class="pt-seg-btn tabular-nums bg-transparent"
+            :class="activeTab === 'albums' ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)]'"
             @click="switchTab('albums')"
           >
             {{ t('artist.tabAlbums') }}<template v-if="detail?.albumCount"> ({{ formatCompactCount(detail.albumCount, effectiveLocale) }})</template>
@@ -372,7 +382,7 @@ watch(artistId, () => void bootstrap());
         </div>
       </section>
 
-      <Transition name="am-panel-switch" mode="out-in">
+      <Transition :name="artistTabDir" mode="out-in">
         <!-- ==================== TAB 1: ARTIST SONGS ==================== -->
         <section v-if="activeTab === 'songs'" key="artist-songs" class="relative z-10">
         <!-- Quick Filter & Hot/New Sort Bar -->

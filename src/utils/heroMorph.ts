@@ -96,3 +96,39 @@ export function computeMetaGlideTransform(
     toTransform: 'translate3d(0, 0, 0)',
   };
 }
+
+export interface QueueWindowSlice {
+  start: number;
+  end: number;
+  hasPrev: boolean;
+  hasNext: boolean;
+  prevCount: number;
+  nextCount: number;
+}
+
+/**
+ * Computes a bounded render window around `currentIndex` so opening Up Next on a 1,500+ song
+ * playlist renders ~60 DOM rows instead of 7,000+ nodes during transition frame 1.
+ */
+export function computeQueueWindow(
+  total: number,
+  currentIndex: number,
+  before = 15,
+  after = 45,
+): QueueWindowSlice {
+  const safeTotal = Math.max(0, Math.floor(total));
+  if (safeTotal === 0) {
+    return { start: 0, end: 0, hasPrev: false, hasNext: false, prevCount: 0, nextCount: 0 };
+  }
+  const safeCur = Math.max(0, Math.min(safeTotal - 1, Math.floor(currentIndex)));
+  const start = Math.max(0, safeCur - Math.max(0, before));
+  const end = Math.min(safeTotal, safeCur + Math.max(1, after) + 1);
+  return {
+    start,
+    end,
+    hasPrev: start > 0,
+    hasNext: end < safeTotal,
+    prevCount: start,
+    nextCount: Math.max(0, safeTotal - end),
+  };
+}

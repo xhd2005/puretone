@@ -288,6 +288,7 @@ function getLineClass(idx: number) {
   height: 100%;
   overflow-y: auto;
   overflow-x: hidden;
+  contain: layout style;
   -webkit-overflow-scrolling: touch;
   padding: 20vh 26px 40vh;
   scrollbar-width: none;
@@ -326,10 +327,9 @@ function getLineClass(idx: number) {
   color: rgba(255, 255, 255, 0.36);
   transform-origin: left center;
   transition:
-    transform 420ms var(--spring-ease),
-    opacity 420ms ease,
-    filter 420ms ease,
-    color 320ms ease;
+    transform 360ms var(--spring-ease),
+    opacity 320ms ease,
+    color 260ms ease;
 }
 
 .krc-main {
@@ -369,29 +369,25 @@ function getLineClass(idx: number) {
 .krc-line.is-active {
   color: #ffffff;
   transform: scale(1.03);
-  filter: blur(0px);
   opacity: 1;
 }
 
 .krc-line.is-near {
-  opacity: 0.56;
-  filter: blur(0.6px);
+  opacity: 0.50;
   transform: scale(0.985);
 }
 
 .krc-line.is-far {
-  opacity: 0.34;
-  filter: blur(1.4px);
+  opacity: 0.28;
   transform: scale(0.97);
 }
 
 .krc-line.is-scrolling {
-  opacity: 0.65;
-  filter: blur(0px);
+  opacity: 0.68;
   transform: scale(1);
 }
 
-/* Smooth Apple Music left-to-right syllable sweep */
+/* Smooth Apple Music left-to-right syllable sweep (pure GPU, zero per-word SVG filter!) */
 .krc-line.is-active .krc-word {
   display: inline-block;
   white-space: pre-wrap;
@@ -405,12 +401,12 @@ function getLineClass(idx: number) {
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-  transition: transform 220ms var(--spring-ease), text-shadow 220ms ease;
+  transition: transform 200ms var(--spring-ease);
 }
 
 .krc-line.is-active .krc-word.word-singing {
-  transform: translateY(-1.5px);
-  filter: drop-shadow(0 0 12px rgba(255, 255, 255, 0.35));
+  transform: translate3d(0, -1.5px, 0);
+  text-shadow: 0 0 14px rgba(255, 255, 255, 0.28);
 }
 
 .krc-line.is-active .krc-word.word-sung {

@@ -57,6 +57,20 @@ const { t, effectiveLocale } = useI18n();
 
 const scrollRef = ref<HTMLElement | null>(null);
 const subMode = ref<CommentSubMode>('all');
+const mainTabDir = ref<'am-slide-left' | 'am-slide-right'>('am-slide-left');
+const mainTabIndex = computed(() => (ui.commentsSheetTab === 'comments' ? 1 : 0));
+const subModeIndex = computed(() => {
+  const order: CommentSubMode[] = ['all', 'hot', 'newest', 'hotword'];
+  const idx = order.indexOf(subMode.value);
+  return idx >= 0 ? idx : 0;
+});
+
+function switchMainTab(next: 'details' | 'comments') {
+  if (ui.commentsSheetTab === next) return;
+  mainTabDir.value = next === 'comments' ? 'am-slide-left' : 'am-slide-right';
+  echoSystem.haptic('selection');
+  ui.commentsSheetTab = next;
+}
 const loading = ref(false);
 const loadingMore = ref(false);
 const comments = ref<SongComment[]>([]);
@@ -608,30 +622,37 @@ function addToPlaylist() {
               </button>
             </div>
 
-            <!-- Main 2-Segment Tabs: Details | Comments (N) -->
+            <!-- Main 2-Segment Tabs with Sliding Pill Thumb: Details | Comments (N) -->
             <div class="px-4 pb-2.5 am-hairline-b" @touchstart.stop>
               <div class="pt-seg-group grid-cols-2">
+                <div
+                  class="pt-seg-thumb"
+                  :style="{
+                    width: 'calc((100% - 6px) / 2)',
+                    transform: `translate3d(${mainTabIndex * 100}%, 0, 0)`,
+                  }"
+                />
                 <button
                   type="button"
-                  class="pt-seg-btn"
+                  class="pt-seg-btn bg-transparent"
                   :class="
                     ui.commentsSheetTab === 'details'
-                      ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-xs'
-                      : 'bg-transparent text-[var(--text-secondary)]'
+                      ? 'text-[var(--text-primary)]'
+                      : 'text-[var(--text-secondary)]'
                   "
-                  @click="echoSystem.haptic('selection'); ui.commentsSheetTab = 'details'"
+                  @click="switchMainTab('details')"
                 >
                   {{ t('comments.tabDetails') }}
                 </button>
                 <button
                   type="button"
-                  class="pt-seg-btn tabular-nums"
+                  class="pt-seg-btn tabular-nums bg-transparent"
                   :class="
                     ui.commentsSheetTab === 'comments'
-                      ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-xs'
-                      : 'bg-transparent text-[var(--text-secondary)]'
+                      ? 'text-[var(--text-primary)]'
+                      : 'text-[var(--text-secondary)]'
                   "
-                  @click="echoSystem.haptic('selection'); ui.commentsSheetTab = 'comments'"
+                  @click="switchMainTab('comments')"
                 >
                   {{ t('comments.tabComments') }}<template v-if="totalCount > 0"> ({{ formatCompactCount(totalCount, effectiveLocale) }})</template>
                 </button>
@@ -642,13 +663,13 @@ function addToPlaylist() {
           <!-- Scrollable Sheet Body -->
           <div
             ref="scrollRef"
-            class="flex-1 am-scroll px-4 pt-3.5 pb-6 space-y-3"
+            class="flex-1 am-scroll px-4 pt-3.5 pb-6 space-y-3 overflow-x-hidden"
             @touchstart.passive="dragSheet.onBodyTouchStart"
             @touchmove="dragSheet.onBodyTouchMove"
             @touchend.passive="dragSheet.onBodyTouchEnd"
             @touchcancel.passive="dragSheet.onBodyTouchEnd"
           >
-            <Transition name="am-panel-switch" mode="out-in">
+            <Transition :name="mainTabDir" mode="out-in">
               <!-- ==================== TAB A: RICH TRACK DETAILS ==================== -->
               <div v-if="ui.commentsSheetTab === 'details'" key="sheet-details" class="space-y-3">
               <!-- Quick Actions Strip -->
@@ -903,34 +924,41 @@ function addToPlaylist() {
               <!-- ==================== TAB B: 4-MODE REAL COMMENTS (FEATURED / TOP / LATEST / HOTWORDS) ==================== -->
               <div v-else key="sheet-comments" class="space-y-3">
               <div class="pt-seg-group grid-cols-4">
+                <div
+                  class="pt-seg-thumb"
+                  :style="{
+                    width: 'calc((100% - 6px) / 4)',
+                    transform: `translate3d(${subModeIndex * 100}%, 0, 0)`,
+                  }"
+                />
                 <button
                   type="button"
-                  class="pt-seg-btn"
-                  :class="subMode === 'all' ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-xs' : 'bg-transparent text-[var(--text-secondary)]'"
+                  class="pt-seg-btn bg-transparent"
+                  :class="subMode === 'all' ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)]'"
                   @click="switchSubMode('all')"
                 >
                   {{ t('comments.all') }}
                 </button>
                 <button
                   type="button"
-                  class="pt-seg-btn"
-                  :class="subMode === 'hot' ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-xs' : 'bg-transparent text-[var(--text-secondary)]'"
+                  class="pt-seg-btn bg-transparent"
+                  :class="subMode === 'hot' ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)]'"
                   @click="switchSubMode('hot')"
                 >
                   {{ t('comments.hot') }}
                 </button>
                 <button
                   type="button"
-                  class="pt-seg-btn"
-                  :class="subMode === 'newest' ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-xs' : 'bg-transparent text-[var(--text-secondary)]'"
+                  class="pt-seg-btn bg-transparent"
+                  :class="subMode === 'newest' ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)]'"
                   @click="switchSubMode('newest')"
                 >
                   {{ t('comments.newest') }}
                 </button>
                 <button
                   type="button"
-                  class="pt-seg-btn"
-                  :class="subMode === 'hotword' ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-xs' : 'bg-transparent text-[var(--text-secondary)]'"
+                  class="pt-seg-btn bg-transparent"
+                  :class="subMode === 'hotword' ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)]'"
                   @click="switchSubMode('hotword')"
                 >
                   {{ t('comments.hotword') }}

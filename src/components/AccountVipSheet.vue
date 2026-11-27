@@ -65,6 +65,7 @@ const { t, effectiveLocale } = useI18n();
 
 const scrollRef = ref<HTMLElement | null>(null);
 const activeTab = ref<ProfileSectionTab>('profile');
+const tabSlideDir = ref<'am-slide-left' | 'am-slide-right'>('am-slide-left');
 const showAccountSwitcher = ref(false);
 const showCalendar = ref(false);
 const showBackupPanel = ref(false);
@@ -91,8 +92,15 @@ const sectionTabs = computed<Array<{ id: ProfileSectionTab; label: string }>>(()
   { id: 'settings', label: t('profile.tab.settings') },
 ]);
 
+const activeTabIndex = computed(() => {
+  const idx = sectionTabs.value.findIndex((item) => item.id === activeTab.value);
+  return idx >= 0 ? idx : 0;
+});
+
 function switchTab(next: ProfileSectionTab) {
   if (activeTab.value === next) return;
+  const order: ProfileSectionTab[] = ['profile', 'vip', 'settings'];
+  tabSlideDir.value = order.indexOf(next) > order.indexOf(activeTab.value) ? 'am-slide-left' : 'am-slide-right';
   echoSystem.haptic('selection');
   activeTab.value = next;
   if (scrollRef.value) scrollRef.value.scrollTop = 0;
@@ -388,18 +396,25 @@ async function openAuthorProfile() {
               </button>
             </div>
 
-            <!-- iOS 26 Segmented Navigation Control -->
+            <!-- iOS 26 Segmented Navigation Control with Sliding Pill Thumb -->
             <div class="px-4 pb-3 am-hairline-b" @touchstart.stop>
-              <div class="grid grid-cols-3 gap-1 p-1 rounded-[15px] bg-[var(--bg-subtle)]">
+              <div class="pt-seg-group grid-cols-3 !p-1 !rounded-[15px]">
+                <div
+                  class="pt-seg-thumb !top-1 !bottom-1 !left-1 !rounded-[11px]"
+                  :style="{
+                    width: 'calc((100% - 8px) / 3)',
+                    transform: `translate3d(${activeTabIndex * 100}%, 0, 0)`,
+                  }"
+                />
                 <button
                   v-for="tab in sectionTabs"
                   :key="tab.id"
                   type="button"
-                  class="h-8 rounded-[11px] text-[13px] font-semibold border-0 transition-all"
+                  class="relative z-[1] h-8 rounded-[11px] text-[13px] font-semibold border-0 bg-transparent transition-colors duration-200"
                   :class="
                     activeTab === tab.id
-                      ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-xs'
-                      : 'bg-transparent text-[var(--text-secondary)]'
+                      ? 'text-[var(--text-primary)]'
+                      : 'text-[var(--text-secondary)]'
                   "
                   @click="switchTab(tab.id)"
                 >
@@ -412,14 +427,15 @@ async function openAuthorProfile() {
           <!-- Scrollable Tab Body -->
           <div
             ref="scrollRef"
-            class="flex-1 am-scroll px-4 pt-4 pb-[calc(var(--safe-bottom)+32px)] space-y-4"
+            class="flex-1 am-scroll px-4 pt-4 pb-[calc(var(--safe-bottom)+32px)] overflow-x-hidden"
             @touchstart.passive="dragSheet.onBodyTouchStart"
             @touchmove="dragSheet.onBodyTouchMove"
             @touchend.passive="dragSheet.onBodyTouchEnd"
             @touchcancel.passive="dragSheet.onBodyTouchEnd"
           >
-            <!-- ==================== TAB 1: 档案统计 ==================== -->
-            <template v-if="activeTab === 'profile'">
+            <Transition :name="tabSlideDir" mode="out-in">
+              <!-- ==================== TAB 1: 档案统计 ==================== -->
+              <div v-if="activeTab === 'profile'" key="acc-tab-profile" class="space-y-4">
               <section class="rounded-[22px] bg-[var(--bg-card)] overflow-hidden shadow-xs">
                 <div v-if="!accounts.isLoggedIn" class="p-5 text-center">
                   <div class="w-14 h-14 rounded-full bg-[var(--bg-subtle)] mx-auto flex items-center justify-center am-accent-text mb-3">
@@ -574,10 +590,10 @@ async function openAuthorProfile() {
               </section>
 
               <ListeningStatsChart />
-            </template>
+              </div>
 
-            <!-- ==================== TAB 2: 会员签到 ==================== -->
-            <template v-else-if="activeTab === 'vip'">
+              <!-- ==================== TAB 2: 会员签到 ==================== -->
+              <div v-else-if="activeTab === 'vip'" key="acc-tab-vip" class="space-y-4">
               <section v-if="!accounts.isLoggedIn" class="rounded-[22px] bg-[var(--bg-card)] p-6 text-center shadow-xs">
                 <div class="w-14 h-14 rounded-full bg-[var(--bg-subtle)] mx-auto flex items-center justify-center am-accent-text mb-3">
                   <Icon :icon="iconCrown" class="w-7 h-7" />
@@ -725,10 +741,10 @@ async function openAuthorProfile() {
                   </label>
                 </section>
               </template>
-            </template>
+              </div>
 
-            <!-- ==================== TAB 3: 偏好设置 ==================== -->
-            <template v-else>
+              <!-- ==================== TAB 3: 偏好设置 ==================== -->
+              <div v-else key="acc-tab-settings" class="space-y-4">
               <!-- Group A: Playback, Transitions, EQ, Language & Appearance (Uniform 2-Row Zero-Overflow!) -->
               <section class="space-y-2">
                 <div class="text-[12px] font-semibold uppercase tracking-wide text-[var(--text-secondary)] px-2">
@@ -1208,7 +1224,8 @@ async function openAuthorProfile() {
                   </p>
                 </div>
               </section>
-            </template>
+              </div>
+            </Transition>
           </div>
         </div>
       </div>

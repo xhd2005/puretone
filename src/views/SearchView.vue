@@ -31,6 +31,19 @@ const HISTORY_KEY = 'search.history.v1';
 const query = ref('');
 const submittedQuery = ref('');
 const activeTab = ref<SearchTab>('song');
+const searchTabDir = ref<'am-slide-left' | 'am-slide-right'>('am-slide-left');
+const searchTabOrder: SearchTab[] = ['song', 'artist', 'album', 'playlist'];
+const activeTabIndex = computed(() => {
+  const idx = searchTabOrder.indexOf(activeTab.value);
+  return idx >= 0 ? idx : 0;
+});
+
+function switchSearchTab(next: SearchTab) {
+  if (activeTab.value === next) return;
+  searchTabDir.value = searchTabOrder.indexOf(next) > searchTabOrder.indexOf(activeTab.value) ? 'am-slide-left' : 'am-slide-right';
+  echoSystem.haptic('selection');
+  activeTab.value = next;
+}
 const hotTabs = ref<HotSearchTab[]>([]);
 const activeHotTabIdx = ref(0);
 const history = ref<string[]>([]);
@@ -188,38 +201,45 @@ function openAlbum(al: AlbumSummary) {
       </div>
 
       <!-- ==================== SEARCH RESULTS (4-TAB: SONGS / ARTISTS / ALBUMS / PLAYLISTS) ==================== -->
-      <div v-else-if="submittedQuery">
+      <div v-else-if="submittedQuery" class="overflow-x-hidden">
         <div class="px-5 mb-3">
           <div class="pt-seg-group grid-cols-4">
+            <div
+              class="pt-seg-thumb"
+              :style="{
+                width: 'calc((100% - 6px) / 4)',
+                transform: `translate3d(${activeTabIndex * 100}%, 0, 0)`,
+              }"
+            />
             <button
               type="button"
-              class="pt-seg-btn"
-              :class="activeTab === 'song' ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-xs' : 'bg-transparent text-[var(--text-secondary)]'"
-              @click="echoSystem.haptic('selection'); activeTab = 'song'"
+              class="pt-seg-btn bg-transparent"
+              :class="activeTab === 'song' ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)]'"
+              @click="switchSearchTab('song')"
             >
               {{ t('search.songsTab') }}
             </button>
             <button
               type="button"
-              class="pt-seg-btn"
-              :class="activeTab === 'artist' ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-xs' : 'bg-transparent text-[var(--text-secondary)]'"
-              @click="echoSystem.haptic('selection'); activeTab = 'artist'"
+              class="pt-seg-btn bg-transparent"
+              :class="activeTab === 'artist' ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)]'"
+              @click="switchSearchTab('artist')"
             >
               {{ t('search.artistsTab') }}
             </button>
             <button
               type="button"
-              class="pt-seg-btn"
-              :class="activeTab === 'album' ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-xs' : 'bg-transparent text-[var(--text-secondary)]'"
-              @click="echoSystem.haptic('selection'); activeTab = 'album'"
+              class="pt-seg-btn bg-transparent"
+              :class="activeTab === 'album' ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)]'"
+              @click="switchSearchTab('album')"
             >
               {{ t('search.albumsTab') }}
             </button>
             <button
               type="button"
-              class="pt-seg-btn"
-              :class="activeTab === 'playlist' ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-xs' : 'bg-transparent text-[var(--text-secondary)]'"
-              @click="echoSystem.haptic('selection'); activeTab = 'playlist'"
+              class="pt-seg-btn bg-transparent"
+              :class="activeTab === 'playlist' ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)]'"
+              @click="switchSearchTab('playlist')"
             >
               {{ t('search.playlistsTab') }}
             </button>
@@ -228,7 +248,7 @@ function openAlbum(al: AlbumSummary) {
 
         <div v-if="searching" class="py-12 text-center text-[14px] text-[var(--text-secondary)]">{{ t('search.searching') }}</div>
 
-        <Transition v-else name="am-panel-switch" mode="out-in">
+        <Transition v-else :name="searchTabDir" mode="out-in">
           <!-- Tab 1: Songs -->
           <div v-if="activeTab === 'song'" key="search-song">
             <div v-if="!songs.length" class="py-12 text-center text-[14px] text-[var(--text-secondary)]">{{ t('search.noResults') }}</div>
