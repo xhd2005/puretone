@@ -48,8 +48,9 @@ export function validatePluginManifest(raw: unknown): MelunePluginManifest {
     throw new Error(`插件 ${id} 缺少有效的 64 位 SHA-256 校验值`);
   }
   const rawPerms = Array.isArray(obj.permissions) ? obj.permissions : [];
+  const rawHostPerms = Array.isArray(obj.hostPermissions) ? obj.hostPermissions : [];
   const permissions: MelunePermission[] = [];
-  for (const p of rawPerms) {
+  for (const p of [...rawPerms, ...rawHostPerms]) {
     const s = String(p || '').trim();
     if (!VALID_PERMISSIONS.has(s)) {
       throw new Error(`插件 ${id} 声明了未知权限：${s}`);
@@ -75,6 +76,8 @@ export function validatePluginManifest(raw: unknown): MelunePluginManifest {
     author,
     license: obj.license ? String(obj.license).trim() : undefined,
     description: description || name,
+    tagline: obj.tagline ? String(obj.tagline).trim() : undefined,
+    featured: Boolean(obj.featured),
     icon: obj.icon ? String(obj.icon).trim() : undefined,
     category,
     entry,
@@ -83,6 +86,11 @@ export function validatePluginManifest(raw: unknown): MelunePluginManifest {
     minAppVersion: obj.minAppVersion ? String(obj.minAppVersion).trim() : undefined,
     homepage: obj.homepage && /^https:\/\//i.test(String(obj.homepage)) ? String(obj.homepage).trim() : undefined,
     permissions,
+    hostPermissions: rawHostPerms.length
+      ? rawHostPerms
+          .map((p) => String(p || '').trim())
+          .filter((p): p is MelunePermission => VALID_PERMISSIONS.has(p))
+      : undefined,
   };
 }
 
@@ -100,7 +108,14 @@ export function validateRegistryIndex(raw: unknown): MeluneRegistryIndex {
     throw new Error('插件源缺少 id 或 name');
   }
   const rawPlugins = Array.isArray(obj.plugins) ? obj.plugins : [];
-  const plugins = rawPlugins.map((p) => validatePluginManifest(p));
+  const plugins: MelunePluginManifest[] = [];
+  for (const p of rawPlugins) {
+    try {
+      plugins.push(validatePluginManifest(p));
+    } catch {
+      // Forward-compat: skip individual future-schema plugins instead of failing the entire store
+    }
+  }
 
   return {
     protocol: MELUNE_REGISTRY_PROTOCOL,
@@ -114,13 +129,24 @@ export function validateRegistryIndex(raw: unknown): MeluneRegistryIndex {
   };
 }
 
+function appendCacheBuster(url: string, bustToken?: string): string {
+  if (!bustToken) return url;
+  return `${url}${url.includes('?') ? '&' : '?'}t=${encodeURIComponent(bustToken)}`;
+}
+
 /**
- * Builds HTTPS download candidates for GitHub raw assets with China CDN / mirror acceleration.
+ * Builds HTTPS download candidates for GitHub raw assets with real-time mirror priority.
+ * Real-time proxies & GitHub Raw come FIRST so independent plugin OTA updates arrive within seconds
+ * instead of being stuck behind jsDelivr @main's 12-24h edge cache; jsDelivr remains as fallback.
  */
-export function buildMirroredHttpsCandidates(url: string): Array<{ label: string; url: string }> {
+export function buildMirroredHttpsCandidates(
+  url: string,
+  options: { bustCache?: boolean } = {},
+): Array<{ label: string; url: string }> {
   const clean = String(url || '').trim();
   if (!/^https:\/\//i.test(clean)) return [];
 
+  const bust = options.bustCache ? String(Date.now()) : '';
   const list: Array<{ label: string; url: string }> = [];
   const seen = new Set<string>();
   const push = (label: string, u: string) => {
@@ -129,25 +155,29 @@ export function buildMirroredHttpsCandidates(url: string): Array<{ label: string
     list.push({ label, url: u });
   };
 
-  // Detect raw.githubusercontent.com/<owner>/<repo>/<branch>/<path> for jsDelivr CDN
   const rawGh = /^https:\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/([^/]+)\/(.+)$/i.exec(clean);
   if (rawGh) {
     const [, owner, repo, branch, filePath] = rawGh;
+    const freshRaw = appendCacheBuster(clean, bust);
+    for (const mirror of BUILTIN_CHINA_MIRRORS.slice(0, 2)) {
+      push(mirror.label, wrapWithMirrorPrefix(mirror.prefix, freshRaw));
+    }
+    push('GitHub Raw', freshRaw);
     push('CDN · fastly', `https://fastly.jsdelivr.net/gh/${owner}/${repo}@${branch}/${filePath}`);
     push('CDN · jsDelivr', `https://cdn.jsdelivr.net/gh/${owner}/${repo}@${branch}/${filePath}`);
-    for (const mirror of BUILTIN_CHINA_MIRRORS.slice(0, 2)) {
-      push(mirror.label, wrapWithMirrorPrefix(mirror.prefix, clean));
-    }
-    push('GitHub Raw', clean);
     return list;
   }
 
-  push('HTTPS Direct', clean);
+  push('HTTPS Direct', appendCacheBuster(clean, bust));
   return list;
 }
 
-async function fetchUtf8WithMirrors(url: string, timeoutMs = 8000): Promise<{ body: string; via: string }> {
-  const candidates = buildMirroredHttpsCandidates(url);
+async function fetchUtf8WithMirrors(
+  url: string,
+  timeoutMs = 8000,
+  options: { bustCache?: boolean } = {},
+): Promise<{ body: string; via: string }> {
+  const candidates = buildMirroredHttpsCandidates(url, options);
   if (!candidates.length) {
     throw new Error('仅支持 HTTPS 插件源地址');
   }
@@ -185,7 +215,7 @@ export async function fetchPluginRegistry(rawUrl: string): Promise<{
   if (!normalizedUrl) {
     throw new Error('无效的插件源地址（需为 HTTPS 链接或 owner/repo 格式）');
   }
-  const { body, via } = await fetchUtf8WithMirrors(normalizedUrl, 8500);
+  const { body, via } = await fetchUtf8WithMirrors(normalizedUrl, 8500, { bustCache: true });
   let parsed: unknown;
   try {
     parsed = JSON.parse(body);
@@ -222,7 +252,7 @@ export async function downloadAndVerifyPluginBundle(
 ): Promise<{ code: string; sourceUrl: string; sha256: string; via: string }> {
   const validated = validatePluginManifest(manifest);
   const sourceUrl = resolvePluginDownloadUrl(validated, registryUrl);
-  const { body, via } = await fetchUtf8WithMirrors(sourceUrl, 10000);
+  const { body, via } = await fetchUtf8WithMirrors(sourceUrl, 10000, { bustCache: true });
   const actualSha = computeUtf8Sha256Hex(body);
   if (actualSha !== validated.sha256.toLowerCase()) {
     throw new Error(

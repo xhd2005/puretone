@@ -21,9 +21,13 @@ import {
 import { useAccountsStore } from '@/stores/accounts';
 import { usePlayerStore } from '@/stores/player';
 import { usePlaylistsStore } from '@/stores/playlists';
+import { usePluginsStore } from '@/stores/plugins';
 import { useUiStore } from '@/stores/ui';
 import { useI18n } from '@/i18n';
 import { useCollapsingTitle } from '@/composables/useCollapsingTitle';
+import { echoSystem } from '@/native/echoSystem';
+import { resolvePluginVisual } from '@/services/plugins/pluginUiMeta';
+import type { MelunePanelBadge } from '@/services/plugins/types';
 import AvatarButton from '@/components/AvatarButton.vue';
 import PlaylistCover from '@/components/PlaylistCover.vue';
 import PureToneMark from '@/components/PureToneMark.vue';
@@ -32,6 +36,7 @@ const router = useRouter();
 const accounts = useAccountsStore();
 const player = usePlayerStore();
 const playlistsStore = usePlaylistsStore();
+const plugins = usePluginsStore();
 const ui = useUiStore();
 const { t, effectiveLocale } = useI18n();
 const { largeTitleOpacity, compactTitleOpacity, headerGlassActive, onScroll } = useCollapsingTitle();
@@ -48,6 +53,25 @@ const todayLabel = computed(() => {
   }
   return `${now.getMonth() + 1}月${now.getDate()}日`;
 });
+
+const greetingText = computed(() => {
+  const h = new Date().getHours();
+  const base =
+    h >= 5 && h < 12
+      ? t('home.greetingMorning')
+      : h >= 12 && h < 18
+        ? t('home.greetingAfternoon')
+        : t('home.greetingEvening');
+  const nick = accounts.activeAccount?.nickname?.trim();
+  return nick ? `${base} · ${nick}` : base;
+});
+
+function pluginBadgeClass(tone?: MelunePanelBadge['tone']): string {
+  if (tone === 'success') return 'bg-[#34c759]/14 text-[#239941]';
+  if (tone === 'warning') return 'bg-[#ff9500]/14 text-[#c97200]';
+  if (tone === 'accent') return 'bg-[var(--bg-subtle)] am-accent-text';
+  return 'bg-[var(--bg-subtle)] text-[var(--text-secondary)]';
+}
 
 const dailyHeroCover = computed(() => dailySongs.value[0]?.coverUrl || '');
 const fmHeroCover = computed(
@@ -144,12 +168,12 @@ watch(() => accounts.activeAccount?.userid, () => void loadHomeData());
     </header>
 
     <div class="flex-1 am-scroll pb-48" @scroll.passive="onScroll">
-      <!-- iOS Large Title (fades out cleanly before compact header appears!) -->
-      <div class="px-5 pt-[calc(var(--safe-top)+48px)] pb-3 flex items-end justify-between">
-        <h1
-          class="text-[34px] font-bold tracking-[-0.025em] leading-none text-[var(--text-primary)]"
-          :style="{ opacity: largeTitleOpacity }"
-        >
+      <!-- iOS Large Title + Time-of-Day Editorial Greeting -->
+      <div class="px-5 pt-[calc(var(--safe-top)+44px)] pb-3" :style="{ opacity: largeTitleOpacity }">
+        <div class="text-[13px] font-semibold text-[var(--text-secondary)] truncate mb-1" data-home-greeting>
+          {{ greetingText }}
+        </div>
+        <h1 class="text-[34px] font-bold tracking-[-0.025em] leading-none text-[var(--text-primary)] m-0">
           {{ t('home.title') }}
         </h1>
       </div>
@@ -240,6 +264,36 @@ watch(() => accounts.activeAccount?.userid, () => void loadHomeData());
               </div>
             </div>
           </div>
+        </div>
+      </section>
+
+      <!-- 1.5 Pinned Extension Quick-Launch Capsules (zero footprint when none pinned) -->
+      <section v-if="plugins.pinnedPanelPlugins.length" class="mt-4" data-home-pinned-plugins>
+        <div class="am-hscroll flex items-center gap-2.5 px-5 pb-0.5">
+          <button
+            v-for="item in plugins.pinnedPanelPlugins"
+            :key="item.manifest.id"
+            type="button"
+            class="h-10.5 pl-2 pr-3.5 rounded-full bg-[var(--bg-card)] shadow-xs border-0 inline-flex items-center gap-2 shrink-0 am-tap"
+            @click="echoSystem.haptic('light'); plugins.openPluginDetail(item.manifest.id)"
+          >
+            <span
+              class="w-7 h-7 rounded-full bg-gradient-to-br flex items-center justify-center text-white shrink-0"
+              :class="resolvePluginVisual(item.manifest).gradientClass"
+            >
+              <Icon :icon="resolvePluginVisual(item.manifest).icon" class="w-3.5 h-3.5" />
+            </span>
+            <span class="text-[13.5px] font-semibold text-[var(--text-primary)] whitespace-nowrap">
+              {{ item.manifest.name }}
+            </span>
+            <span
+              v-if="plugins.getBadge(item.manifest.id)"
+              class="px-2 py-0.5 rounded-full text-[10.5px] font-semibold whitespace-nowrap"
+              :class="pluginBadgeClass(plugins.getBadge(item.manifest.id)?.tone)"
+            >
+              {{ plugins.getBadge(item.manifest.id)?.text }}
+            </span>
+          </button>
         </div>
       </section>
 

@@ -5,8 +5,9 @@ import iconCopy from '@iconify/icons-tabler/copy';
 import iconCheck from '@iconify/icons-tabler/check';
 import iconAlertCircle from '@iconify/icons-tabler/alert-circle';
 import iconRefresh from '@iconify/icons-tabler/refresh';
+import iconChevronDown from '@iconify/icons-tabler/chevron-down';
 import { pluginRuntime } from '@/services/plugins/pluginRuntime';
-import type { MelunePanelView } from '@/services/plugins/types';
+import type { MelunePanelBlock, MelunePanelView } from '@/services/plugins/types';
 import { echoSystem } from '@/native/echoSystem';
 import { useUiStore } from '@/stores/ui';
 
@@ -20,6 +21,26 @@ const loading = ref(false);
 const actingKey = ref('');
 const inputDrafts = reactive<Record<string, string>>({});
 const lastServerInputValues = reactive<Record<string, string>>({});
+const collapsibleOpen = reactive<Record<string, boolean>>({});
+
+function syncBlocksState(blocks: MelunePanelBlock[]) {
+  for (const blk of blocks) {
+    if (blk.type === 'text-input') {
+      const incoming = blk.value || '';
+      if (!(blk.id in inputDrafts) || lastServerInputValues[blk.id] !== incoming) {
+        inputDrafts[blk.id] = incoming;
+        lastServerInputValues[blk.id] = incoming;
+      }
+    } else if (blk.type === 'collapsible') {
+      if (!(blk.id in collapsibleOpen)) {
+        collapsibleOpen[blk.id] = Boolean(blk.defaultOpen);
+      }
+      if (Array.isArray(blk.blocks)) {
+        syncBlocksState(blk.blocks);
+      }
+    }
+  }
+}
 
 async function refresh() {
   loading.value = true;
@@ -28,15 +49,7 @@ async function refresh() {
     view.value = next;
     if (next) {
       for (const sec of next.sections) {
-        for (const blk of sec.blocks) {
-          if (blk.type === 'text-input') {
-            const incoming = blk.value || '';
-            if (!(blk.id in inputDrafts) || lastServerInputValues[blk.id] !== incoming) {
-              inputDrafts[blk.id] = incoming;
-              lastServerInputValues[blk.id] = incoming;
-            }
-          }
-        }
+        syncBlocksState(sec.blocks);
       }
     }
   } finally {
@@ -68,6 +81,11 @@ async function copyCode(code: string) {
   ui.showToast('已复制到剪贴板');
 }
 
+function toggleCollapsible(id: string) {
+  echoSystem.haptic('selection');
+  collapsibleOpen[id] = !collapsibleOpen[id];
+}
+
 let unsub: (() => void) | null = null;
 onMounted(() => {
   void refresh();
@@ -83,6 +101,7 @@ watch(
   () => {
     for (const k of Object.keys(inputDrafts)) delete inputDrafts[k];
     for (const k of Object.keys(lastServerInputValues)) delete lastServerInputValues[k];
+    for (const k of Object.keys(collapsibleOpen)) delete collapsibleOpen[k];
     void refresh();
   },
 );
@@ -99,14 +118,14 @@ onUnmounted(() => {
       v-if="loading && !view"
       class="rounded-[22px] bg-[var(--bg-card)] p-6 text-center text-[13px] text-[var(--text-secondary)] shadow-xs"
     >
-      正在加载控制面板…
+      正在加载面板…
     </div>
 
     <div
       v-else-if="!view"
       class="rounded-[22px] bg-[var(--bg-card)] p-5 text-center text-[13px] text-[var(--text-secondary)] shadow-xs"
     >
-      该扩展以纯后台能力运行，暂无独立交互面板。
+      该扩展在后台自动生效，无需额外配置。
     </div>
 
     <template v-else>
@@ -214,7 +233,7 @@ onUnmounted(() => {
               </button>
             </div>
 
-            <!-- Action Button Row (Native MELUNE Pill Buttons) -->
+            <!-- Action Button Row -->
             <div
               v-else-if="blk.type === 'button-row'"
               class="grid gap-2.5"
@@ -244,7 +263,7 @@ onUnmounted(() => {
               </button>
             </div>
 
-            <!-- Toggle Row (Global Native .ios-switch) -->
+            <!-- Toggle Row -->
             <label
               v-else-if="blk.type === 'toggle'"
               class="flex items-center justify-between gap-3 py-1 cursor-pointer"
@@ -393,6 +412,118 @@ onUnmounted(() => {
                 >
                   {{ item.label }}
                 </button>
+              </div>
+            </div>
+
+            <!-- Collapsible Advanced Section (keeps primary UI clean & effortless!) -->
+            <div v-else-if="blk.type === 'collapsible'" class="space-y-3" data-plugin-collapsible>
+              <button
+                type="button"
+                class="w-full flex items-center justify-between gap-2 bg-transparent border-0 p-0 text-left cursor-pointer"
+                @click="toggleCollapsible(blk.id)"
+              >
+                <span class="text-[13.5px] font-semibold text-[var(--text-primary)] truncate">{{ blk.title }}</span>
+                <span class="inline-flex items-center gap-1.5 shrink-0 text-[12px] text-[var(--text-tertiary)]">
+                  <span v-if="blk.summary">{{ blk.summary }}</span>
+                  <Icon
+                    :icon="iconChevronDown"
+                    class="w-4 h-4 transition-transform duration-200"
+                    :class="{ 'rotate-180': collapsibleOpen[blk.id] }"
+                  />
+                </span>
+              </button>
+
+              <div v-if="collapsibleOpen[blk.id]" class="pt-3 am-hairline-t space-y-3.5">
+                <template v-for="(sub, ci) in blk.blocks" :key="`${blk.id}-${ci}`">
+                  <div v-if="sub.type === 'text-input'" class="space-y-2">
+                    <div class="text-[12.5px] font-semibold text-[var(--text-primary)]">{{ sub.label }}</div>
+                    <div class="flex items-center gap-2">
+                      <input
+                        v-model="inputDrafts[sub.id]"
+                        type="text"
+                        :placeholder="sub.placeholder || ''"
+                        class="flex-1 min-w-0 h-9.5 rounded-full bg-[var(--bg-subtle)] px-3.5 text-[12.5px] text-[var(--text-primary)] border-0 outline-none"
+                        @keydown.enter="submitTextInput(sub.id, sub.action)"
+                      />
+                      <button
+                        type="button"
+                        class="h-9.5 px-3.5 rounded-full am-accent-bg text-white text-[12.5px] font-semibold border-0 shrink-0 am-tap"
+                        :disabled="Boolean(actingKey)"
+                        @click="submitTextInput(sub.id, sub.action)"
+                      >
+                        {{ sub.submitLabel || '保存' }}
+                      </button>
+                    </div>
+                    <div v-if="sub.hint" class="text-[11px] text-[var(--text-tertiary)] leading-snug px-1">
+                      {{ sub.hint }}
+                    </div>
+                  </div>
+
+                  <div
+                    v-else-if="sub.type === 'steps'"
+                    class="rounded-2xl bg-[var(--bg-subtle)]/45 divide-y divide-[var(--hairline)] overflow-hidden"
+                  >
+                    <div
+                      v-for="(st, sidx) in sub.items"
+                      :key="sidx"
+                      class="px-3 py-2 flex items-center justify-between gap-2 text-[12px]"
+                    >
+                      <div class="flex items-center gap-1.5 min-w-0">
+                        <Icon
+                          v-if="st.status === 'success' || st.status === 'already'"
+                          :icon="iconCheck"
+                          class="w-3.5 h-3.5 text-[#34c759] shrink-0"
+                        />
+                        <Icon
+                          v-else-if="st.status === 'failed'"
+                          :icon="iconAlertCircle"
+                          class="w-3.5 h-3.5 text-[#ff3b30] shrink-0"
+                        />
+                        <Icon
+                          v-else-if="st.status === 'running'"
+                          :icon="iconRefresh"
+                          class="w-3.5 h-3.5 am-accent-text animate-spin shrink-0"
+                        />
+                        <span v-else class="w-1.5 h-1.5 rounded-full bg-[var(--text-tertiary)]/50 mx-1 shrink-0" />
+                        <span class="font-medium text-[var(--text-primary)] truncate">{{ st.label }}</span>
+                      </div>
+                      <span class="text-[11px] text-[var(--text-secondary)] truncate max-w-[54%] text-right">
+                        {{ st.detail || '' }}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div
+                    v-else-if="sub.type === 'button-row'"
+                    class="grid gap-2"
+                    :class="sub.buttons.length === 1 ? 'grid-cols-1' : 'grid-cols-2'"
+                  >
+                    <button
+                      v-for="btn in sub.buttons"
+                      :key="btn.id"
+                      type="button"
+                      class="h-9.5 px-3 rounded-full text-[12.5px] font-semibold border-0 flex items-center justify-center gap-1.5 am-tap"
+                      :class="
+                        btn.variant === 'primary'
+                          ? 'am-accent-bg text-white'
+                          : btn.variant === 'danger'
+                            ? 'bg-[#ff3b30]/12 text-[#ff3b30]'
+                            : 'bg-[var(--bg-subtle)] text-[var(--text-primary)]'
+                      "
+                      :disabled="btn.disabled || Boolean(actingKey)"
+                      @click="runAction(btn.action, btn.payload, btn.id)"
+                    >
+                      <span class="truncate">{{ btn.label }}</span>
+                    </button>
+                  </div>
+
+                  <div
+                    v-else-if="sub.type === 'notice'"
+                    class="rounded-2xl bg-[var(--bg-subtle)]/55 px-3 py-2 text-[12px] text-[var(--text-secondary)] leading-relaxed"
+                  >
+                    {{ sub.text }}
+                  </div>
+                </template>
               </div>
             </div>
           </template>

@@ -6,6 +6,8 @@ import iconMusic from '@iconify/icons-tabler/music';
 import iconWaveSine from '@iconify/icons-tabler/wave-sine';
 import iconPuzzle from '@iconify/icons-tabler/puzzle';
 import iconTool from '@iconify/icons-tabler/tool';
+import iconMoon from '@iconify/icons-tabler/moon';
+import iconWand from '@iconify/icons-tabler/wand';
 import type { MelunePermission, MelunePluginManifest } from './types';
 
 export interface PluginVisualIdentity {
@@ -32,18 +34,25 @@ export function resolvePluginVisual(manifest: Pick<MelunePluginManifest, 'icon' 
       categoryLabel: '账号工具',
     };
   }
-  if (iconKey === 'wave-sine' || iconKey === 'music' || cat === 'audio') {
+  if (iconKey === 'moon') {
     return {
-      icon: iconKey === 'wave-sine' ? iconWaveSine : iconMusic,
-      gradientClass: 'from-[#0ea5e9] to-[#3456be]',
-      categoryLabel: '音频扩展',
+      icon: iconMoon,
+      gradientClass: 'from-[#312e81] to-[#6366f1]',
+      categoryLabel: '实用工具',
     };
   }
-  if (iconKey === 'sparkles' || cat === 'lyrics') {
+  if (iconKey === 'wand' || cat === 'lyrics') {
     return {
-      icon: iconSparkles,
+      icon: iconKey === 'wand' ? iconWand : iconSparkles,
       gradientClass: 'from-[#8b5cf6] to-[#ec4899]',
       categoryLabel: '歌词增强',
+    };
+  }
+  if (iconKey === 'sparkles' || iconKey === 'wave-sine' || iconKey === 'music' || cat === 'audio') {
+    return {
+      icon: iconKey === 'wave-sine' ? iconWaveSine : iconKey === 'music' ? iconMusic : iconSparkles,
+      gradientClass: 'from-[#0ea5e9] to-[#3456be]',
+      categoryLabel: '音频扩展',
     };
   }
   if (cat === 'account') {
@@ -77,4 +86,5 @@ export const PLUGIN_PERMISSION_META: Record<MelunePermission, { label: string; d
   'lyric.filter': { label: '歌词净化过滤', desc: '在展示前对歌词文本执行过滤或排版增强' },
   'ui.panel': { label: '扩展控制面板', desc: '在扩展中心展示声明式控制卡片（禁止原始 HTML 注入）' },
   'lifecycle.launch': { label: '启动与登录事件', desc: '允许按扩展内用户开关响应应用启动或登录完成事件' },
+  'player.control': { label: '播放状态与定时暂停', desc: '只读当前播放曲目并在助眠到点时暂停播放（不接触账号）' },
 };

@@ -27,7 +27,7 @@
 
 ## ✨ Core Features
 
-- **Refined Aesthetics**: Crafted with iOS 26 Liquid Glass styling, adaptive Light / Dark / System theming (guarded by an automated `.dark` root visibility check), dynamic cover fluid palettes, zero-flash moonlit splash, and Simplified Chinese / Traditional Chinese / English localization.
+- **Refined Aesthetics & Tactile Craft**: Crafted with iOS 26 Liquid Glass styling, adaptive Light / Dark / System theming (guarded by an automated `.dark` root visibility check), dynamic cover fluid palettes, time-of-day editorial Home greeting, 2-column Liquid Glass Library quick cards with 1-tap play, physical damped MiniPlayer swipe-to-skip, zero-flash moonlit splash, and Simplified Chinese / Traditional Chinese / English localization.
 - **Transparent Data Path**: 100% pure on-device direct client — all API calls and storage stay on your phone with zero developer relay servers, zero cloud credential hosting, and zero ads.
 - **Music Discovery**: Personalized Daily Mix recommendations, curated playlists, and instant home hydration backed by local SQLite snapshots.
 - **Multi-Dimensional Search**: 4-tab search across tracks, artists, albums, and playlists paired with multi-category Trending Charts.
@@ -35,7 +35,7 @@
 - **Advanced Playback**: Jetpack Media3 native 2-track lookahead queue with queue pinning/removal, play modes, playback speed, cosine-eased fade transitions (`Off` / `1.5s` / `3s` / `5s`), and seek-buffering state stability that prevents play-button flashes, cover scale twitch, and scrubber bounce.
 - **Zero-Skip Self-Healing & Trial Guard**: Per-track isolated HTTP headers prevent cross-source pre-buffering collisions; full-pipeline 30s/60s trial snippet detection and premature EOF protection drive in-place timestamp recovery without ever auto-skipping mid-song.
 - **"MELUNE Turntable" 3-Mode Landscape & 3-Slot Ring Swipe**: Landscape playback offers a realistic Vinyl Turntable (animated tonearm + spinning micro-groove disc), 3D Cover Flow, and Cinema Lyrics tailored for compact `340dp+` landscape screens; portrait cover swiping uses a Direct-DOM 3-slot ring with 120Hz spring physics for zero stutter and zero rebound.
-- **Original `melune-ext/v1` Sandboxed Extension Ecosystem**: MELUNE core remains 100% clean with zero built-in automation tasks or third-party audio scrapers. Pre-configured on-demand with the official community registry [`xhd2005/melune-plugins`](https://github.com/xhd2005/melune-plugins) (zero cold-start requests, zero auto-install), featuring a unified iOS 26 Extension Hub, dedicated Control & Diagnostics sheet (20 sandbox logs, 1-tap storage clear, Semver lossless updates), profile pinned shortcuts, `melune://ext/install` deep links, mandatory SHA-256 verification, Safe Mode, and zero-plaintext-token host proxying.
+- **Original `melune-ext/v1` Sandboxed Extension Ecosystem**: MELUNE core remains 100% clean with zero built-in automation tasks or third-party audio scrapers. Pre-configured on-demand with [`xhd2005/melune-plugins`](https://github.com/xhd2005/melune-plugins) (zero cold-start requests, zero auto-install), offering **Consumer vs. Developer dual modes**, an App Store-style Featured Spotlight carousel, crisp 4-character plugin names with live status badges, **independent OTA hot-updates decoupled from App APK releases**, Home quick-launch capsules, `melune://ext/install` deep links, mandatory SHA-256 verification, and zero-plaintext-token host proxying.
 - **Personal FM**: Personalized radio queue with automatic lookahead replenishment for uninterrupted screen-off listening.
 - **Cloud Playlists & 0ms Snapshots**: Full cloud playlist creation, editing, privacy controls, deletion, collection, and a bottom takeover batch dock; SQLite snapshots validate KuGou's cloud `totalVer` to open *Liked Songs* and 1,000+ track playlists in 0ms with zero network requests, plus in-place local updates on likes and edits.
 - **Configurable Audio Cache & Offline Playback**: `DynamicLruCacheEvictor` + Media3 `SimpleCache` offering 5 live-adjustable limits (`500 MB / 1 GB / 2 GB (Default) / 4 GB / Unlimited`), quality- and source-scoped cache keys (trial clips never persisted), seamless offline/weak-network local playback, and independent audio vs. snapshot clearing.
@@ -53,8 +53,8 @@
 
 MELUNE core contains zero built-in check-in scripts, auto-team bots, or external audio scrapers. Optional community extensions run strictly inside the original **`melune-ext/v1`** sandbox:
 
-- **Default Community Registry**: [`xhd2005/melune-plugins`](https://github.com/xhd2005/melune-plugins) — fetched lazily only when opening **Profile → Extensions**, removable/restorable anytime, and never auto-installed.
-- **Security & Native Polish**: Mandatory UTF-8 SHA-256 verification, zero raw token exposure, `ext.data.<id>:*` isolated KV storage, declarative Liquid Glass UI (zero `v-html`), 20-entry sandbox logs, lossless upgrades, profile-pinned quick capsules, and 1-tap Safe Mode.
+- **Curated Official Registry**: [`xhd2005/melune-plugins`](https://github.com/xhd2005/melune-plugins) ships 5 curated extensions (*Daily Check-in, Auto Team, Smart Unblock, Sleep Timer, Lyric Cleaner*) — fetched lazily on demand, independently hot-updatable outside App releases, and never auto-installed.
+- **Consumer / Developer Modes & Hardened Sandbox**: Default Consumer Mode hides technical clutter and lets you pin live capsules to Home; Developer Mode unlocks custom registries, Safe Mode, 20-entry sandbox logs, and permission audits. Enforces UTF-8 SHA-256 checksums, zero raw token exposure, `ext.data.<id>:*` isolated KV storage, and declarative Liquid Glass UI (zero `v-html`).
 - **Developer Specification**: See 👉 **[`docs/PLUGIN_SPEC.md`](docs/PLUGIN_SPEC.md)**.
 
 ## 🛠️ Tech Stack
@@ -69,7 +69,7 @@ MELUNE core contains zero built-in check-in scripts, auto-team bots, or external
 - **Native Audio Engine**: [Android Jetpack Media3](https://github.com/androidx/media) 1.5.1 (`ExoPlayer` + `MediaSessionService` + `SimpleCache`)
 - **Native Network & System**: [Kotlin](https://kotlinlang.org/) + [OkHttp](https://square.github.io/okhttp/) 4.12 + `kotlinx.coroutines` 1.9 + Android AppWidget
 - **Protocol Engine**: [KuGouMusicApi](https://github.com/MakcRe/KuGouMusicApi) (`server` submodule, direct on-device execution)
-- **Testing**: [Vitest](https://vitest.dev/) 3 (112 frontend tests) + JUnit 4 (Android native unit tests)
+- **Testing**: [Vitest](https://vitest.dev/) 3 (116 frontend tests) + JUnit 4 (Android native unit tests)
 
 ## 🚀 Quick Start
 
@@ -150,7 +150,7 @@ $env:ANDROID_SDK_ROOT = "C:\Android\Sdk"
 
 ## 🏗️ Build & Release
 
-Automated builds run via GitHub Actions ([android-build.yml](.github/workflows/android-build.yml)). Pushes to `main` and manual `workflow_dispatch` triggers execute typechecking, all 112 frontend unit tests, Android native unit tests, and upload CI APK artifacts. Pushing a `v*` tag additionally signs the Release APK with the permanent keystore, verifies its certificate fingerprint, generates `latest.json`, publishes the GitHub Release, and updates the `updates` branch + jsDelivr CDN cache.
+Automated builds run via GitHub Actions ([android-build.yml](.github/workflows/android-build.yml)). Pushes to `main` and manual `workflow_dispatch` triggers execute typechecking, all 116 frontend unit tests, Android native unit tests, and upload CI APK artifacts. Pushing a `v*` tag additionally signs the Release APK with the permanent keystore, verifies its certificate fingerprint, generates `latest.json`, publishes the GitHub Release, and updates the `updates` branch + jsDelivr CDN cache.
 
 **Manual Release Build:**
 

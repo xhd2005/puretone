@@ -450,12 +450,16 @@ describe('v2.5.1 Unified Plugin UI, On-Demand Default Registry, Diagnostics & Re
       }),
     ).toBe(true);
 
-    // 1. Default OFF mode: manual refresh touches ONLY KuGou, ZERO pool calls!
+    // 1. Toggle auto OFF: manual refresh touches ONLY KuGou, ZERO pool calls!
+    await pluginRuntime.dispatchPluginAction('melune-team-vip', 'toggle_auto', {
+      id: 'autoEnabled',
+      value: false,
+    });
     await pluginRuntime.dispatchPluginAction('melune-team-vip', 'run_now');
     expect(poolCalls).toHaveLength(0);
 
-    // 2. Configure v2 pool URL and toggle autoEnabled ON -> full (1)->(8) runs automatically!
-    await pluginRuntime.dispatchPluginAction('melune-team-vip', 'save_pool_url', {
+    // 2. Configure custom v2 pool URL and toggle autoEnabled ON -> full (1)->(8) runs automatically!
+    await pluginRuntime.dispatchPluginAction('melune-team-vip', 'save_custom_pool', {
       value: 'https://pool.example.test',
     });
     await pluginRuntime.dispatchPluginAction('melune-team-vip', 'toggle_auto', {
@@ -473,9 +477,8 @@ describe('v2.5.1 Unified Plugin UI, On-Demand Default Registry, Diagnostics & Re
     ]);
 
     const panel = await pluginRuntime.renderPluginPanel('melune-team-vip');
-    const kv = panel!.sections[1].blocks.find((b) => b.type === 'kv-grid');
-    expect(kv && kv.type === 'kv-grid' ? kv.items[0].value : '').toContain('MYOWN123');
-    expect(kv && kv.type === 'kv-grid' ? kv.items[1].value : '').toContain('PARTNER88');
+    const copyBlocks = panel!.sections[1].blocks.filter((b) => b.type === 'copy-code');
+    expect(copyBlocks.map((b) => (b.type === 'copy-code' ? b.code : ''))).toEqual(['MYOWN123', 'PARTNER88']);
 
     await pluginRuntime.unloadPlugin('melune-team-vip');
   });

@@ -1,6 +1,6 @@
 {
   "name": "puretone",
-  "version": "2.5.1",
+  "version": "2.5.2",
   "private": true,
   "description": "MELUNE (弥音) — Minimalist, ad-free, pure on-device open-source Android music player built with Kotlin, Jetpack Media3 & Vue 3.",
   "license": "GPL-3.0-only",

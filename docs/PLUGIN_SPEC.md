@@ -1,6 +1,6 @@
 # 弥音 · MELUNE 扩展插件协议与开发规范（`melune-ext/v1`）
 
-> 适用版本：**弥音 · MELUNE `v2.5.0+`**（推荐 `v2.5.1+`）
+> 适用版本：**弥音 · MELUNE `v2.5.0+`**（推荐 `v2.5.2+`）
 > 官方社区示例源：[`xhd2005/melune-plugins`](https://github.com/xhd2005/melune-plugins)
 
 `melune-ext/v1` 是专为 **弥音 · MELUNE** 原创设计的轻量级、零原始 HTML 注入、强制完整性校验的移动端沙箱扩展规范。它确保播放器主程序核心保持 100% 纯净合规，同时让社区开发者能够安全扩展音频解析、歌词处理与交互工具面板。
@@ -14,7 +14,8 @@
 3. **强制隔离存储（`ext.data.<pluginId>:*`）**：`ctx.storage` 由宿主强制拼接命名空间前缀并拦截 `..` 路径穿越；任何插件均无法触碰 `accounts.v1`、`settings.v1` 或其他插件的数据。
 4. **声明式 Liquid Glass UI（零 `v-html`）**：插件只能返回结构化 JSON 视图树（`MelunePanelView`），由宿主原生 [PluginPanelRenderer.vue](../src/components/PluginPanelRenderer.vue) 使用统一全局 `.ios-switch` 与原生 iOS 26 卡片渲染，彻底杜绝 XSS 与风格割裂。
 5. **强制 SHA-256 完整性校验**：下载安装前与每次启动加载前，宿主都会重新计算插件入口代码（UTF-8）的 SHA-256 摘要并与清单比对，任何篡改立即拒绝执行。
-6. **无损升级与一键安全模式**：升级扩展仅覆盖清单与入口脚本，100% 保留 `ext.data.<pluginId>:*` 数据；开启「安全模式」可瞬间卸载全部插件且保留配置，方便排查问题。
+6. **独立于 App 的插件热更新（Decoupled OTA）**：插件更新完全独立于弥音 APK 本体，不随 App 升级覆盖或重置；源同步优先走实时代理与 Raw 直连（自动附带时间戳防缓存），支持单插件独立检测更新与全量一键更新（同时识别 Semver 升级与同版本 SHA-256 热修复），且 100% 保留 `ext.data.<pluginId>:*` 沙盒数据。
+7. **普通模式 / 开发者模式双视图**：默认普通模式仅展示精选推荐、4 字短名卡片、一键开关、实时状态徽章与直觉式首页快捷直达；开启右上角「开发者模式」后解锁自定义插件源导入、安全模式、诊断日志（最近 20 条）、SHA-256 指纹与细粒度权限明细。
 
 ---
 
@@ -40,19 +41,22 @@ my-melune-plugins/
 | :--- | :--- | :---: | :--- |
 | `protocol` | `"melune-ext/v1"` | 是 | 固定协议标识，必须精确匹配 |
 | `id` | `string` | 是 | 全局唯一 ID，仅允许 `^[a-z0-9][a-z0-9._-]{1,63}$` |
-| `name` | `string` | 是 | 展示名称（建议 2–16 字） |
-| `version` | `string` | 是 | 语义化版本号（如 `"1.1.0"`），用于商店更新检测 |
+| `name` | `string` | 是 | 展示名称（**强烈建议 4 字以内中文短名**，如「每日签到」「自动组队」，确保移动端零截断） |
+| `tagline` | `string` | 否 | 一句话卖点摘要（显示在商店精选推荐卡片与极简列表） |
+| `featured` | `boolean` | 否 | 是否进入商店顶部「精选推荐」横滑大卡 |
+| `version` | `string` | 是 | 语义化版本号（如 `"1.2.0"`），用于独立热更新检测 |
 | `author` | `string` | 是 | 作者署名与开源致谢 |
 | `license` | `string` | 否 | 开源协议（推荐 `"MIT"` / `"GPL-3.0"`） |
 | `category` | `"account" \| "audio" \| "lyrics" \| "utility"` | 否 | 商店分类筛选标签，默认 `"utility"` |
-| `icon` | `string` | 否 | 统一图标键名：`calendar-check` / `users-group` / `wave-sine` / `music` / `sparkles` / `tool` / `puzzle` |
+| `icon` | `string` | 否 | 统一图标键名：`calendar-check` / `users-group` / `wave-sine` / `music` / `sparkles` / `moon` / `wand` / `tool` / `puzzle` |
 | `description` | `string` | 是 | 简洁功能描述（1–2 句） |
 | `entry` | `string` | 否 | 入口文件名，默认 `"index.js"` |
 | `downloadUrl` | `string` | 是（索引中） | 插件入口代码 HTTPS 下载地址 |
 | `sha256` | `string` | 是 | 入口代码 UTF-8 字节的 64 位小写十六进制 SHA-256 摘要 |
-| `minAppVersion` | `string` | 否 | 最低宿主版本，如 `"2.5.0"` |
+| `minAppVersion` | `string` | 否 | 最低宿主版本，如 `"2.5.0"` / `"2.5.2"` |
 | `homepage` | `string` | 否 | 源码或文档主页 HTTPS 链接 |
-| `permissions` | `MelunePermission[]` | 是 | 声明所需的最小权限集合，禁止申请未使用的权限 |
+| `permissions` | `MelunePermission[]` | 是 | 声明所需的最小基础权限集合，禁止申请未使用的权限 |
+| `hostPermissions` | `MelunePermission[]` | 否 | `v2.5.2+` 新增高版本宿主权限（如 `["player.control"]`），旧版宿主会安全忽略该字段而不会拒载整份源索引，`v2.5.2+` 自动并入权限审计与运行校验 |
 
 ### 2.2 `melune-registry.json` 字段定义
 
@@ -73,7 +77,7 @@ my-melune-plugins/
 
 ## 3. 细粒度权限与 KuGou 路由白名单
 
-### 3.1 8 项沙箱权限
+### 3.1 9 项沙箱权限
 
 | 权限名 | 开放能力 |
 | :--- | :--- |
@@ -83,8 +87,9 @@ my-melune-plugins/
 | `kugou.auth` | 读取账号脱敏摘要（不含 Token），并允许在 `callRoute` 指定 `options.userid` 由宿主代签 |
 | `audio.resolver` | 注册 `ctx.registerAudioResolver(...)` 提供备用音源搜索、解析与单曲锁定 |
 | `lyric.filter` | 注册 `ctx.registerLyricFilter(...)` 对歌词行进行过滤或排版增强 |
-| `ui.panel` | 注册 `ctx.registerPanel(...)` 提供声明式控制面板 |
+| `ui.panel` | 注册 `ctx.registerPanel(...)` 提供声明式控制面板与实时状态徽章 `getBadge()` |
 | `lifecycle.launch` | 注册 `ctx.onAppLaunch(...)` 与 `ctx.onAuthLogin(...)` 生命周期钩子 |
+| `player.control` | `v2.5.2+` 读取当前播放摘要、监听切歌事件 `ctx.player.onTrackChange(...)` 并在定时器到期时调用 `ctx.player.pause()` |
 
 ### 3.2 `ctx.kugou.callRoute` 允许路由白名单与错误行为
 
@@ -130,8 +135,13 @@ module.exports = defineMelunePlugin({
     ctx.ui.refreshPanel();
     ctx.log('info', '初始化完成'); // 'info' | 'warn' | 'error'，展示在诊断抽屉最近 20 条日志
 
-    // 6. 能力挂载（按权限启用）
-    // ctx.registerPanel({ render, onAction })
+    // 6. 播控桥接（v2.5.2+，需 player.control）
+    // ctx.player.getCurrentTrack() / ctx.player.isPlaying()
+    // await ctx.player.pause()
+    // const off = ctx.player.onTrackChange((track) => {})
+
+    // 7. 能力挂载（按权限启用）
+    // ctx.registerPanel({ render, onAction, getBadge })
     // ctx.registerAudioResolver(provider)
     // ctx.registerLyricFilter((lyrics, song) => lyrics)
     // ctx.onAppLaunch(async () => {})
@@ -145,9 +155,9 @@ module.exports = defineMelunePlugin({
 
 ---
 
-## 5. 10 种声明式 Liquid Glass UI 区块
+## 5. 11 种声明式 Liquid Glass UI 区块与实时状态徽章
 
-`render()` 返回 `{ subtitle?: string, sections: Array<{ title?: string, blocks: MelunePanelBlock[] }> }`，每个 `section` 渲染为弥音原生 `rounded-[22px] bg-[var(--bg-card)]` 卡片：
+`render()` 返回 `{ subtitle?: string, sections: Array<{ title?: string, blocks: MelunePanelBlock[] }> }`，每个 `section` 渲染为弥音原生 `rounded-[22px] bg-[var(--bg-card)]` 卡片；可选实现 `getBadge()` 返回 `{ text: string, tone?: 'neutral' | 'success' | 'warning' | 'accent' } | null`，宿主将在「已安装列表」、主页及档案页快捷胶囊实时展示状态徽章。
 
 | `type` | 核心字段 | 用途 |
 | :--- | :--- | :--- |
@@ -161,6 +171,7 @@ module.exports = defineMelunePlugin({
 | `steps` | `items: [{ label, status: 'idle'\|'running'\|'success'\|'already'\|'failed'\|'skipped', detail? }]` | 分步执行清单 |
 | `calendar` | `title, cells: [{ empty?, key, day?, isToday?, isClaimed?, isFailed?, isFuture? }]` | 月度打卡日历网格 |
 | `badge-list` | `title?, items: [{ label, active?, action?, payload? }]` | 可交互胶囊预设/标签组 |
+| `collapsible` | `id, title, summary?, defaultOpen?, blocks: MelunePanelBlock[]` | `v2.5.2+` 默认收起的高级配置折叠抽屉（让普通用户首屏极简清爽） |
 
 ---
 

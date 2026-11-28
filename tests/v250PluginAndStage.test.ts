@@ -231,7 +231,7 @@ describe('v2.5.0 melune-ext/v1 Plugin Protocol, Sandbox Isolation & Compliance D
     expect(rendererSrc).not.toContain(':global(.dark)');
   });
 
-  it('loads and executes all 4 official melune-plugins repository bundles when sibling workspace is present', async () => {
+  it('loads and executes all 5 official melune-plugins repository bundles when sibling workspace is present', async () => {
     const pluginsRepoRoot = path.resolve(process.cwd(), '..', 'melune-plugins');
     const registryPath = path.join(pluginsRepoRoot, 'melune-registry.json');
     if (!fs.existsSync(registryPath)) {
@@ -244,17 +244,21 @@ describe('v2.5.0 melune-ext/v1 Plugin Protocol, Sandbox Isolation & Compliance D
     expect(registry.plugins.map((p) => p.id).sort()).toEqual([
       'melune-daily-checkin',
       'melune-lyric-cleaner',
+      'melune-sleep-timer',
       'melune-smart-unblock',
       'melune-team-vip',
     ]);
 
     pluginRuntime.setHostBridge({
-      getAppVersion: () => '2.5.0',
+      getAppVersion: () => '2.5.2',
       getActiveAccount: () => ({ userid: '10086', nickname: 'Hayden', isVip: true, tvipEndTime: '2027-01-01' }),
       listAccounts: () => [{ userid: '10086', nickname: 'Hayden', isVip: true, tvipEndTime: '2027-01-01' }],
       getAuthForUser: () => ({ userid: '10086', token: 'mock_token_never_exposed' }),
       refreshAccount: async () => {},
       showToast: () => {},
+      getCurrentTrack: () => null,
+      isPlaying: () => false,
+      pausePlayback: async () => {},
     });
 
     for (const manifest of registry.plugins) {

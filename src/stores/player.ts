@@ -614,6 +614,15 @@ export const usePlayerStore = defineStore('player', () => {
     }
   }
 
+  watch(
+    () => currentSong.value?.id || '',
+    (nextId, prevId) => {
+      if (nextId !== prevId) {
+        pluginRuntime.notifyTrackChange(currentSong.value);
+      }
+    },
+  );
+
   async function refreshCoverPalette(coverUrl: string) {
     const p = await extractPaletteFromCoverUrl(coverUrl);
     palette.value = p;

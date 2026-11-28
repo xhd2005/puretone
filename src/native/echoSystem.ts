@@ -211,7 +211,7 @@ export const echoSystem = {
     if (Capacitor.isNativePlatform()) {
       return EchoSystemNative.getLaunchFlags();
     }
-    return { openNowPlaying: false, pendingDeepLink: '', versionName: '2.5.1', versionCode: 21 };
+    return { openNowPlaying: false, pendingDeepLink: '', versionName: '2.5.2', versionCode: 22 };
   },
 
   async checkNotificationPermission(): Promise<{ granted: boolean; systemEnabled: boolean; runtimeGranted: boolean }> {

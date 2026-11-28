@@ -27,7 +27,7 @@
 
 ## ✨ 核心特性
 
-- **極致美學**：採用 iOS 26 Liquid Glass 質感設計，支援淺色 / 深色 / 跟隨系統自適應（配備自動化 `.dark` 根節點可見性門禁）、專輯封面動態流體取色、零閃屏月夜開屏與簡/繁/英三語介面。
+- **極致美學與互動細節**：採用 iOS 26 Liquid Glass 質感設計，支援淺色 / 深色 / 跟隨系統自適應（配備自動化 `.dark` 根節點可見性門禁）、專輯封面動態流體取色、時段問候主頁、資料庫雙欄毛玻璃快捷卡片（一鍵開播）、底部迷你條跟手阻尼橫滑切歌、零閃屏月夜開屏與簡/繁/英三語介面。
 - **資料路徑透明**：100% 純端側直連，所有協定請求與本機資料均由裝置直接完成；不架設任何音訊中轉伺服器，不提供雲端帳號託管，永久無廣告。
 - **音樂推薦**：支援每日推薦、精選歌單與個人化探索，首頁內容支援本機 SQLite 快照秒開。
 - **多維探索**：支援歌曲、歌手、專輯、歌單 4 頁籤全庫搜尋與多分類熱搜榜，快速觸達心儀曲目。
@@ -35,7 +35,7 @@
 - **進階播放**：基於 Jetpack Media3 原生 2 曲前瞻佇列，支援佇列置頂/移除、播放模式切換、倍速播放、餘弦淡入淡出切歌（關閉 / `1.5s` / `3s` / `5s`），並在 seek 短暫緩衝期維持播放態穩定，徹底消除封面縮放抽搐與進度條回彈。
 - **零中斷自癒與試聽攔截**：每首曲目獨立綁定 HTTP 請求標頭，徹底隔離預載下一首報錯；全鏈路攔截 30s / 60s 試聽片段與提前 EOF 截斷流，異常時按多級原地精確秒數續播，絕不中途自動切歌。
 - **「彌音唱片台」三模式橫螢幕 & 3-Slot 環形切歌**：橫螢幕內建黑膠唱片台（擬真唱臂落針/抬臂動畫 + 旋轉微溝槽唱片）、3D 封面牆與巨幕歌詞影院三大沉浸模式，嚴格適配 `340dp+` 矮橫螢幕零裁切；直螢幕封面切歌採用 Direct-DOM 3-Slot 環形槽位與 120Hz 物理彈簧，零卡頓、零反向回彈。
-- **原創 `melune-ext/v1` 沙盒擴充生態**：主程式核心保持 100% 純淨合規，不包含內建自動化任務或第三方音源爬蟲；`v2.5.1+` 預置官方社群擴充源 [`xhd2005/melune-plugins`](https://github.com/xhd2005/melune-plugins)（冷啟動零請求、首次切入擴充頁按需同步、絕不自動安裝），提供統一原生 iOS 26 擴充中心、獨立控制與診斷抽屜、最近 20 條沙盒日誌、Semver 無損更新、一鍵清資料、檔案頁置頂直達、`melune://ext/install` 深鏈安裝與強制 SHA-256 校驗。
+- **原創 `melune-ext/v1` 沙盒擴充生態**：主程式核心保持 100% 純淨合規，不包含內建自動化任務或第三方音源爬蟲；預置官方精選擴充源 [`xhd2005/melune-plugins`](https://github.com/xhd2005/melune-plugins)（冷啟動零請求、按需同步、絕不自動安裝），提供 **一般模式 / 開發者模式** 雙視圖、App Store 級「精選推薦」大卡、4 字極簡短名與即時狀態徽章、**獨立於 App 本體的單外掛/批次熱更新**、主頁快捷膠囊直達及 `melune://ext/install` 深鏈安裝。
 - **私人 FM**：智慧推薦個人化電台，並於播放接近佇列尾端時提前續載，息屏不斷流。
 - **雲端歌單與秒開快照**：支援雲端歌單新建、編輯、隱私設定、刪除、收藏與底部接管式批次加歌/移歌；本機 SQLite 快照透過雲端版本號 `totalVer` 校驗，未變動時 0 網路請求秒開「我喜歡的音樂」與千首大歌單，本機紅心/增刪原地增量更新。
 - **本機智慧快取與離線直放**：基於 `DynamicLruCacheEvictor` + Media3 `SimpleCache`，支援 `500 MB / 1 GB / 2 GB（預設）/ 4 GB / 無上限` 五檔熱調，按「曲目 + 音質 + 音源」分桶隔離（試聽片段不落盤），弱網與飛航模式自動本機直放，音訊快取與歌單快照獨立透明清理。
@@ -53,8 +53,8 @@
 
 彌音主程式保持極簡與合規，不內建簽到腳本、自動組隊或第三方音源爬蟲。所有可選進階能力均透過原創的 **`melune-ext/v1`** 沙盒擴充體系承載：
 
-- **預設官方社群源**：[`xhd2005/melune-plugins`](https://github.com/xhd2005/melune-plugins)。冷啟動零額外請求，僅在開啟 **我的 → 擴充外掛** 時按需拉取，隨時可移除或恢復，**絕不自動安裝**。
-- **硬核安全與統一體驗**：強制 UTF-8 SHA-256 校驗、零明文 Token 暴露（宿主安全代簽）、`ext.data.<id>:*` 隔離儲存、宣告式原生 Liquid Glass 面板（零 `v-html`）、最近 20 條執行日誌、無損更新、檔案頁置頂直達與一鍵安全模式。
+- **預設官方精選源**：[`xhd2005/melune-plugins`](https://github.com/xhd2005/melune-plugins)（精選 5 款 4 字短名官方擴充：「每日簽到」「自動組隊」「音源解灰」「助眠定時」「歌詞淨化」）。冷啟動零額外請求，僅在開啟 **我的 → 擴充外掛** 時按需拉取，外掛獨立於軟體本身隨時熱更新，**絕不自動安裝**。
+- **一般/開發者雙模式與硬核安全**：一般使用者零技術噪音，一鍵開關即用並可「放到主頁快捷直達」；開啟「開發者模式」可解鎖自訂源、安全模式、20 條沙盒日誌與權限審計。底層強制 UTF-8 SHA-256 校驗、零明文 Token 暴露、`ext.data.<id>:*` 隔離儲存與宣告式原生 Liquid Glass UI（零 `v-html`）。
 - **外掛開發與協定文件**：詳見 👉 **[`docs/PLUGIN_SPEC.md`](docs/PLUGIN_SPEC.md)**。
 
 ## 🛠️ 技術棧
@@ -69,7 +69,7 @@
 - **Native Audio Engine**: [Android Jetpack Media3](https://github.com/androidx/media) 1.5.1（`ExoPlayer` + `MediaSessionService` + `SimpleCache`）
 - **Native Network & System**: [Kotlin](https://kotlinlang.org/) + [OkHttp](https://square.github.io/okhttp/) 4.12 + `kotlinx.coroutines` 1.9 + Android AppWidget
 - **Protocol Engine**: [KuGouMusicApi](https://github.com/MakcRe/KuGouMusicApi)（`server` 子模組，端側零中轉直連）
-- **Testing**: [Vitest](https://vitest.dev/) 3（112 項前端測試）+ JUnit 4（Android 原生單測）
+- **Testing**: [Vitest](https://vitest.dev/) 3（116 項前端測試）+ JUnit 4（Android 原生單測）
 
 ## 🚀 快速開始
 
@@ -150,7 +150,7 @@ $env:ANDROID_SDK_ROOT = "C:\Android\Sdk"
 
 ## 🏗️ 編譯發布
 
-專案使用 GitHub Actions（[android-build.yml](.github/workflows/android-build.yml)）進行自動化建置。每次推送 `main` 或手動觸發 `workflow_dispatch` 時會自動執行型別檢查、112 項前端測試、Android 原生單元測試並上傳 APK CI 產物；每當推送 `v*` 格式的 Tag 時，還會使用永久發布憑證自動簽章建置、校驗指紋、產生 `latest.json`、建立 GitHub Release 並同步更新 `updates` 分支與 jsDelivr CDN 快取。
+專案使用 GitHub Actions（[android-build.yml](.github/workflows/android-build.yml)）進行自動化建置。每次推送 `main` 或手動觸發 `workflow_dispatch` 時會自動執行型別檢查、116 項前端測試、Android 原生單元測試並上傳 APK CI 產物；每當推送 `v*` 格式的 Tag 時，還會使用永久發布憑證自動簽章建置、校驗指紋、產生 `latest.json`、建立 GitHub Release 並同步更新 `updates` 分支與 jsDelivr CDN 快取。
 
 **手動編譯正式包：**
 

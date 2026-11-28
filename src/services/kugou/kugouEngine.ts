@@ -77,7 +77,23 @@ const moduleLoaders: Record<string, () => Promise<{ default?: KugouModuleFn } | 
   '/user/listen': () => import('@kugou/module/user_listen.js'),
   '/user/grade/info': () => import('@kugou/module/user_grade_info.js'),
   '/youth/listen/song': () => import('@kugou/module/youth_listen_song.js'),
-  '/youth/month/vip/record': () => import('@kugou/module/youth_month_vip_record.js'),
+  '/youth/month/vip/record': async () => ({
+    default: (params: Record<string, unknown>, useAxios: (cfg: Record<string, unknown>) => Promise<KugouApiResponse>) => {
+      const reqParams: Record<string, unknown> = {
+        latest_limit: Number(params?.latest_limit) || 100,
+      };
+      if (typeof params?.month === 'string' && /^\d{4}-\d{2}$/.test(params.month.trim())) {
+        reqParams.month = params.month.trim();
+      }
+      return useAxios({
+        url: '/youth/v1/activity/get_month_vip_record',
+        encryptType: 'android',
+        params: reqParams,
+        method: 'get',
+        cookie: (params?.cookie as Record<string, unknown>) || {},
+      });
+    },
+  }),
   '/youth/union/vip': () => import('@kugou/module/youth_union_vip.js'),
   '/everyday/recommend': () => import('@kugou/module/everyday_recommend.js'),
   '/personal/fm': () => import('@kugou/module/personal_fm.js'),

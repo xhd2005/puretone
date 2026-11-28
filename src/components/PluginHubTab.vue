@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import { Icon } from '@iconify/vue';
-import iconPlus from '@iconify/icons-tabler/plus';
 import iconRefresh from '@iconify/icons-tabler/refresh';
 import iconTrash from '@iconify/icons-tabler/trash';
 import iconShieldCheck from '@iconify/icons-tabler/shield-check';
@@ -9,9 +8,11 @@ import iconShare from '@iconify/icons-tabler/share-2';
 import iconChevronRight from '@iconify/icons-tabler/chevron-right';
 import iconAlertTriangle from '@iconify/icons-tabler/alert-triangle';
 import iconPuzzle from '@iconify/icons-tabler/puzzle';
-import iconPin from '@iconify/icons-tabler/pin';
 import iconDownload from '@iconify/icons-tabler/download';
+import iconSettings from '@iconify/icons-tabler/settings';
 import iconX from '@iconify/icons-tabler/x';
+import iconCode from '@iconify/icons-tabler/code';
+import iconSparkles from '@iconify/icons-tabler/sparkles';
 import { usePluginsStore } from '@/stores/plugins';
 import { useUiStore } from '@/stores/ui';
 import { useI18n } from '@/i18n';
@@ -20,6 +21,7 @@ import { parseMeluneExtensionDeepLink } from '@/services/plugins/deepLink';
 import { PLUGIN_CATEGORIES, resolvePluginVisual } from '@/services/plugins/pluginUiMeta';
 import {
   DEFAULT_PLUGIN_REGISTRY_REPO,
+  type MelunePanelBadge,
   type MelunePluginCategory,
   type MelunePluginManifest,
 } from '@/services/plugins/types';
@@ -38,7 +40,7 @@ const { t } = useI18n();
 type HubSubTab = 'installed' | 'store';
 const activeSubTab = ref<HubSubTab>('installed');
 const selectedCategory = ref<'all' | MelunePluginCategory>('all');
-const showSourcesPanel = ref(false);
+const showMenuPanel = ref(false);
 const sourceInput = ref('');
 const adding = ref(false);
 const checkingAll = ref(false);
@@ -49,7 +51,7 @@ interface StoreItem {
   registryName: string;
 }
 
-const storeCatalog = computed<StoreItem[]>(() => {
+const allStoreItems = computed<StoreItem[]>(() => {
   const seen = new Map<string, StoreItem>();
   for (const reg of plugins.registries) {
     for (const plg of reg.plugins) {
@@ -58,12 +60,19 @@ const storeCatalog = computed<StoreItem[]>(() => {
       }
     }
   }
-  const all = Array.from(seen.values());
-  if (selectedCategory.value === 'all') return all;
-  return all.filter((item) => (item.manifest.category || 'utility') === selectedCategory.value);
+  return Array.from(seen.values());
 });
 
-// Default to Store tab when user has zero installed plugins so they can pick right away!
+const featuredCatalog = computed<StoreItem[]>(() => {
+  const explicit = allStoreItems.value.filter((item) => item.manifest.featured);
+  return explicit.length ? explicit : allStoreItems.value.slice(0, 3);
+});
+
+const storeCatalog = computed<StoreItem[]>(() => {
+  if (selectedCategory.value === 'all') return allStoreItems.value;
+  return allStoreItems.value.filter((item) => (item.manifest.category || 'utility') === selectedCategory.value);
+});
+
 function syncInitialTab() {
   if (!plugins.installed.length && activeSubTab.value === 'installed') {
     activeSubTab.value = 'store';
@@ -75,7 +84,7 @@ watch(
   (isVis) => {
     if (isVis) {
       syncInitialTab();
-      void plugins.ensureDefaultRegistryLoaded();
+      void plugins.syncRegistriesIfStale();
     }
   },
 );
@@ -83,7 +92,7 @@ watch(
 onMounted(() => {
   if (props.visible) {
     syncInitialTab();
-    void plugins.ensureDefaultRegistryLoaded();
+    void plugins.syncRegistriesIfStale();
   }
 });
 
@@ -92,7 +101,7 @@ function switchSubTab(next: HubSubTab) {
   echoSystem.haptic('selection');
   activeSubTab.value = next;
   if (next === 'store') {
-    void plugins.ensureDefaultRegistryLoaded();
+    void plugins.syncRegistriesIfStale();
   }
 }
 
@@ -103,15 +112,20 @@ async function handleCheckAllUpdates() {
   try {
     const res = await plugins.refreshAllRegistries();
     if (res.updatesCount > 0) {
-      ui.showToast(`发现 ${res.updatesCount} 款扩展可无损升级`);
+      ui.showToast(`发现 ${res.updatesCount} 款插件可独立热更新`);
     } else if (res.syncedCount > 0) {
-      ui.showToast(`已同步 ${res.syncedCount} 个扩展源，全部为最新版本`);
+      ui.showToast('全部插件已是最新版本');
     } else {
       ui.showToast('暂无可同步的扩展源');
     }
   } finally {
     checkingAll.value = false;
   }
+}
+
+async function handleUpdateAll() {
+  echoSystem.haptic('light');
+  await plugins.updateAllAvailablePlugins();
 }
 
 async function handleImportSource() {
@@ -124,14 +138,14 @@ async function handleImportSource() {
       const ok = await plugins.handleDeepLinkUri(raw);
       if (ok) {
         sourceInput.value = '';
-        showSourcesPanel.value = false;
+        showMenuPanel.value = false;
       }
       return;
     }
     const saved = await plugins.addOrRefreshRegistry(raw);
     sourceInput.value = '';
     echoSystem.haptic('success');
-    ui.showToast(`已导入源「${saved.name}」（${saved.plugins.length} 款扩展）`);
+    ui.showToast(`已导入源「${saved.name}」（${saved.plugins.length} 款）`);
     activeSubTab.value = 'store';
   } catch (err: any) {
     ui.showToast(err?.message || '导入插件源失败', 3200);
@@ -145,10 +159,10 @@ async function handleRestoreDefault() {
   try {
     const saved = await plugins.restoreDefaultRegistry();
     echoSystem.haptic('success');
-    ui.showToast(`已恢复默认官方源（${saved.plugins.length} 款扩展）`);
+    ui.showToast(`已恢复官方精选源（${saved.plugins.length} 款）`);
     activeSubTab.value = 'store';
   } catch (err: any) {
-    ui.showToast(err?.message || '恢复默认源失败', 3000);
+    ui.showToast(err?.message || '恢复官方源失败', 3000);
   }
 }
 
@@ -156,7 +170,7 @@ async function handleRefreshRegistry(url: string) {
   echoSystem.haptic('light');
   try {
     const saved = await plugins.addOrRefreshRegistry(url);
-    ui.showToast(`已同步「${saved.name}」（${saved.plugins.length} 款扩展）`);
+    ui.showToast(`已同步「${saved.name}」`);
   } catch (err: any) {
     ui.showToast(err?.message || '同步失败', 3000);
   }
@@ -181,7 +195,14 @@ function handleQuickUpdate(pluginId: string) {
   }
 }
 
-function statusSummary(id: string, enabled: boolean): string {
+function badgeClass(tone?: MelunePanelBadge['tone']): string {
+  if (tone === 'success') return 'bg-[#34c759]/14 text-[#239941]';
+  if (tone === 'warning') return 'bg-[#ff9500]/14 text-[#c97200]';
+  if (tone === 'accent') return 'bg-[var(--bg-subtle)] am-accent-text';
+  return 'bg-[var(--bg-subtle)] text-[var(--text-secondary)]';
+}
+
+function fallbackSubtitle(id: string, enabled: boolean): string {
   if (plugins.safeMode) return t('plugins.pausedSafeMode');
   if (!enabled) return t('plugins.disabledState');
   const st = plugins.getStatus(id);
@@ -193,7 +214,7 @@ function statusSummary(id: string, enabled: boolean): string {
 
 <template>
   <div class="space-y-4" data-plugin-hub>
-    <!-- Ultra-Clean App Store Top Bar: 2-Tab Segmented Switch + Refresh & Source Manager Icons -->
+    <!-- Ultra-Clean App Store Top Bar -->
     <div class="flex items-center gap-2">
       <div class="flex-1 min-w-0 rounded-full bg-[var(--bg-card)] p-1 grid grid-cols-2 shadow-xs">
         <button
@@ -207,10 +228,7 @@ function statusSummary(id: string, enabled: boolean): string {
           @click="switchSubTab('installed')"
         >
           <span>{{ t('plugins.tabInstalled') }}</span>
-          <span
-            v-if="plugins.installed.length"
-            class="text-[11px] tabular-nums opacity-85"
-          >
+          <span v-if="plugins.installed.length" class="text-[11px] tabular-nums opacity-85">
             {{ plugins.installed.length }}
           </span>
           <span
@@ -230,12 +248,6 @@ function statusSummary(id: string, enabled: boolean): string {
           @click="switchSubTab('store')"
         >
           <span>{{ t('plugins.tabStore') }}</span>
-          <span
-            v-if="storeCatalog.length && selectedCategory === 'all'"
-            class="text-[11px] tabular-nums opacity-85"
-          >
-            {{ storeCatalog.length }}
-          </span>
         </button>
       </div>
 
@@ -261,18 +273,18 @@ function statusSummary(id: string, enabled: boolean): string {
         type="button"
         class="w-10 h-10 rounded-full shadow-xs border-0 flex items-center justify-center shrink-0 am-tap"
         :class="
-          showSourcesPanel
+          showMenuPanel
             ? 'am-accent-bg text-white'
             : 'bg-[var(--bg-card)] text-[var(--text-primary)]'
         "
-        :aria-label="t('plugins.manageSources')"
-        @click="echoSystem.haptic('selection'); showSourcesPanel = !showSourcesPanel"
+        :aria-label="t('plugins.hubSettings')"
+        @click="echoSystem.haptic('selection'); showMenuPanel = !showMenuPanel"
       >
-        <Icon :icon="showSourcesPanel ? iconX : iconPlus" class="w-4.5 h-4.5" />
+        <Icon :icon="showMenuPanel ? iconX : iconSettings" class="w-4.5 h-4.5" />
       </button>
     </div>
 
-    <!-- Compact Safe Mode Notice (only visible when active) -->
+    <!-- Safe Mode Warning Banner (only when active) -->
     <div
       v-if="plugins.safeMode"
       class="rounded-[18px] bg-[#ff9500]/12 px-3.5 py-2.5 flex items-center justify-between gap-2.5"
@@ -290,180 +302,219 @@ function statusSummary(id: string, enabled: boolean): string {
       </button>
     </div>
 
-    <!-- Collapsible Source Management & Safe Mode Drawer Card (zero top clutter during normal use!) -->
+    <!-- Top Settings Drawer Card: Consumer Mode shows ONLY Developer Mode + Check Updates; Dev Mode unlocks Sources & Safe Mode -->
     <section
-      v-if="showSourcesPanel"
+      v-if="showMenuPanel"
       class="rounded-[22px] bg-[var(--bg-card)] p-4 shadow-xs space-y-3.5"
       data-plugin-sources-panel
     >
-      <div class="flex items-center justify-between">
-        <span class="text-[14px] font-bold text-[var(--text-primary)]">{{ t('plugins.manageSources') }}</span>
-        <span class="px-2 py-0.5 rounded-full bg-[var(--bg-subtle)] text-[10.5px] font-semibold text-[var(--text-secondary)]">
-          melune-ext/v1
-        </span>
-      </div>
-
-      <div class="flex items-center gap-2">
-        <input
-          v-model="sourceInput"
-          type="text"
-          :placeholder="t('plugins.sourcePlaceholder')"
-          class="flex-1 min-w-0 h-10 rounded-full bg-[var(--bg-subtle)] px-3.5 text-[12.5px] text-[var(--text-primary)] border-0 outline-none"
-          @keydown.enter="handleImportSource"
-        />
-        <button
-          type="button"
-          class="h-10 px-4 rounded-full am-accent-bg text-white text-[13px] font-semibold border-0 shrink-0 am-tap"
-          :disabled="adding || !sourceInput.trim()"
-          @click="handleImportSource"
-        >
-          {{ adding ? '…' : t('plugins.addSource') }}
-        </button>
-      </div>
-
-      <!-- Subscribed Registries List -->
-      <div
-        v-if="plugins.registries.length"
-        class="rounded-2xl bg-[var(--bg-subtle)]/50 divide-y divide-[var(--hairline)] overflow-hidden"
-      >
-        <div
-          v-for="reg in plugins.registries"
-          :key="reg.url"
-          class="px-3.5 py-2.5 flex items-center justify-between gap-2"
-        >
-          <div class="min-w-0 flex-1">
-            <div class="text-[13px] font-semibold text-[var(--text-primary)] truncate">{{ reg.name }}</div>
-            <div class="text-[11px] text-[var(--text-tertiary)] truncate">
-              {{ reg.plugins.length }} 款扩展 · {{ reg.maintainer || reg.id }}
-            </div>
+      <label class="flex items-center justify-between gap-3 cursor-pointer" data-dev-mode-toggle>
+        <div class="flex items-center gap-2.5 min-w-0">
+          <div class="w-8 h-8 rounded-xl bg-[var(--bg-subtle)] flex items-center justify-center am-accent-text shrink-0">
+            <Icon :icon="iconCode" class="w-4.5 h-4.5" />
           </div>
-          <div class="flex items-center gap-1 shrink-0">
-            <button
-              type="button"
-              class="w-8 h-8 rounded-full bg-[var(--bg-card)] border-0 flex items-center justify-center text-[var(--text-primary)] am-tap"
-              :disabled="plugins.syncingRegistryUrl === reg.url"
-              @click="handleRefreshRegistry(reg.url)"
-            >
-              <Icon
-                :icon="iconRefresh"
-                class="w-3.5 h-3.5"
-                :class="{ 'animate-spin': plugins.syncingRegistryUrl === reg.url }"
-              />
-            </button>
-            <button
-              type="button"
-              class="w-8 h-8 rounded-full bg-[var(--bg-card)] border-0 flex items-center justify-center text-[var(--text-secondary)] am-tap"
-              @click="plugins.copyShareLink(reg.url)"
-            >
-              <Icon :icon="iconShare" class="w-3.5 h-3.5" />
-            </button>
-            <button
-              type="button"
-              class="w-8 h-8 rounded-full bg-[var(--bg-card)] border-0 flex items-center justify-center text-[#ff3b30] am-tap"
-              @click="echoSystem.haptic('light'); plugins.removeRegistry(reg.url)"
-            >
-              <Icon :icon="iconTrash" class="w-3.5 h-3.5" />
-            </button>
+          <div class="min-w-0">
+            <div class="text-[14px] font-semibold text-[var(--text-primary)]">{{ t('plugins.devMode') }}</div>
+            <div class="text-[11.5px] text-[var(--text-secondary)] leading-snug">{{ t('plugins.devModeSub') }}</div>
           </div>
         </div>
-      </div>
-
-      <button
-        v-if="!plugins.hasDefaultRegistry"
-        type="button"
-        class="w-full h-9.5 rounded-full bg-[var(--bg-subtle)] text-[var(--text-primary)] text-[12.5px] font-semibold border-0 inline-flex items-center justify-center gap-1.5 am-tap"
-        @click="handleRestoreDefault"
-      >
-        <Icon :icon="iconDownload" class="w-4 h-4 am-accent-text" />
-        <span>{{ t('plugins.restoreDefaultSource') }} ({{ DEFAULT_PLUGIN_REGISTRY_REPO }})</span>
-      </button>
-
-      <!-- Safe Mode Switch -->
-      <label class="pt-3 am-hairline-t flex items-center justify-between gap-3 cursor-pointer">
-        <div class="min-w-0 flex-1">
-          <div class="text-[13.5px] font-medium text-[var(--text-primary)]">{{ t('plugins.safeMode') }}</div>
-          <div class="text-[11px] text-[var(--text-secondary)] leading-snug mt-0.5">{{ t('plugins.safeModeSub') }}</div>
-        </div>
         <input
-          :checked="plugins.safeMode"
+          :checked="plugins.developerMode"
           type="checkbox"
           class="ios-switch shrink-0"
-          @change="echoSystem.haptic('selection'); plugins.setSafeMode(!plugins.safeMode)"
+          @change="echoSystem.haptic('selection'); plugins.setDeveloperMode(!plugins.developerMode)"
         />
       </label>
+
+      <!-- Developer-Only Source Manager & Safe Mode -->
+      <template v-if="plugins.developerMode">
+        <div class="pt-3 am-hairline-t space-y-3">
+          <div class="flex items-center justify-between">
+            <span class="text-[12.5px] font-semibold text-[var(--text-secondary)]">{{ t('plugins.manageSources') }}</span>
+            <span class="px-2 py-0.5 rounded-full bg-[var(--bg-subtle)] text-[10px] font-semibold text-[var(--text-secondary)]">
+              melune-ext/v1
+            </span>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <input
+              v-model="sourceInput"
+              type="text"
+              :placeholder="t('plugins.sourcePlaceholder')"
+              class="flex-1 min-w-0 h-9.5 rounded-full bg-[var(--bg-subtle)] px-3.5 text-[12.5px] text-[var(--text-primary)] border-0 outline-none"
+              @keydown.enter="handleImportSource"
+            />
+            <button
+              type="button"
+              class="h-9.5 px-3.5 rounded-full am-accent-bg text-white text-[12.5px] font-semibold border-0 shrink-0 am-tap"
+              :disabled="adding || !sourceInput.trim()"
+              @click="handleImportSource"
+            >
+              {{ adding ? '…' : t('plugins.addSource') }}
+            </button>
+          </div>
+
+          <div
+            v-if="plugins.registries.length"
+            class="rounded-2xl bg-[var(--bg-subtle)]/50 divide-y divide-[var(--hairline)] overflow-hidden"
+          >
+            <div
+              v-for="reg in plugins.registries"
+              :key="reg.url"
+              class="px-3.5 py-2.5 flex items-center justify-between gap-2"
+            >
+              <div class="min-w-0 flex-1">
+                <div class="text-[13px] font-semibold text-[var(--text-primary)] truncate">{{ reg.name }}</div>
+                <div class="text-[11px] text-[var(--text-tertiary)] truncate">
+                  {{ reg.plugins.length }} 款 · {{ reg.id }}
+                </div>
+              </div>
+              <div class="flex items-center gap-1 shrink-0">
+                <button
+                  type="button"
+                  class="w-8 h-8 rounded-full bg-[var(--bg-card)] border-0 flex items-center justify-center text-[var(--text-primary)] am-tap"
+                  :disabled="plugins.syncingRegistryUrl === reg.url"
+                  @click="handleRefreshRegistry(reg.url)"
+                >
+                  <Icon
+                    :icon="iconRefresh"
+                    class="w-3.5 h-3.5"
+                    :class="{ 'animate-spin': plugins.syncingRegistryUrl === reg.url }"
+                  />
+                </button>
+                <button
+                  type="button"
+                  class="w-8 h-8 rounded-full bg-[var(--bg-card)] border-0 flex items-center justify-center text-[var(--text-secondary)] am-tap"
+                  @click="plugins.copyShareLink(reg.url)"
+                >
+                  <Icon :icon="iconShare" class="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  class="w-8 h-8 rounded-full bg-[var(--bg-card)] border-0 flex items-center justify-center text-[#ff3b30] am-tap"
+                  @click="echoSystem.haptic('light'); plugins.removeRegistry(reg.url)"
+                >
+                  <Icon :icon="iconTrash" class="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <button
+            v-if="!plugins.hasDefaultRegistry"
+            type="button"
+            class="w-full h-9.5 rounded-full bg-[var(--bg-subtle)] text-[var(--text-primary)] text-[12.5px] font-semibold border-0 inline-flex items-center justify-center gap-1.5 am-tap"
+            @click="handleRestoreDefault"
+          >
+            <Icon :icon="iconDownload" class="w-4 h-4 am-accent-text" />
+            <span>{{ t('plugins.restoreDefaultSource') }} ({{ DEFAULT_PLUGIN_REGISTRY_REPO }})</span>
+          </button>
+
+          <label class="pt-3 am-hairline-t flex items-center justify-between gap-3 cursor-pointer">
+            <div class="min-w-0 flex-1">
+              <div class="text-[13.5px] font-medium text-[var(--text-primary)]">{{ t('plugins.safeMode') }}</div>
+              <div class="text-[11px] text-[var(--text-secondary)] leading-snug mt-0.5">{{ t('plugins.safeModeSub') }}</div>
+            </div>
+            <input
+              :checked="plugins.safeMode"
+              type="checkbox"
+              class="ios-switch shrink-0"
+              @change="echoSystem.haptic('selection'); plugins.setSafeMode(!plugins.safeMode)"
+            />
+          </label>
+        </div>
+      </template>
     </section>
 
     <!-- ==================== TAB A: 已安装 ==================== -->
     <template v-if="activeSubTab === 'installed'">
-      <section v-if="plugins.installed.length" class="space-y-2">
-        <div class="flex items-center justify-between px-2">
-          <span class="text-[12px] font-semibold uppercase tracking-wide text-[var(--text-secondary)]">
-            {{ t('plugins.installedGroup', { count: plugins.installed.length }) }}
-          </span>
-          <span class="text-[11px] text-[var(--text-tertiary)]">
-            {{ t('plugins.tapRowHint') }}
-          </span>
+      <!-- Independent OTA Batch Update Banner -->
+      <div
+        v-if="plugins.availableUpdatesCount > 0"
+        class="rounded-[20px] bg-[var(--bg-card)] px-4 py-3 shadow-xs flex items-center justify-between gap-3"
+      >
+        <div class="min-w-0">
+          <div class="text-[13.5px] font-bold text-[var(--text-primary)]">
+            发现 {{ plugins.availableUpdatesCount }} 款插件可独立更新
+          </div>
+          <div class="text-[11.5px] text-[var(--text-secondary)] truncate">
+            无需更新弥音软件，数据 100% 无损保留
+          </div>
         </div>
+        <button
+          type="button"
+          class="h-8.5 px-3.5 rounded-full am-accent-bg text-white text-[12.5px] font-semibold border-0 shrink-0 inline-flex items-center gap-1 am-tap"
+          :disabled="plugins.updatingAll"
+          @click="handleUpdateAll"
+        >
+          <Icon v-if="plugins.updatingAll" :icon="iconRefresh" class="w-3.5 h-3.5 animate-spin" />
+          <span>{{ plugins.updatingAll ? '更新中…' : t('plugins.updateAllBtn') }}</span>
+        </button>
+      </div>
 
+      <section v-if="plugins.installed.length" class="space-y-2">
         <div class="rounded-[22px] bg-[var(--bg-card)] overflow-hidden divide-y divide-[var(--hairline)] shadow-xs">
           <div
             v-for="item in plugins.installed"
             :key="item.manifest.id"
-            class="px-4 py-3.5 flex items-center gap-3 cursor-pointer active:bg-[var(--bg-subtle)]/45 transition-colors"
+            class="px-4 py-3.5 flex items-center gap-3.5 cursor-pointer active:bg-[var(--bg-subtle)]/45 transition-colors"
             @click="echoSystem.haptic('light'); plugins.openPluginDetail(item.manifest.id)"
           >
             <!-- Unified Gradient Icon -->
             <div
-              class="w-11 h-11 rounded-[14px] bg-gradient-to-br flex items-center justify-center text-white shadow-xs shrink-0 relative"
+              class="w-11 h-11 rounded-[14px] bg-gradient-to-br flex items-center justify-center text-white shadow-xs shrink-0"
               :class="resolvePluginVisual(item.manifest).gradientClass"
             >
               <Icon :icon="resolvePluginVisual(item.manifest).icon" class="w-5.5 h-5.5" />
-              <span
-                v-if="plugins.isPinned(item.manifest.id)"
-                class="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-[var(--bg-card)] flex items-center justify-center shadow-xs"
-              >
-                <Icon :icon="iconPin" class="w-2.5 h-2.5 am-accent-text" />
-              </span>
             </div>
 
-            <!-- Title, Version, Update Pill & Status -->
+            <!-- Spacious 2-Row Info: Crisp 4-Char Short Name (never truncated!) + Live Badge -->
             <div class="min-w-0 flex-1">
-              <div class="flex items-center gap-1.5 min-w-0">
-                <span class="text-[15px] font-semibold text-[var(--text-primary)] truncate">
+              <div class="flex items-center gap-2 min-w-0">
+                <span class="text-[15.5px] font-semibold text-[var(--text-primary)] whitespace-nowrap">
                   {{ item.manifest.name }}
                 </span>
-                <span class="text-[11px] text-[var(--text-tertiary)] shrink-0 tabular-nums">
+                <span
+                  v-if="plugins.developerMode"
+                  class="text-[11px] text-[var(--text-tertiary)] shrink-0 tabular-nums"
+                >
                   v{{ item.manifest.version }}
                 </span>
-                <button
-                  v-if="plugins.getAvailableUpdate(item.manifest.id)"
-                  type="button"
-                  class="px-2 py-0.5 rounded-full am-accent-bg text-white text-[10px] font-bold border-0 shrink-0 am-tap"
-                  @click.stop="handleQuickUpdate(item.manifest.id)"
-                >
-                  {{ t('plugins.btnUpdate') }} v{{ plugins.getAvailableUpdate(item.manifest.id)?.manifest.version }}
-                </button>
               </div>
-              <div
-                class="text-[12px] mt-0.5 truncate flex items-center gap-1"
-                :class="
-                  plugins.getStatus(item.manifest.id).lastError
-                    ? 'text-[#d93025]'
-                    : 'text-[var(--text-secondary)]'
-                "
-              >
-                <Icon
+
+              <div class="mt-1 flex items-center gap-1.5 min-w-0">
+                <span
                   v-if="plugins.getStatus(item.manifest.id).lastError"
-                  :icon="iconAlertTriangle"
-                  class="w-3.5 h-3.5 shrink-0"
-                />
-                <span class="truncate">{{ statusSummary(item.manifest.id, item.enabled) }}</span>
+                  class="text-[12px] text-[#d93025] truncate inline-flex items-center gap-1"
+                >
+                  <Icon :icon="iconAlertTriangle" class="w-3.5 h-3.5 shrink-0" />
+                  <span class="truncate">{{ plugins.getStatus(item.manifest.id).lastError }}</span>
+                </span>
+                <span
+                  v-else-if="item.enabled && !plugins.safeMode && plugins.getBadge(item.manifest.id)"
+                  class="px-2 py-0.5 rounded-full text-[11px] font-semibold truncate max-w-full"
+                  :class="badgeClass(plugins.getBadge(item.manifest.id)?.tone)"
+                >
+                  {{ plugins.getBadge(item.manifest.id)?.text }}
+                </span>
+                <span v-else class="text-[12px] text-[var(--text-secondary)] truncate">
+                  {{ fallbackSubtitle(item.manifest.id, item.enabled) }}
+                </span>
               </div>
             </div>
 
-            <!-- Global Native iOS Pill Switch + Chevron -->
+            <!-- Right: Independent Update Pill OR Global Native Switch + Chevron -->
             <div class="flex items-center gap-2 shrink-0" @click.stop>
+              <button
+                v-if="plugins.getAvailableUpdate(item.manifest.id)"
+                type="button"
+                class="h-8 px-3 rounded-full am-accent-bg text-white text-[12px] font-semibold border-0 am-tap"
+                @click="handleQuickUpdate(item.manifest.id)"
+              >
+                {{ t('plugins.btnUpdate') }}
+              </button>
               <input
+                v-else
                 :checked="item.enabled && !plugins.safeMode"
                 :disabled="plugins.safeMode"
                 type="checkbox"
@@ -498,22 +549,52 @@ function statusSummary(id: string, enabled: boolean): string {
       </div>
     </template>
 
-    <!-- ==================== TAB B: 扩展商店 ==================== -->
+    <!-- ==================== TAB B: 扩展商店（精选推荐 + 极简列表） ==================== -->
     <template v-else>
-      <!-- Compact Official Store Hero Banner -->
-      <section class="rounded-[22px] melune-plugin-hero p-4 shadow-xs flex items-center justify-between gap-3">
-        <div class="min-w-0">
-          <div class="flex items-center gap-1.5">
-            <span class="text-[15px] font-bold text-[var(--text-primary)] truncate">
-              {{ t('plugins.storeHeroTitle') }}
-            </span>
-            <span class="px-2 py-0.5 rounded-full bg-[var(--bg-card)] text-[10px] font-semibold am-accent-text shrink-0">
-              SHA-256
-            </span>
+      <!-- App Store "精选推荐" Editorial Spotlight Carousel -->
+      <section v-if="featuredCatalog.length" class="space-y-2" data-plugin-spotlight>
+        <div class="flex items-center gap-1.5 px-2">
+          <Icon :icon="iconSparkles" class="w-3.5 h-3.5 am-accent-text" />
+          <span class="text-[12px] font-semibold uppercase tracking-wide text-[var(--text-secondary)]">
+            {{ t('plugins.featuredTitle') }}
+          </span>
+        </div>
+
+        <div class="am-hscroll flex gap-3 pb-1">
+          <div
+            v-for="item in featuredCatalog"
+            :key="`feat-${item.manifest.id}`"
+            class="w-[244px] shrink-0 rounded-[24px] p-4 bg-gradient-to-br text-white shadow-sm flex flex-col justify-between min-h-[138px] relative overflow-hidden"
+            :class="resolvePluginVisual(item.manifest).gradientClass"
+          >
+            <div class="flex items-start justify-between gap-2">
+              <div class="w-10 h-10 rounded-[13px] bg-white/20 flex items-center justify-center shrink-0">
+                <Icon :icon="resolvePluginVisual(item.manifest).icon" class="w-5.5 h-5.5 text-white" />
+              </div>
+              <button
+                type="button"
+                class="h-7.5 px-3.5 rounded-full bg-white text-[#111827] text-[12px] font-bold border-0 shrink-0 am-tap shadow-xs"
+                @click="handleStoreAction(item)"
+              >
+                {{
+                  plugins.getAvailableUpdate(item.manifest.id)
+                    ? t('plugins.btnUpdate')
+                    : plugins.getInstalledPlugin(item.manifest.id)
+                      ? t('plugins.btnOpen')
+                      : t('plugins.btnGet')
+                }}
+              </button>
+            </div>
+
+            <div class="mt-3">
+              <div class="text-[17px] font-bold tracking-tight leading-tight text-white">
+                {{ item.manifest.name }}
+              </div>
+              <p class="text-[12px] text-white/85 mt-1 m-0 line-clamp-2 leading-snug">
+                {{ item.manifest.tagline || item.manifest.description }}
+              </p>
+            </div>
           </div>
-          <p class="text-[12px] text-[var(--text-secondary)] mt-1 m-0 leading-snug">
-            {{ t('plugins.storeHeroSub') }}
-          </p>
         </div>
       </section>
 
@@ -535,7 +616,7 @@ function statusSummary(id: string, enabled: boolean): string {
         </button>
       </div>
 
-      <!-- Loading Skeleton while fetching default official source on demand -->
+      <!-- Loading Skeleton -->
       <div
         v-if="plugins.defaultLoading && !storeCatalog.length"
         class="rounded-[22px] bg-[var(--bg-card)] divide-y divide-[var(--hairline)] overflow-hidden shadow-xs"
@@ -543,14 +624,14 @@ function statusSummary(id: string, enabled: boolean): string {
         <div v-for="n in 3" :key="n" class="px-4 py-3.5 flex items-center gap-3 animate-pulse">
           <div class="w-11 h-11 rounded-[14px] bg-[var(--bg-subtle)] shrink-0" />
           <div class="flex-1 space-y-2">
-            <div class="h-3.5 w-28 rounded-full bg-[var(--bg-subtle)]" />
-            <div class="h-3 w-48 rounded-full bg-[var(--bg-subtle)]/70" />
+            <div class="h-3.5 w-20 rounded-full bg-[var(--bg-subtle)]" />
+            <div class="h-3 w-44 rounded-full bg-[var(--bg-subtle)]/70" />
           </div>
           <div class="w-14 h-8 rounded-full bg-[var(--bg-subtle)] shrink-0" />
         </div>
       </div>
 
-      <!-- Friendly Error + Retry when default fetch failed and no cached registries -->
+      <!-- Error + Retry -->
       <div
         v-else-if="plugins.defaultLoadError && !storeCatalog.length"
         class="rounded-[22px] bg-[var(--bg-card)] px-5 py-7 text-center shadow-xs space-y-3"
@@ -566,7 +647,7 @@ function statusSummary(id: string, enabled: boolean): string {
         </button>
       </div>
 
-      <!-- Store Plugin List -->
+      <!-- Curated Store List -->
       <div
         v-else-if="storeCatalog.length"
         class="rounded-[22px] bg-[var(--bg-card)] overflow-hidden divide-y divide-[var(--hairline)] shadow-xs"
@@ -574,7 +655,7 @@ function statusSummary(id: string, enabled: boolean): string {
         <div
           v-for="item in storeCatalog"
           :key="item.manifest.id"
-          class="px-4 py-3.5 flex items-center gap-3"
+          class="px-4 py-3.5 flex items-center gap-3.5"
         >
           <div
             class="w-11 h-11 rounded-[14px] bg-gradient-to-br flex items-center justify-center text-white shadow-xs shrink-0"
@@ -585,24 +666,24 @@ function statusSummary(id: string, enabled: boolean): string {
 
           <div class="min-w-0 flex-1">
             <div class="flex items-center gap-1.5 min-w-0">
-              <span class="text-[14.5px] font-semibold text-[var(--text-primary)] truncate">
+              <span class="text-[15.5px] font-semibold text-[var(--text-primary)] whitespace-nowrap">
                 {{ item.manifest.name }}
               </span>
-              <span class="text-[11px] text-[var(--text-tertiary)] shrink-0 tabular-nums">
+              <span
+                v-if="plugins.developerMode"
+                class="text-[11px] text-[var(--text-tertiary)] shrink-0 tabular-nums"
+              >
                 v{{ item.manifest.version }}
               </span>
             </div>
             <p class="text-[12px] text-[var(--text-secondary)] mt-0.5 m-0 line-clamp-2 leading-snug">
-              {{ item.manifest.description }}
+              {{ item.manifest.tagline || item.manifest.description }}
             </p>
-            <div class="text-[10.5px] text-[var(--text-tertiary)] mt-1 truncate">
-              {{ resolvePluginVisual(item.manifest).categoryLabel }} · {{ item.manifest.permissions.length }} 项权限
-            </div>
           </div>
 
           <button
             type="button"
-            class="h-8.5 px-3.5 rounded-full text-[12.5px] font-semibold border-0 shrink-0 am-tap"
+            class="h-8.5 px-4 rounded-full text-[12.5px] font-semibold border-0 shrink-0 am-tap"
             :class="
               plugins.getAvailableUpdate(item.manifest.id)
                 ? 'bg-[#ff9500] text-white'
@@ -623,7 +704,7 @@ function statusSummary(id: string, enabled: boolean): string {
         </div>
       </div>
 
-      <!-- Empty Store (e.g. user dismissed default source or empty category) -->
+      <!-- Empty Store -->
       <div
         v-else
         class="rounded-[22px] bg-[var(--bg-card)] px-5 py-7 text-center shadow-xs space-y-3"

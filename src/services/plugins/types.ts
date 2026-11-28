@@ -36,7 +36,8 @@ export type MelunePermission =
   | 'audio.resolver'
   | 'lyric.filter'
   | 'ui.panel'
-  | 'lifecycle.launch';
+  | 'lifecycle.launch'
+  | 'player.control';
 
 export const ALL_MELUNE_PERMISSIONS: readonly MelunePermission[] = [
   'storage',
@@ -47,6 +48,7 @@ export const ALL_MELUNE_PERMISSIONS: readonly MelunePermission[] = [
   'lyric.filter',
   'ui.panel',
   'lifecycle.launch',
+  'player.control',
 ] as const;
 
 export type MelunePluginCategory = 'audio' | 'lyrics' | 'account' | 'utility';
@@ -59,6 +61,8 @@ export interface MelunePluginManifest {
   author: string;
   license?: string;
   description: string;
+  tagline?: string;
+  featured?: boolean;
   icon?: string;
   category?: MelunePluginCategory;
   entry?: string;
@@ -67,6 +71,7 @@ export interface MelunePluginManifest {
   minAppVersion?: string;
   homepage?: string;
   permissions: MelunePermission[];
+  hostPermissions?: MelunePermission[];
 }
 
 export interface MeluneRegistryIndex {
@@ -231,7 +236,20 @@ export type MelunePanelBlock =
         action?: string;
         payload?: Record<string, unknown>;
       }>;
+    }
+  | {
+      type: 'collapsible';
+      id: string;
+      title: string;
+      summary?: string;
+      defaultOpen?: boolean;
+      blocks: MelunePanelBlock[];
     };
+
+export interface MelunePanelBadge {
+  text: string;
+  tone?: 'accent' | 'success' | 'warning' | 'muted';
+}
 
 export interface MelunePanelSection {
   title?: string;
@@ -244,8 +262,18 @@ export interface MelunePanelView {
 }
 
 export interface MelunePanelProvider {
+  getBadge?: () => MelunePanelBadge | null;
   render: () => Promise<MelunePanelView> | MelunePanelView;
   onAction: (action: string, payload?: Record<string, unknown>) => Promise<void> | void;
+}
+
+export interface PluginTrackSummary {
+  id: string;
+  hash: string;
+  title: string;
+  artist: string;
+  album?: string;
+  duration?: number;
 }
 
 export interface MelunePluginContext {
@@ -293,6 +321,12 @@ export interface MelunePluginContext {
     haptic: (style?: HapticStyle) => void;
     copy: (text: string) => Promise<void>;
     refreshPanel: () => void;
+  };
+  readonly player: {
+    getCurrentTrack: () => PluginTrackSummary | null;
+    isPlaying: () => boolean;
+    pause: () => Promise<void>;
+    onTrackChange: (handler: (track: PluginTrackSummary | null) => void) => void;
   };
   readonly log: (level: PluginLogLevel, message: string) => void;
   readonly registerAudioResolver: (provider: MeluneAudioResolverProvider) => void;

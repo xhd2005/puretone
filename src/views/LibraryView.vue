@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router';
 import { Icon } from '@iconify/vue';
 import iconHeartFilled from '@iconify/icons-tabler/heart-filled';
 import iconClock from '@iconify/icons-tabler/clock';
-import iconChevronRight from '@iconify/icons-tabler/chevron-right';
+import iconPlayerPlayFilled from '@iconify/icons-tabler/player-play-filled';
 import iconPlus from '@iconify/icons-tabler/plus';
 import iconDots from '@iconify/icons-tabler/dots';
 import iconLock from '@iconify/icons-tabler/lock';
@@ -12,7 +12,9 @@ import iconEdit from '@iconify/icons-tabler/edit';
 import iconTrash from '@iconify/icons-tabler/trash';
 import iconX from '@iconify/icons-tabler/x';
 import type { PlaylistSummary } from '@/types/music';
+import { kugouApi } from '@/services/kugou/kugouEngine';
 import { getPlaylistCacheKey } from '@/services/playback/playlistCoverResolver';
+import { readPlaylistSnapshot } from '@/services/playback/playlistSnapshotCache';
 import { useAccountsStore } from '@/stores/accounts';
 import { usePlayerStore } from '@/stores/player';
 import { usePlaylistsStore } from '@/stores/playlists';
@@ -34,6 +36,45 @@ const { largeTitleOpacity, compactTitleOpacity, headerGlassActive, onScroll } = 
 const favoritePlaylist = computed(() => playlistsStore.favoritePlaylist);
 const createdPlaylists = computed(() => playlistsStore.createdPlaylists);
 const collectedPlaylists = computed(() => playlistsStore.collectedPlaylists);
+const recentHeroCover = computed(() => player.recentPlays[0]?.coverUrl || '');
+
+async function playFavoritesQuick() {
+  echoSystem.haptic('light');
+  const fav = favoritePlaylist.value;
+  if (!fav) {
+    ui.loginModalOpen = true;
+    return;
+  }
+  const snap = await readPlaylistSnapshot(getPlaylistCacheKey(fav)).catch(() => null);
+  if (snap?.songs?.length) {
+    void player.playQueue(snap.songs, 0);
+    return;
+  }
+  try {
+    const res = await kugouApi.getPlaylistTracksPaged({
+      globalCollectionId: fav.globalCollectionId,
+      listId: fav.listId,
+      page: 1,
+      pagesize: 100,
+    });
+    if (res.songs.length) {
+      void player.playQueue(res.songs, 0);
+      return;
+    }
+  } catch {
+    // fallback to playlist page
+  }
+  openPlaylist(fav);
+}
+
+function playRecentQuick() {
+  echoSystem.haptic('light');
+  if (player.recentPlays.length) {
+    void player.playQueue([...player.recentPlays], 0);
+    return;
+  }
+  void router.push('/recent');
+}
 
 // Create / Edit Playlist modal state
 const editorOpen = ref(false);
@@ -175,40 +216,92 @@ watch(() => accounts.activeAccount?.userid, () => void playlistsStore.fetchPlayl
         </h1>
       </div>
 
-      <!-- Apple Music Category List -->
-      <div class="px-5 mt-1 divide-y divide-[var(--hairline)] am-hairline-t am-hairline-b">
-        <button
-          v-if="favoritePlaylist"
-          type="button"
-          class="lib-cat-row am-tap"
-          @click="openPlaylist(favoritePlaylist)"
-        >
-          <div class="flex items-center gap-3.5">
-            <Icon :icon="iconHeartFilled" class="w-6 h-6 am-accent-text" />
-            <span class="text-[18px] font-normal text-[var(--text-primary)]">{{ t('library.favorites') }}</span>
+      <!-- 2-Column Liquid Glass Quick Access Cards (compact above-the-fold layout!) -->
+      <section class="px-5 mt-1" data-library-quick-cards>
+        <div class="grid grid-cols-2 gap-3">
+          <!-- Card 1: Liked Songs -->
+          <div
+            class="lib-quick-card quick-fav am-tap"
+            role="button"
+            tabindex="0"
+            @click="favoritePlaylist ? openPlaylist(favoritePlaylist) : (ui.loginModalOpen = true)"
+          >
+            <img
+              v-if="favoritePlaylist?.coverUrl"
+              :src="favoritePlaylist.coverUrl"
+              alt=""
+              class="quick-card-bg"
+            />
+            <div class="quick-card-scrim scrim-fav" />
+            <div class="quick-card-body">
+              <div class="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center text-white">
+                <Icon :icon="iconHeartFilled" class="w-4.5 h-4.5" />
+              </div>
+              <div class="mt-auto flex items-end justify-between gap-2">
+                <div class="min-w-0">
+                  <div class="text-[16px] font-bold text-white leading-tight truncate">
+                    {{ t('library.favorites') }}
+                  </div>
+                  <div class="text-[11.5px] text-white/80 tabular-nums mt-0.5 truncate">
+                    {{
+                      favoritePlaylist
+                        ? t('common.songsCount', { count: favoritePlaylist.trackCount })
+                        : t('home.loginNow')
+                    }}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  class="quick-play-btn lg-fluid-btn am-tap shrink-0"
+                  :aria-label="t('common.play')"
+                  @click.stop="playFavoritesQuick"
+                >
+                  <Icon :icon="iconPlayerPlayFilled" class="w-3.5 h-3.5 translate-x-[0.5px] text-white" />
+                </button>
+              </div>
+            </div>
           </div>
-          <div class="flex items-center gap-1 text-[var(--text-tertiary)]">
-            <span class="text-[14px] tabular-nums">{{ favoritePlaylist.trackCount }}</span>
-            <Icon :icon="iconChevronRight" class="w-5 h-5" />
-          </div>
-        </button>
 
-        <!-- Navigates to /recent full list instead of auto-playing! -->
-        <button
-          type="button"
-          class="lib-cat-row am-tap"
-          @click="router.push('/recent')"
-        >
-          <div class="flex items-center gap-3.5">
-            <Icon :icon="iconClock" class="w-6 h-6 am-accent-text" />
-            <span class="text-[18px] font-normal text-[var(--text-primary)]">{{ t('library.recent') }}</span>
+          <!-- Card 2: Recently Played -->
+          <div
+            class="lib-quick-card quick-recent am-tap"
+            role="button"
+            tabindex="0"
+            @click="router.push('/recent')"
+          >
+            <img
+              v-if="recentHeroCover"
+              :src="recentHeroCover"
+              alt=""
+              class="quick-card-bg"
+            />
+            <div class="quick-card-scrim scrim-recent" />
+            <div class="quick-card-body">
+              <div class="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center text-white">
+                <Icon :icon="iconClock" class="w-4.5 h-4.5" />
+              </div>
+              <div class="mt-auto flex items-end justify-between gap-2">
+                <div class="min-w-0">
+                  <div class="text-[16px] font-bold text-white leading-tight truncate">
+                    {{ t('library.recent') }}
+                  </div>
+                  <div class="text-[11.5px] text-white/80 tabular-nums mt-0.5 truncate">
+                    {{ t('common.songsCount', { count: player.recentPlays.length }) }}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  class="quick-play-btn lg-fluid-btn am-tap shrink-0"
+                  :aria-label="t('common.play')"
+                  @click.stop="playRecentQuick"
+                >
+                  <Icon :icon="iconPlayerPlayFilled" class="w-3.5 h-3.5 translate-x-[0.5px] text-white" />
+                </button>
+              </div>
+            </div>
           </div>
-          <div class="flex items-center gap-1 text-[var(--text-tertiary)]">
-            <span class="text-[14px] tabular-nums">{{ player.recentPlays.length }}</span>
-            <Icon :icon="iconChevronRight" class="w-5 h-5" />
-          </div>
-        </button>
-      </div>
+        </div>
+      </section>
 
       <div v-if="!accounts.isLoggedIn" class="px-5 py-12 text-center">
         <p class="text-[15px] text-[var(--text-secondary)]">{{ t('library.loginPrompt') }}</p>
@@ -522,16 +615,67 @@ watch(() => accounts.activeAccount?.userid, () => void playlistsStore.fetchPlayl
   transition: background-color 200ms ease;
 }
 
-.lib-cat-row {
+.lib-quick-card {
+  position: relative;
+  height: 112px;
+  border-radius: 22px;
+  overflow: hidden;
+  cursor: pointer;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.24);
+}
+
+.dark .lib-quick-card {
+  box-shadow: 0 12px 26px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+
+.quick-fav {
+  background: linear-gradient(145deg, #fa243c 0%, #c81d48 58%, #541028 100%);
+}
+
+.quick-recent {
+  background: linear-gradient(145deg, #3456be 0%, #1e3170 58%, #0f1733 100%);
+}
+
+.quick-card-bg {
+  position: absolute;
+  inset: 0;
   width: 100%;
-  height: 52px;
+  height: 100%;
+  object-fit: cover;
+  transform: scale(1.1);
+  filter: blur(2px) saturate(1.18);
+}
+
+.quick-card-scrim {
+  position: absolute;
+  inset: 0;
+}
+
+.scrim-fav {
+  background: linear-gradient(180deg, rgba(250, 36, 60, 0.36) 0%, rgba(45, 10, 24, 0.80) 100%);
+}
+
+.scrim-recent {
+  background: linear-gradient(180deg, rgba(52, 86, 190, 0.38) 0%, rgba(12, 18, 40, 0.82) 100%);
+}
+
+.quick-card-body {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+}
+
+.quick-play-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 0;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  background: transparent;
-  border: 0;
-  padding: 0;
-  text-align: left;
+  justify-content: center;
 }
 
 .manage-item {

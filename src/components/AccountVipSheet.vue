@@ -642,6 +642,19 @@ async function openAuthorProfile() {
                     <span class="text-[13px] font-semibold text-[var(--text-primary)] whitespace-nowrap">
                       {{ item.manifest.name }}
                     </span>
+                    <span
+                      v-if="plugins.getBadge(item.manifest.id)"
+                      class="px-1.5 py-0.5 rounded-full text-[10px] font-semibold whitespace-nowrap"
+                      :class="
+                        plugins.getBadge(item.manifest.id)?.tone === 'success'
+                          ? 'bg-[#34c759]/14 text-[#239941]'
+                          : plugins.getBadge(item.manifest.id)?.tone === 'warning'
+                            ? 'bg-[#ff9500]/14 text-[#c97200]'
+                            : 'bg-[var(--bg-subtle)] text-[var(--text-secondary)]'
+                      "
+                    >
+                      {{ plugins.getBadge(item.manifest.id)?.text }}
+                    </span>
                   </button>
                 </div>
               </section>

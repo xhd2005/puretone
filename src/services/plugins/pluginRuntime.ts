@@ -8,6 +8,7 @@ import type {
   InstalledMelunePlugin,
   MeluneAudioResolverProvider,
   MeluneLyricFilter,
+  MelunePanelBadge,
   MelunePanelProvider,
   MelunePanelView,
   MelunePermission,
@@ -18,6 +19,7 @@ import type {
   PluginLogLevel,
   PluginResolvedAudio,
   PluginRuntimeDiagnostics,
+  PluginTrackSummary,
 } from './types';
 
 export interface PluginHostBridge {
@@ -27,6 +29,9 @@ export interface PluginHostBridge {
   getAuthForUser: (userid?: string) => { token: string; userid: string; t1?: string } | null;
   refreshAccount: (userid?: string) => Promise<void>;
   showToast: (msg: string, durationMs?: number) => void;
+  getCurrentTrack?: () => PluginTrackSummary | null;
+  isPlaying?: () => boolean;
+  pausePlayback?: () => Promise<void>;
 }
 
 const DEFAULT_HOST_BRIDGE: PluginHostBridge = {
@@ -36,6 +41,9 @@ const DEFAULT_HOST_BRIDGE: PluginHostBridge = {
   getAuthForUser: () => null,
   refreshAccount: async () => {},
   showToast: () => {},
+  getCurrentTrack: () => null,
+  isPlaying: () => false,
+  pausePlayback: async () => {},
 };
 
 const ALLOWED_KUGOU_PLUGIN_ROUTES = new Set<string>([
@@ -74,6 +82,7 @@ interface LoadedPluginEntry {
   panelProvider: MelunePanelProvider | null;
   launchHooks: Array<() => Promise<void> | void>;
   authLoginHooks: Array<(userid: string) => Promise<void> | void>;
+  trackChangeHooks: Array<(track: PluginTrackSummary | null) => void>;
   loadDurationMs: number;
   lastError: string;
 }
@@ -195,6 +204,7 @@ class MelunePluginRuntime {
       panelProvider: null,
       launchHooks: [],
       authLoginHooks: [],
+      trackChangeHooks: [],
       loadDurationMs: 0,
       lastError: '',
     };
@@ -353,6 +363,28 @@ class MelunePluginRuntime {
           this.emitPanelUpdate(id);
         },
       },
+      player: {
+        getCurrentTrack: () => {
+          this.assertPermission(id, granted, 'player.control');
+          return this.host.getCurrentTrack ? this.host.getCurrentTrack() : null;
+        },
+        isPlaying: () => {
+          this.assertPermission(id, granted, 'player.control');
+          return this.host.isPlaying ? Boolean(this.host.isPlaying()) : false;
+        },
+        pause: async () => {
+          this.assertPermission(id, granted, 'player.control');
+          if (this.host.pausePlayback) {
+            await this.host.pausePlayback();
+          }
+        },
+        onTrackChange: (handler: (track: PluginTrackSummary | null) => void) => {
+          this.assertPermission(id, granted, 'player.control');
+          if (typeof handler === 'function') {
+            entry.trackChangeHooks.push(handler);
+          }
+        },
+      },
       log: (level: PluginLogLevel, message: string) => {
         const safeLevel: PluginLogLevel = level === 'error' || level === 'warn' ? level : 'info';
         this.appendLog(id, safeLevel, message);
@@ -434,6 +466,7 @@ class MelunePluginRuntime {
       panelProvider: null,
       launchHooks: [],
       authLoginHooks: [],
+      trackChangeHooks: [],
       loadDurationMs: 0,
       lastError: message,
     });
@@ -647,6 +680,19 @@ class MelunePluginRuntime {
 
   // ---- Declarative UI Panel Host Hooks ----
 
+  getPluginBadge(pluginId: string): MelunePanelBadge | null {
+    if (this.safeMode) return null;
+    const entry = this.loaded.get(pluginId);
+    if (!entry || entry.lastError || !entry.panelProvider?.getBadge) return null;
+    try {
+      const badge = entry.panelProvider.getBadge();
+      if (!badge || !badge.text) return null;
+      return { text: String(badge.text).slice(0, 24), tone: badge.tone || 'muted' };
+    } catch {
+      return null;
+    }
+  }
+
   async renderPluginPanel(pluginId: string): Promise<MelunePanelView | null> {
     if (this.safeMode) return null;
     const entry = this.loaded.get(pluginId);
@@ -704,6 +750,30 @@ class MelunePluginRuntime {
           await hook(userid);
         } catch {
           // isolate auth hook failure
+        }
+      }
+    }
+  }
+
+  notifyTrackChange(song: Song | null): void {
+    if (this.safeMode) return;
+    const summary: PluginTrackSummary | null = song
+      ? {
+          id: song.id,
+          hash: song.hash,
+          title: song.title,
+          artist: song.artist,
+          album: song.album,
+          duration: song.duration,
+        }
+      : null;
+    for (const entry of this.loaded.values()) {
+      if (entry.lastError || !entry.trackChangeHooks.length) continue;
+      for (const hook of entry.trackChangeHooks) {
+        try {
+          hook(summary);
+        } catch {
+          // isolate track hook errors
         }
       }
     }
