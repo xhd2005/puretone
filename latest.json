@@ -1,0 +1,12 @@
+{
+  "version": "2.5.3",
+  "tag": "v2.5.3",
+  "title": "弥音 · MELUNE v2.5.3",
+  "publishedAt": "2026-11-28",
+  "releaseNotes": "弥音 · MELUNE v2.5.3 正式发布（支持大陆多路加速下载与 SHA-256 完整性校验），建议立即更新体验最新优化。",
+  "htmlUrl": "https://github.com/xhd2005/puretone/releases/tag/v2.5.3",
+  "apkFileName": "MELUNE-v2.5.3-release.apk",
+  "apkSizeBytes": 7236999,
+  "apkSha256": "b2a8bb9d590fb94ff1fa5daf94235e5260f044b5bbfdbd92f21926f4d11319a8",
+  "githubDownloadUrl": "https://github.com/xhd2005/puretone/releases/download/v2.5.3/MELUNE-v2.5.3-release.apk"
+}
