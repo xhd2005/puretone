@@ -211,7 +211,8 @@ onUnmounted(() => {
   );
 }
 
-.fluid-bg.paused .orb {
+.fluid-bg.paused .orb,
+.fluid-layer:not(.is-front) .orb {
   animation-play-state: paused;
 }
 

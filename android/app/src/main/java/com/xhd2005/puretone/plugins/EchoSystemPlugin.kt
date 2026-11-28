@@ -19,6 +19,8 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import android.provider.Settings
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
 import android.util.Base64
 import android.view.HapticFeedbackConstants
 import androidx.core.app.NotificationManagerCompat
@@ -36,13 +38,21 @@ import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
 import com.getcapacitor.annotation.Permission
 import com.getcapacitor.annotation.PermissionCallback
+import com.xhd2005.puretone.BuildConfig
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
+import java.net.URI
+import java.security.KeyStore
 import java.security.MessageDigest
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.SecretKey
+import javax.crypto.spec.GCMParameterSpec
 
 private class PureToneKvDbHelper(context: Context) :
     SQLiteOpenHelper(context, "puretone_kv.db", null, 1) {
@@ -67,6 +77,85 @@ private class PureToneKvDbHelper(context: Context) :
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
 }
 
+/**
+ * Hardware-backed Android Keystore AES-256-GCM cipher for sensitive KV keys (e.g. `accounts.v1`).
+ * Seamlessly reads legacy plaintext values from v2.4.11 and earlier, flagging them for silent
+ * background migration, and falls back gracefully on broken OEM Keystore implementations.
+ */
+private object SensitiveKvCipher {
+    private const val ANDROID_KEYSTORE = "AndroidKeyStore"
+    private const val KEY_ALIAS = "melune_kv_master_key_v1"
+    private const val TRANSFORMATION = "AES/GCM/NoPadding"
+    private const val GCM_IV_LEN = 12
+    private const val GCM_TAG_BITS = 128
+    const val ENC_PREFIX = "ptenc:v1:"
+
+    @Synchronized
+    private fun getOrCreateKey(): SecretKey? {
+        return try {
+            val ks = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+            val existing = ks.getKey(KEY_ALIAS, null) as? SecretKey
+            if (existing != null) return existing
+
+            val kg = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
+            val spec = KeyGenParameterSpec.Builder(
+                KEY_ALIAS,
+                KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
+            )
+                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                .setKeySize(256)
+                .build()
+            kg.init(spec)
+            kg.generateKey()
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    fun encrypt(plain: String): String {
+        if (plain.isEmpty()) return plain
+        return try {
+            val key = getOrCreateKey() ?: return plain
+            val cipher = Cipher.getInstance(TRANSFORMATION)
+            cipher.init(Cipher.ENCRYPT_MODE, key)
+            val iv = cipher.iv
+            if (iv == null || iv.size != GCM_IV_LEN) return plain
+            val cipherBytes = cipher.doFinal(plain.toByteArray(Charsets.UTF_8))
+            val combined = ByteArray(GCM_IV_LEN + cipherBytes.size)
+            System.arraycopy(iv, 0, combined, 0, GCM_IV_LEN)
+            System.arraycopy(cipherBytes, 0, combined, GCM_IV_LEN, cipherBytes.size)
+            ENC_PREFIX + Base64.encodeToString(combined, Base64.NO_WRAP)
+        } catch (_: Exception) {
+            // Graceful fallback on exotic ROM Keystore failures so accounts are never lost
+            plain
+        }
+    }
+
+    /**
+     * Returns `(decodedValue, needsMigration)`.
+     * Legacy unencrypted values are returned losslessly with `needsMigration = true`.
+     */
+    fun decrypt(stored: String): Pair<String?, Boolean> {
+        if (!stored.startsWith(ENC_PREFIX)) {
+            return stored to true
+        }
+        return try {
+            val key = getOrCreateKey() ?: return null to false
+            val payload = Base64.decode(stored.substring(ENC_PREFIX.length), Base64.NO_WRAP)
+            if (payload.size <= GCM_IV_LEN) return null to false
+            val iv = payload.copyOfRange(0, GCM_IV_LEN)
+            val cipherBytes = payload.copyOfRange(GCM_IV_LEN, payload.size)
+            val cipher = Cipher.getInstance(TRANSFORMATION)
+            cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(GCM_TAG_BITS, iv))
+            val plainBytes = cipher.doFinal(cipherBytes)
+            String(plainBytes, Charsets.UTF_8) to false
+        } catch (_: Exception) {
+            null to false
+        }
+    }
+}
+
 @CapacitorPlugin(
     name = "EchoSystem",
     permissions = [
@@ -77,6 +166,8 @@ class EchoSystemPlugin : Plugin() {
 
     private lateinit var dbHelper: PureToneKvDbHelper
     private val updateExecutor = Executors.newSingleThreadExecutor()
+    private val ioExecutor = Executors.newSingleThreadExecutor()
+    private val updateDownloadInProgress = AtomicBoolean(false)
     private val updateHttpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(35, TimeUnit.SECONDS)
@@ -122,16 +213,50 @@ class EchoSystemPlugin : Plugin() {
 
     override fun handleOnDestroy() {
         if (instance === this) instance = null
-        if (::dbHelper.isInitialized) dbHelper.close()
+        updateExecutor.shutdownNow()
+        ioExecutor.shutdownNow()
+        if (::dbHelper.isInitialized) {
+            try {
+                dbHelper.close()
+            } catch (_: Exception) {
+            }
+        }
         super.handleOnDestroy()
+    }
+
+    private fun kvWriteRaw(key: String, rawValue: String) {
+        val cv = ContentValues().apply {
+            put("k", key)
+            put("v", rawValue)
+            put("updated_at", System.currentTimeMillis())
+        }
+        dbHelper.writableDatabase.insertWithOnConflict("kv_store", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
     }
 
     @PluginMethod
     fun kvGet(call: PluginCall) {
         val key = call.getString("key") ?: return call.reject("Missing key")
         var value: String? = null
-        dbHelper.readableDatabase.rawQuery("SELECT v FROM kv_store WHERE k = ?", arrayOf(key)).use { c ->
-            if (c.moveToFirst()) value = c.getString(0)
+        try {
+            dbHelper.readableDatabase.rawQuery("SELECT v FROM kv_store WHERE k = ?", arrayOf(key)).use { c ->
+                if (c.moveToFirst()) value = c.getString(0)
+            }
+            if (value != null && isSensitiveKvKey(key)) {
+                val (decoded, needsMigration) = SensitiveKvCipher.decrypt(value!!)
+                if (needsMigration && !decoded.isNullOrEmpty()) {
+                    val encrypted = SensitiveKvCipher.encrypt(decoded)
+                    if (encrypted.startsWith(SensitiveKvCipher.ENC_PREFIX)) {
+                        try {
+                            kvWriteRaw(key, encrypted)
+                        } catch (_: Exception) {
+                            // Migration retry on next launch
+                        }
+                    }
+                }
+                value = decoded
+            }
+        } catch (_: Exception) {
+            value = null
         }
         call.resolve(JSObject().put("value", value))
     }
@@ -140,19 +265,26 @@ class EchoSystemPlugin : Plugin() {
     fun kvSet(call: PluginCall) {
         val key = call.getString("key") ?: return call.reject("Missing key")
         val value = call.getString("value") ?: ""
-        val cv = ContentValues().apply {
-            put("k", key)
-            put("v", value)
-            put("updated_at", System.currentTimeMillis())
+        try {
+            val stored = if (isSensitiveKvKey(key) && value.isNotEmpty()) {
+                SensitiveKvCipher.encrypt(value)
+            } else {
+                value
+            }
+            kvWriteRaw(key, stored)
+            call.resolve()
+        } catch (e: Exception) {
+            call.reject("KV write failed: ${e.message}", e)
         }
-        dbHelper.writableDatabase.insertWithOnConflict("kv_store", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
-        call.resolve()
     }
 
     @PluginMethod
     fun kvDelete(call: PluginCall) {
         val key = call.getString("key") ?: return call.reject("Missing key")
-        dbHelper.writableDatabase.delete("kv_store", "k = ?", arrayOf(key))
+        try {
+            dbHelper.writableDatabase.delete("kv_store", "k = ?", arrayOf(key))
+        } catch (_: Exception) {
+        }
         call.resolve()
     }
 
@@ -160,10 +292,13 @@ class EchoSystemPlugin : Plugin() {
     fun kvKeys(call: PluginCall) {
         val prefix = call.getString("prefix") ?: ""
         val keys = JSArray()
-        val sql = if (prefix.isEmpty()) "SELECT k FROM kv_store" else "SELECT k FROM kv_store WHERE k LIKE ?"
-        val args = if (prefix.isEmpty()) null else arrayOf("$prefix%")
-        dbHelper.readableDatabase.rawQuery(sql, args).use { c ->
-            while (c.moveToNext()) keys.put(c.getString(0))
+        try {
+            val sql = if (prefix.isEmpty()) "SELECT k FROM kv_store" else "SELECT k FROM kv_store WHERE k LIKE ?"
+            val args = if (prefix.isEmpty()) null else arrayOf("$prefix%")
+            dbHelper.readableDatabase.rawQuery(sql, args).use { c ->
+                while (c.moveToNext()) keys.put(c.getString(0))
+            }
+        } catch (_: Exception) {
         }
         call.resolve(JSObject().put("keys", keys))
     }
@@ -216,6 +351,18 @@ class EchoSystemPlugin : Plugin() {
     }
 
     @PluginMethod
+    fun exitApp(call: PluginCall) {
+        activity?.runOnUiThread {
+            try {
+                activity.finishAffinity()
+            } catch (_: Exception) {
+                activity.finish()
+            }
+        }
+        call.resolve()
+    }
+
+    @PluginMethod
     fun getLaunchFlags(call: PluginCall) {
         val pkgInfo = try {
             context.packageManager.getPackageInfo(context.packageName, 0)
@@ -226,15 +373,15 @@ class EchoSystemPlugin : Plugin() {
         pendingOpenNowPlaying = false
 
         val versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            pkgInfo?.longVersionCode?.toInt() ?: 16
+            pkgInfo?.longVersionCode?.toInt() ?: BuildConfig.VERSION_CODE
         } else {
             @Suppress("DEPRECATION")
-            pkgInfo?.versionCode ?: 16
+            pkgInfo?.versionCode ?: BuildConfig.VERSION_CODE
         }
         call.resolve(
             JSObject()
                 .put("openNowPlaying", openNowPlaying)
-                .put("versionName", pkgInfo?.versionName ?: "2.4.9")
+                .put("versionName", pkgInfo?.versionName ?: BuildConfig.VERSION_NAME)
                 .put("versionCode", versionCode),
         )
     }
@@ -381,6 +528,7 @@ class EchoSystemPlugin : Plugin() {
 
     @PluginMethod
     fun downloadAndInstallApk(call: PluginCall) {
+        val expectedSha256 = call.getString("expectedSha256")?.trim()?.lowercase().orEmpty()
         val candidateList = mutableListOf<Pair<String, String>>()
         val rawCandidates = call.getArray("candidates")
         if (rawCandidates != null) {
@@ -388,20 +536,23 @@ class EchoSystemPlugin : Plugin() {
                 val obj = rawCandidates.optJSONObject(i) ?: continue
                 val u = obj.optString("url", "").trim()
                 val lbl = obj.optString("label", "").trim().ifEmpty { "线路 ${i + 1}" }
-                if (u.startsWith("http://") || u.startsWith("https://")) {
+                if (isUpdateCandidateAllowed(u, expectedSha256)) {
                     candidateList.add(u to lbl)
                 }
             }
         }
         val fallbackUrl = call.getString("url")?.trim() ?: ""
-        if (candidateList.isEmpty() && (fallbackUrl.startsWith("http://") || fallbackUrl.startsWith("https://"))) {
+        if (candidateList.isEmpty() && isUpdateCandidateAllowed(fallbackUrl, expectedSha256)) {
             candidateList.add(fallbackUrl to "GitHub")
         }
         if (candidateList.isEmpty()) {
-            call.resolve(JSObject().put("started", false).put("message", "无效的更新包地址"))
+            call.resolve(
+                JSObject()
+                    .put("started", false)
+                    .put("message", "更新地址须为 HTTPS，且非 GitHub 镜像须具备有效 SHA-256 完整性校验"),
+            )
             return
         }
-        val expectedSha256 = call.getString("expectedSha256")?.trim()?.lowercase().orEmpty()
         val rawName = call.getString("fileName")?.trim().orEmpty()
         val safeName = if (rawName.endsWith(".apk", ignoreCase = true)) {
             rawName.replace(Regex("[^a-zA-Z0-9._-]"), "_")
@@ -428,6 +579,15 @@ class EchoSystemPlugin : Plugin() {
             return
         }
 
+        if (!updateDownloadInProgress.compareAndSet(false, true)) {
+            call.resolve(
+                JSObject()
+                    .put("started", false)
+                    .put("message", "更新包正在下载中，请稍候"),
+            )
+            return
+        }
+
         call.resolve(JSObject().put("started", true).put("needsInstallPermission", false))
 
         updateExecutor.execute {
@@ -436,97 +596,101 @@ class EchoSystemPlugin : Plugin() {
             val apkFile = File(updatesDir, safeName)
             var lastError = "所有更新线路均暂不可达，请稍后重试或点击浏览器加速下载"
 
-            for ((idx, pair) in candidateList.withIndex()) {
-                val (targetUrl, nodeLabel) = pair
-                if (apkFile.exists()) apkFile.delete()
-                notifyUpdateProgress(0L, 0L, if (idx == 0) 2 else 4, false, nodeLabel, null)
+            try {
+                for ((idx, pair) in candidateList.withIndex()) {
+                    val (targetUrl, nodeLabel) = pair
+                    if (apkFile.exists()) apkFile.delete()
+                    notifyUpdateProgress(0L, 0L, if (idx == 0) 2 else 4, false, nodeLabel, null)
 
-                try {
-                    val req = Request.Builder()
-                        .url(targetUrl)
-                        .header("User-Agent", "MELUNE-Android/2.4.9")
-                        .build()
-                    val downloadedOk = updateHttpClient.newCall(req).execute().use { res ->
-                        if (!res.isSuccessful) {
-                            lastError = "$nodeLabel 失败（HTTP ${res.code}）"
-                            return@use false
-                        }
-                        val body = res.body ?: run {
-                            lastError = "$nodeLabel 响应为空"
-                            return@use false
-                        }
-                        val total = body.contentLength().coerceAtLeast(0L)
-                        var downloaded = 0L
-                        var lastEmit = 0L
-                        val buf = ByteArray(16 * 1024)
-                        val headerBytes = ByteArray(4)
-                        var headerRead = 0
-                        val shaDigest = MessageDigest.getInstance("SHA-256")
-
-                        body.byteStream().use { input ->
-                            FileOutputStream(apkFile).use { out ->
-                                while (true) {
-                                    val read = input.read(buf)
-                                    if (read == -1) break
-                                    if (headerRead < 4) {
-                                        val copyLen = minOf(read, 4 - headerRead)
-                                        System.arraycopy(buf, 0, headerBytes, headerRead, copyLen)
-                                        headerRead += copyLen
-                                        if (headerRead == 4 && !isValidApkHeader(headerBytes)) {
-                                            lastError = "$nodeLabel 返回非 APK 内容，正在切换线路"
-                                            return@use false
-                                        }
-                                    }
-                                    out.write(buf, 0, read)
-                                    shaDigest.update(buf, 0, read)
-                                    downloaded += read
-                                    val now = System.currentTimeMillis()
-                                    if (now - lastEmit >= 160L) {
-                                        lastEmit = now
-                                        val pct = if (total > 0L) ((downloaded * 100L) / total).toInt().coerceIn(1, 99) else 0
-                                        notifyUpdateProgress(downloaded, total, pct, false, nodeLabel, null)
-                                    }
-                                }
-                                out.flush()
-                            }
-                        }
-
-                        if (headerRead < 4 || !isValidApkHeader(headerBytes) || downloaded < 1024L * 100L) {
-                            lastError = "$nodeLabel 安装包不完整，正在切换线路"
-                            return@use false
-                        }
-                        if (expectedSha256.length == 64) {
-                            val actualSha = shaDigest.digest().joinToString("") { "%02x".format(it) }
-                            if (!actualSha.equals(expectedSha256, ignoreCase = true)) {
-                                lastError = "$nodeLabel 完整性校验失败，正在切换安全线路"
+                    try {
+                        val req = Request.Builder()
+                            .url(targetUrl)
+                            .header("User-Agent", "MELUNE-Android/${BuildConfig.VERSION_NAME}")
+                            .build()
+                        val downloadedOk = updateHttpClient.newCall(req).execute().use { res ->
+                            if (!res.isSuccessful) {
+                                lastError = "$nodeLabel 失败（HTTP ${res.code}）"
                                 return@use false
                             }
+                            val body = res.body ?: run {
+                                lastError = "$nodeLabel 响应为空"
+                                return@use false
+                            }
+                            val total = body.contentLength().coerceAtLeast(0L)
+                            var downloaded = 0L
+                            var lastEmit = 0L
+                            val buf = ByteArray(16 * 1024)
+                            val headerBytes = ByteArray(4)
+                            var headerRead = 0
+                            val shaDigest = MessageDigest.getInstance("SHA-256")
+
+                            body.byteStream().use { input ->
+                                FileOutputStream(apkFile).use { out ->
+                                    while (true) {
+                                        val read = input.read(buf)
+                                        if (read == -1) break
+                                        if (headerRead < 4) {
+                                            val copyLen = minOf(read, 4 - headerRead)
+                                            System.arraycopy(buf, 0, headerBytes, headerRead, copyLen)
+                                            headerRead += copyLen
+                                            if (headerRead == 4 && !isValidApkHeader(headerBytes)) {
+                                                lastError = "$nodeLabel 返回非 APK 内容，正在切换线路"
+                                                return@use false
+                                            }
+                                        }
+                                        out.write(buf, 0, read)
+                                        shaDigest.update(buf, 0, read)
+                                        downloaded += read
+                                        val now = System.currentTimeMillis()
+                                        if (now - lastEmit >= 160L) {
+                                            lastEmit = now
+                                            val pct = if (total > 0L) ((downloaded * 100L) / total).toInt().coerceIn(1, 99) else 0
+                                            notifyUpdateProgress(downloaded, total, pct, false, nodeLabel, null)
+                                        }
+                                    }
+                                    out.flush()
+                                }
+                            }
+
+                            if (headerRead < 4 || !isValidApkHeader(headerBytes) || downloaded < 1024L * 100L) {
+                                lastError = "$nodeLabel 安装包不完整，正在切换线路"
+                                return@use false
+                            }
+                            if (isValidSha256Hex(expectedSha256)) {
+                                val actualSha = shaDigest.digest().joinToString("") { "%02x".format(it) }
+                                if (!actualSha.equals(expectedSha256, ignoreCase = true)) {
+                                    lastError = "$nodeLabel 完整性校验失败，正在切换安全线路"
+                                    return@use false
+                                }
+                            }
+
+                            notifyUpdateProgress(downloaded, total.coerceAtLeast(downloaded), 100, true, nodeLabel, null)
+                            true
                         }
 
-                        notifyUpdateProgress(downloaded, total.coerceAtLeast(downloaded), 100, true, nodeLabel, null)
-                        true
-                    }
-
-                    if (downloadedOk) {
-                        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", apkFile)
-                        val installIntent = Intent(Intent.ACTION_VIEW).apply {
-                            setDataAndType(uri, "application/vnd.android.package-archive")
-                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                        if (downloadedOk) {
+                            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", apkFile)
+                            val installIntent = Intent(Intent.ACTION_VIEW).apply {
+                                setDataAndType(uri, "application/vnd.android.package-archive")
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+                            context.startActivity(installIntent)
+                            return@execute
                         }
-                        context.startActivity(installIntent)
-                        return@execute
-                    }
-                } catch (e: Exception) {
-                    lastError = "$nodeLabel 连接失败：${e.message ?: "超时"}"
-                } finally {
-                    if (!apkFile.exists() || apkFile.length() < 1024L * 100L) {
-                        apkFile.delete()
+                    } catch (e: Exception) {
+                        lastError = "$nodeLabel 连接失败：${e.message ?: "超时"}"
+                    } finally {
+                        if (!apkFile.exists() || apkFile.length() < 1024L * 100L) {
+                            apkFile.delete()
+                        }
                     }
                 }
-            }
 
-            if (apkFile.exists()) apkFile.delete()
-            notifyUpdateProgress(0L, 0L, 0, false, null, lastError)
+                if (apkFile.exists()) apkFile.delete()
+                notifyUpdateProgress(0L, 0L, 0, false, null, lastError)
+            } finally {
+                updateDownloadInProgress.set(false)
+            }
         }
     }
 
@@ -590,97 +754,39 @@ class EchoSystemPlugin : Plugin() {
     @PluginMethod
     fun launchKugouWithQr(call: PluginCall) {
         val rawB64 = call.getString("base64Image")?.trim() ?: ""
-        val saved = if (rawB64.isNotEmpty()) {
-            val cleanB64 = rawB64.substringAfter("base64,", rawB64)
-            try {
-                val bytes = Base64.decode(cleanB64, Base64.DEFAULT)
-                saveImageToGallery(bytes, "puretone_kugou_qr_${System.currentTimeMillis()}.png", "image/png")
-            } catch (_: Exception) {
-                false
-            }
-        } else {
-            false
-        }
-
-        val targetPkg = when {
-            isPackageInstalled(KUGOU_LITE_PKG) -> KUGOU_LITE_PKG
-            isPackageInstalled(KUGOU_MAIN_PKG) -> KUGOU_MAIN_PKG
-            else -> null
-        }
-
-        if (targetPkg == null) {
-            call.resolve(
-                JSObject()
-                    .put("launched", false)
-                    .put("savedToGallery", saved)
-                    .put("appName", "")
-                    .put("message", if (saved) "二维码已存至相册首张，未检测到酷狗客户端" else "未检测到酷狗客户端"),
-            )
-            return
-        }
-
-        val appLabel = if (targetPkg == KUGOU_LITE_PKG) "酷狗概念版" else "酷狗音乐"
-        val launched = try {
-            val launchIntent = context.packageManager.getLaunchIntentForPackage(targetPkg)
-            if (launchIntent != null) {
-                launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                context.startActivity(launchIntent)
-                true
+        ioExecutor.execute {
+            val saved = if (rawB64.isNotEmpty()) {
+                val cleanB64 = rawB64.substringAfter("base64,", rawB64)
+                try {
+                    val bytes = Base64.decode(cleanB64, Base64.DEFAULT)
+                    saveImageToGallery(bytes, "puretone_kugou_qr_${System.currentTimeMillis()}.png", "image/png")
+                } catch (_: Exception) {
+                    false
+                }
             } else {
                 false
             }
-        } catch (_: Exception) {
-            false
-        }
 
-        call.resolve(
-            JSObject()
-                .put("launched", launched)
-                .put("savedToGallery", saved)
-                .put("appName", appLabel)
-                .put("message", if (launched) "已存相册首张并打开$appLabel，点扫一扫选取相册即可登录" else "无法唤起$appLabel"),
-        )
-    }
-
-    @PluginMethod
-    fun launchWeChatScanWithQr(call: PluginCall) {
-        val rawB64 = call.getString("base64Image")?.trim() ?: ""
-        if (rawB64.isEmpty()) {
-            call.reject("Missing base64Image")
-            return
-        }
-        val cleanB64 = rawB64.substringAfter("base64,", rawB64)
-        val bytes = try {
-            Base64.decode(cleanB64, Base64.DEFAULT)
-        } catch (e: Exception) {
-            call.reject("Invalid base64 image", e)
-            return
-        }
-
-        val saved = saveImageToGallery(bytes, "puretone_wx_login_${System.currentTimeMillis()}.jpg", "image/jpeg")
-
-        if (!isPackageInstalled(WECHAT_PKG)) {
-            call.resolve(
-                JSObject()
-                    .put("launched", false)
-                    .put("savedToGallery", saved)
-                    .put("message", "未检测到微信客户端"),
-            )
-            return
-        }
-
-        val launched = try {
-            val scanIntent = Intent().apply {
-                component = ComponentName(WECHAT_PKG, "com.tencent.mm.ui.LauncherUI")
-                action = Intent.ACTION_VIEW
-                putExtra("LauncherUI.From.Scaner.Shortcut", true)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            val targetPkg = when {
+                isPackageInstalled(KUGOU_LITE_PKG) -> KUGOU_LITE_PKG
+                isPackageInstalled(KUGOU_MAIN_PKG) -> KUGOU_MAIN_PKG
+                else -> null
             }
-            context.startActivity(scanIntent)
-            true
-        } catch (_: Exception) {
-            try {
-                val launchIntent = context.packageManager.getLaunchIntentForPackage(WECHAT_PKG)
+
+            if (targetPkg == null) {
+                call.resolve(
+                    JSObject()
+                        .put("launched", false)
+                        .put("savedToGallery", saved)
+                        .put("appName", "")
+                        .put("message", if (saved) "二维码已存至相册首张，未检测到酷狗客户端" else "未检测到酷狗客户端"),
+                )
+                return@execute
+            }
+
+            val appLabel = if (targetPkg == KUGOU_LITE_PKG) "酷狗概念版" else "酷狗音乐"
+            val launched = try {
+                val launchIntent = context.packageManager.getLaunchIntentForPackage(targetPkg)
                 if (launchIntent != null) {
                     launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     context.startActivity(launchIntent)
@@ -691,14 +797,76 @@ class EchoSystemPlugin : Plugin() {
             } catch (_: Exception) {
                 false
             }
-        }
 
-        call.resolve(
-            JSObject()
-                .put("launched", launched)
-                .put("savedToGallery", saved)
-                .put("message", if (launched) "已保存至相册首张并打开微信" else "无法唤起微信"),
-        )
+            call.resolve(
+                JSObject()
+                    .put("launched", launched)
+                    .put("savedToGallery", saved)
+                    .put("appName", appLabel)
+                    .put("message", if (launched) "已存相册首张并打开$appLabel，点扫一扫选取相册即可登录" else "无法唤起$appLabel"),
+            )
+        }
+    }
+
+    @PluginMethod
+    fun launchWeChatScanWithQr(call: PluginCall) {
+        val rawB64 = call.getString("base64Image")?.trim() ?: ""
+        if (rawB64.isEmpty()) {
+            call.reject("Missing base64Image")
+            return
+        }
+        ioExecutor.execute {
+            val cleanB64 = rawB64.substringAfter("base64,", rawB64)
+            val bytes = try {
+                Base64.decode(cleanB64, Base64.DEFAULT)
+            } catch (e: Exception) {
+                call.reject("Invalid base64 image", e)
+                return@execute
+            }
+
+            val saved = saveImageToGallery(bytes, "puretone_wx_login_${System.currentTimeMillis()}.jpg", "image/jpeg")
+
+            if (!isPackageInstalled(WECHAT_PKG)) {
+                call.resolve(
+                    JSObject()
+                        .put("launched", false)
+                        .put("savedToGallery", saved)
+                        .put("message", "未检测到微信客户端"),
+                )
+                return@execute
+            }
+
+            val launched = try {
+                val scanIntent = Intent().apply {
+                    component = ComponentName(WECHAT_PKG, "com.tencent.mm.ui.LauncherUI")
+                    action = Intent.ACTION_VIEW
+                    putExtra("LauncherUI.From.Scaner.Shortcut", true)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                }
+                context.startActivity(scanIntent)
+                true
+            } catch (_: Exception) {
+                try {
+                    val launchIntent = context.packageManager.getLaunchIntentForPackage(WECHAT_PKG)
+                    if (launchIntent != null) {
+                        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        context.startActivity(launchIntent)
+                        true
+                    } else {
+                        false
+                    }
+                } catch (_: Exception) {
+                    false
+                }
+            }
+
+            call.resolve(
+                JSObject()
+                    .put("launched", launched)
+                    .put("savedToGallery", saved)
+                    .put("message", if (launched) "已保存至相册首张并打开微信" else "无法唤起微信"),
+            )
+        }
     }
 
     @PluginMethod
@@ -708,19 +876,21 @@ class EchoSystemPlugin : Plugin() {
             call.reject("Missing base64Image")
             return
         }
-        val cleanB64 = rawB64.substringAfter("base64,", rawB64)
-        val bytes = try {
-            Base64.decode(cleanB64, Base64.DEFAULT)
-        } catch (e: Exception) {
-            call.reject("Invalid base64 image", e)
-            return
-        }
         val rawName = call.getString("fileName")?.trim().takeIf { !it.isNullOrBlank() }
             ?: "MELUNE_Poster_${System.currentTimeMillis()}.png"
-        val safeName = rawName.replace(Regex("[^a-zA-Z0-9._-]"), "_")
-        val mime = if (safeName.endsWith(".jpg", true) || safeName.endsWith(".jpeg", true)) "image/jpeg" else "image/png"
-        val saved = saveImageToGallery(bytes, safeName, mime)
-        call.resolve(JSObject().put("saved", saved))
+        ioExecutor.execute {
+            val cleanB64 = rawB64.substringAfter("base64,", rawB64)
+            val bytes = try {
+                Base64.decode(cleanB64, Base64.DEFAULT)
+            } catch (e: Exception) {
+                call.reject("Invalid base64 image", e)
+                return@execute
+            }
+            val safeName = rawName.replace(Regex("[^a-zA-Z0-9._-]"), "_")
+            val mime = if (safeName.endsWith(".jpg", true) || safeName.endsWith(".jpeg", true)) "image/jpeg" else "image/png"
+            val saved = saveImageToGallery(bytes, safeName, mime)
+            call.resolve(JSObject().put("saved", saved))
+        }
     }
 
     @PluginMethod
@@ -730,30 +900,33 @@ class EchoSystemPlugin : Plugin() {
             call.reject("Missing base64Image")
             return
         }
-        val cleanB64 = rawB64.substringAfter("base64,", rawB64)
-        val bytes = try {
-            Base64.decode(cleanB64, Base64.DEFAULT)
-        } catch (e: Exception) {
-            call.reject("Invalid base64 image", e)
-            return
-        }
         val title = call.getString("title")?.trim().takeIf { !it.isNullOrBlank() } ?: "分享歌词海报"
-        try {
-            val cacheFile = File(context.cacheDir, "puretone_share_poster.png")
-            cacheFile.writeBytes(bytes)
-            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", cacheFile)
-            val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                type = "image/png"
-                putExtra(Intent.EXTRA_STREAM, uri)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        ioExecutor.execute {
+            val cleanB64 = rawB64.substringAfter("base64,", rawB64)
+            val bytes = try {
+                Base64.decode(cleanB64, Base64.DEFAULT)
+            } catch (e: Exception) {
+                call.reject("Invalid base64 image", e)
+                return@execute
             }
-            val chooser = Intent.createChooser(shareIntent, title).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            try {
+                val shareDir = File(context.cacheDir, "share").apply { if (!exists()) mkdirs() }
+                val cacheFile = File(shareDir, "puretone_share_poster.png")
+                cacheFile.writeBytes(bytes)
+                val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", cacheFile)
+                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                    type = "image/png"
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                val chooser = Intent.createChooser(shareIntent, title).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(chooser)
+                call.resolve(JSObject().put("launched", true))
+            } catch (e: Exception) {
+                call.resolve(JSObject().put("launched", false).put("message", e.message ?: "无法调起系统分享"))
             }
-            context.startActivity(chooser)
-            call.resolve(JSObject().put("launched", true))
-        } catch (e: Exception) {
-            call.resolve(JSObject().put("launched", false).put("message", e.message ?: "无法调起系统分享"))
         }
     }
 
@@ -764,45 +937,48 @@ class EchoSystemPlugin : Plugin() {
             call.reject("Missing base64Image")
             return
         }
-        val cleanB64 = rawB64.substringAfter("base64,", rawB64)
-        val bytes = try {
-            Base64.decode(cleanB64, Base64.DEFAULT)
-        } catch (e: Exception) {
-            call.reject("Invalid base64 image", e)
-            return
-        }
-
-        try {
-            val cacheFile = File(context.cacheDir, "wx_login_qr.jpg")
-            cacheFile.writeBytes(bytes)
-            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", cacheFile)
-
-            val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                type = "image/jpeg"
-                putExtra(Intent.EXTRA_STREAM, uri)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        ioExecutor.execute {
+            val cleanB64 = rawB64.substringAfter("base64,", rawB64)
+            val bytes = try {
+                Base64.decode(cleanB64, Base64.DEFAULT)
+            } catch (e: Exception) {
+                call.reject("Invalid base64 image", e)
+                return@execute
             }
 
-            if (isPackageInstalled(WECHAT_PKG)) {
-                try {
-                    val wxDirect = Intent(shareIntent).apply {
-                        component = ComponentName(WECHAT_PKG, "com.tencent.mm.ui.tools.ShareImgUI")
-                    }
-                    context.startActivity(wxDirect)
-                    call.resolve(JSObject().put("launched", true).put("message", "已唤起微信分享，请发给文件传输助手并长按识别"))
-                    return
-                } catch (_: Exception) {
-                    // Fallback to generic chooser
+            try {
+                val shareDir = File(context.cacheDir, "share").apply { if (!exists()) mkdirs() }
+                val cacheFile = File(shareDir, "wx_login_qr.jpg")
+                cacheFile.writeBytes(bytes)
+                val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", cacheFile)
+
+                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                    type = "image/jpeg"
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
-            }
 
-            val chooser = Intent.createChooser(shareIntent, "发送到微信完成授权").apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                if (isPackageInstalled(WECHAT_PKG)) {
+                    try {
+                        val wxDirect = Intent(shareIntent).apply {
+                            component = ComponentName(WECHAT_PKG, "com.tencent.mm.ui.tools.ShareImgUI")
+                        }
+                        context.startActivity(wxDirect)
+                        call.resolve(JSObject().put("launched", true).put("message", "已唤起微信分享，请发给文件传输助手并长按识别"))
+                        return@execute
+                    } catch (_: Exception) {
+                        // Fallback to generic chooser
+                    }
+                }
+
+                val chooser = Intent.createChooser(shareIntent, "发送到微信完成授权").apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(chooser)
+                call.resolve(JSObject().put("launched", true).put("message", "请选择微信发送并长按识别登录"))
+            } catch (e: Exception) {
+                call.resolve(JSObject().put("launched", false).put("message", "唤起微信分享失败：${e.message}"))
             }
-            context.startActivity(chooser)
-            call.resolve(JSObject().put("launched", true).put("message", "请选择微信发送并长按识别登录"))
-        } catch (e: Exception) {
-            call.resolve(JSObject().put("launched", false).put("message", "唤起微信分享失败：${e.message}"))
         }
     }
 
@@ -857,6 +1033,7 @@ class EchoSystemPlugin : Plugin() {
         private const val LEGACY_REMINDER_CHANNEL_ID = "puretone_daily_vip_reminder"
         private const val LEGACY_REMINDER_NOTIFICATION_ID = 202611
         private const val LEGACY_REMINDER_ALARM_REQ_CODE = 202613
+        private val SHA256_REGEX = Regex("^[0-9a-fA-F]{64}$")
 
         @Volatile
         private var instance: EchoSystemPlugin? = null
@@ -878,6 +1055,42 @@ class EchoSystemPlugin : Plugin() {
             } else {
                 pendingOpenNowPlaying = true
             }
+        }
+
+        fun isSensitiveKvKey(key: String): Boolean {
+            val clean = key.trim()
+            return clean == "accounts.v1" || clean.startsWith("accounts.")
+        }
+
+        fun isValidSha256Hex(sha: String?): Boolean {
+            val clean = sha?.trim().orEmpty()
+            return SHA256_REGEX.matches(clean)
+        }
+
+        fun isOfficialGithubApkHost(host: String?): Boolean {
+            val h = host?.trim()?.lowercase().orEmpty()
+            return h == "github.com" ||
+                h.endsWith(".github.com") ||
+                h == "objects.githubusercontent.com" ||
+                h == "release-assets.githubusercontent.com"
+        }
+
+        /**
+         * Enforces strict APK update download security:
+         * 1. Cleartext HTTP is NEVER permitted for APK updates.
+         * 2. Non-GitHub mirrors/proxies MUST carry a valid 64-char SHA-256 checksum to prevent MITM tampering.
+         */
+        fun isUpdateCandidateAllowed(url: String?, expectedSha256: String?): Boolean {
+            val clean = url?.trim().orEmpty()
+            if (!clean.startsWith("https://", ignoreCase = true)) return false
+            val host = try {
+                URI(clean).host?.lowercase().orEmpty()
+            } catch (_: Exception) {
+                return false
+            }
+            if (host.isEmpty()) return false
+            if (isOfficialGithubApkHost(host)) return true
+            return isValidSha256Hex(expectedSha256)
         }
 
         /**

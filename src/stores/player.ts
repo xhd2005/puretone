@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia';
 import { computed, ref, watch } from 'vue';
-import type { CoverPalette, ParsedLyrics, PlayMode, SleepTimerMode, Song, UnblockCandidate } from '@/types/music';
+import type { AudioQuality, CoverPalette, ParsedLyrics, PlayMode, SleepTimerMode, Song, UnblockCandidate } from '@/types/music';
 import { echoPlayer, type UpcomingNativeTrack } from '@/native/echoPlayer';
 import { echoSystem } from '@/native/echoSystem';
 import { cleanSongTitleAndArtist, kugouApi } from '@/services/kugou/kugouEngine';
@@ -59,9 +59,10 @@ export const usePlayerStore = defineStore('player', () => {
   const sleepRemainingSec = ref<number>(0);
   let sleepInterval: ReturnType<typeof setInterval> | null = null;
 
-  // High-frequency interpolation anchor for 60fps KRC karaoke
+  // High-frequency monotonic sub-millisecond interpolation anchor for 120Hz KRC karaoke
   const lastSampleTimeMs = ref(0);
   const lastSampleAt = ref(0);
+  const monotonicNow = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
   let trackSeq = 0;
   let listenersBound = false;
@@ -119,6 +120,35 @@ export const usePlayerStore = defineStore('player', () => {
   watch(playMode, (mode) => {
     void echoPlayer.setPlayModeState(mode);
   });
+
+  // Live quality switching: reload active track in-place at exact playback position
+  watch(
+    () => settingsStore.quality,
+    (nextQ, prevQ) => {
+      if (!prevQ || nextQ === prevQ) return;
+      const song = currentSong.value;
+      if (!song || trackSeq <= 0 || isResolving.value) return;
+      clearCachedResolvedStream(song);
+      const resumePos = currentTimeMs.value;
+      const keepPlaying = isPlaying.value;
+      const qualityLabels: Record<AudioQuality, string> = {
+        high: 'Hi-Res 母带',
+        flac: '无损 FLAC',
+        '320': '高品 320k',
+        '128': '标准 128k',
+      };
+      void loadAndPlayCurrent(keepPlaying, undefined, {
+        startPositionMs: resumePos,
+        bypassCache: true,
+        overrideQuality: nextQ,
+        isRecovery: true,
+      }).then((ok) => {
+        if (ok) {
+          useUiStore().showToast(`已切换音质：${sourceTag.value || qualityLabels[nextQ]}`);
+        }
+      });
+    },
+  );
 
   async function persistQueue() {
     // Persist up to 200 items centered around currentIndex for fast startup
@@ -369,9 +399,10 @@ export const usePlayerStore = defineStore('player', () => {
 
     await echoPlayer.onTimeUpdate((ev) => {
       if (ev.trackSeq !== trackSeq) return;
-      const now = ev.sampledAt || Date.now();
+      const wallNow = ev.sampledAt || Date.now();
+      const perfNow = monotonicNow();
       // Ignore stale pre-seek ticks still in flight across the native bridge for 380ms after seek()
-      if (pendingSeekTargetMs >= 0 && now < pendingSeekGuardUntil) {
+      if (pendingSeekTargetMs >= 0 && wallNow < pendingSeekGuardUntil) {
         if (Math.abs(ev.currentTimeMs - pendingSeekTargetMs) > 1500) {
           return;
         }
@@ -380,16 +411,16 @@ export const usePlayerStore = defineStore('player', () => {
       currentTimeMs.value = ev.currentTimeMs;
       if (ev.durationMs > 0) durationMs.value = ev.durationMs;
       lastSampleTimeMs.value = ev.currentTimeMs;
-      lastSampleAt.value = now;
+      lastSampleAt.value = perfNow;
 
       if (ev.isPlaying) {
         if (lastStatSampleAt > 0) {
-          const deltaSec = (now - lastStatSampleAt) / 1000;
+          const deltaSec = (wallNow - lastStatSampleAt) / 1000;
           if (deltaSec > 0 && deltaSec <= 5) {
             statsStore.addListeningDeltaSec(deltaSec);
           }
         }
-        lastStatSampleAt = now;
+        lastStatSampleAt = wallNow;
         syncLockScreenLyricLine(ev.currentTimeMs);
       } else {
         lastStatSampleAt = 0;
@@ -609,7 +640,7 @@ export const usePlayerStore = defineStore('player', () => {
       startPositionMs?: number;
       bypassCache?: boolean;
       forceUnblock?: boolean;
-      overrideQuality?: '128' | '320' | 'flac';
+      overrideQuality?: AudioQuality;
       isRecovery?: boolean;
     },
   ): Promise<boolean> {
@@ -633,7 +664,7 @@ export const usePlayerStore = defineStore('player', () => {
       lastLiveLyricSent = '';
       currentTimeMs.value = 0;
       lastSampleTimeMs.value = 0;
-      lastSampleAt.value = Date.now();
+      lastSampleAt.value = monotonicNow();
       durationMs.value = (song.duration || 0) * 1000;
       sourceTag.value = customStream?.sourceTag || '';
 
@@ -649,7 +680,7 @@ export const usePlayerStore = defineStore('player', () => {
     } else {
       currentTimeMs.value = resumePosMs;
       lastSampleTimeMs.value = resumePosMs;
-      lastSampleAt.value = Date.now();
+      lastSampleAt.value = monotonicNow();
     }
 
     const ui = useUiStore();
@@ -838,10 +869,10 @@ export const usePlayerStore = defineStore('player', () => {
     }
   }
 
-  async function previous() {
+  async function previous(forcePrevTrack = false) {
     if (!queue.value.length) return;
     echoSystem.haptic('light');
-    if (currentTimeMs.value > 5000) {
+    if (!forcePrevTrack && currentTimeMs.value > 5000) {
       await seek(0);
       return;
     }
@@ -855,7 +886,7 @@ export const usePlayerStore = defineStore('player', () => {
     pendingSeekGuardUntil = Date.now() + 380;
     currentTimeMs.value = clamped;
     lastSampleTimeMs.value = clamped;
-    lastSampleAt.value = Date.now();
+    lastSampleAt.value = monotonicNow();
     await echoPlayer.seek(clamped);
   }
 
@@ -1072,7 +1103,7 @@ export const usePlayerStore = defineStore('player', () => {
   function getInterpolatedTimeMs(): number {
     if (!isPlaying.value || isBuffering.value) return currentTimeMs.value;
     if (lastSampleAt.value <= 0) return currentTimeMs.value;
-    const elapsed = Math.max(0, Math.min(450, Date.now() - lastSampleAt.value));
+    const elapsed = Math.max(0, Math.min(450, monotonicNow() - lastSampleAt.value));
     return currentTimeMs.value + elapsed * (playbackSpeed.value || 1);
   }
 

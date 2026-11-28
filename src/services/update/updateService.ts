@@ -6,7 +6,7 @@ export const APP_REPO = 'xhd2005/puretone';
 export const APP_REPO_URL = `https://github.com/${APP_REPO}`;
 export const APP_RELEASES_URL = `${APP_REPO_URL}/releases`;
 export const APP_AUTHOR = 'xhd2005';
-export const FALLBACK_APP_VERSION = '2.4.11';
+export const FALLBACK_APP_VERSION = '2.4.12';
 
 const LAST_CHECK_KEY = 'update.lastCheckAt.v1';
 const SKIPPED_VERSION_KEY = 'update.skippedVersion.v1';
@@ -65,7 +65,8 @@ export interface LatestManifestPayload {
 export function normalizeMirrorPrefix(raw?: string): string {
   const trimmed = String(raw || '').trim();
   if (!trimmed) return '';
-  if (!/^https?:\/\//i.test(trimmed)) return '';
+  // Strictly enforce HTTPS for update mirrors (never permit cleartext HTTP MITM downgrade)
+  if (!/^https:\/\//i.test(trimmed)) return '';
   return trimmed.endsWith('/') ? trimmed : `${trimmed}/`;
 }
 
@@ -153,9 +154,10 @@ export function buildApkDownloadCandidates(
   githubApkUrl: string,
   mode: UpdateMirrorMode = 'auto',
   customMirror = '',
+  options: { apkSha256?: string; requireSha256ForMirrors?: boolean } = {},
 ): UpdateDownloadCandidate[] {
   const cleanUrl = String(githubApkUrl || '').trim();
-  if (!cleanUrl) return [];
+  if (!cleanUrl || !/^https:\/\//i.test(cleanUrl)) return [];
 
   const out: UpdateDownloadCandidate[] = [];
   const seen = new Set<string>();
@@ -165,15 +167,17 @@ export function buildApkDownloadCandidates(
     out.push({ url, label });
   };
 
-  const isGithubHost = /^https?:\/\/(?:github\.com|objects\.githubusercontent\.com|release-assets\.githubusercontent\.com)\//i.test(
+  const isGithubHost = /^https:\/\/(?:github\.com|objects\.githubusercontent\.com|release-assets\.githubusercontent\.com)\//i.test(
     cleanUrl,
   );
+  const hasValidSha256 = /^[0-9a-f]{64}$/i.test(String(options.apkSha256 || '').trim());
+  const mirrorsAllowed = !options.requireSha256ForMirrors || hasValidSha256;
   const customPrefix = normalizeMirrorPrefix(customMirror);
 
-  if (customPrefix && isGithubHost) {
+  if (mirrorsAllowed && customPrefix && isGithubHost) {
     push(wrapWithMirrorPrefix(customPrefix, cleanUrl), '自定义加速节点');
   }
-  if (mode !== 'direct' && isGithubHost) {
+  if (mirrorsAllowed && mode !== 'direct' && isGithubHost) {
     for (const m of BUILTIN_CHINA_MIRRORS) {
       push(wrapWithMirrorPrefix(m.prefix, cleanUrl), m.label);
     }
@@ -279,7 +283,10 @@ export async function checkForAppUpdate(
         const latestVersion = manifest.version;
         const hasUpdate = compareSemver(latestVersion, currentVersion) > 0;
         const rawApkUrl = manifest.githubDownloadUrl || '';
-        const downloadCandidates = buildApkDownloadCandidates(rawApkUrl, mirrorMode, customMirror);
+        const downloadCandidates = buildApkDownloadCandidates(rawApkUrl, mirrorMode, customMirror, {
+          apkSha256: manifest.apkSha256,
+          requireSha256ForMirrors: true,
+        });
         resolvedInfo = {
           latestVersion,
           currentVersion,
@@ -303,7 +310,10 @@ export async function checkForAppUpdate(
         const hasUpdate = compareSemver(latestVersion, currentVersion) > 0;
         const apk = pickReleaseApkAsset(data?.assets || []);
         const rawApkUrl = apk?.url || '';
-        const downloadCandidates = buildApkDownloadCandidates(rawApkUrl, mirrorMode, customMirror);
+        const downloadCandidates = buildApkDownloadCandidates(rawApkUrl, mirrorMode, customMirror, {
+          apkSha256: apk?.sha256,
+          requireSha256ForMirrors: true,
+        });
         resolvedInfo = {
           latestVersion,
           currentVersion,

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { Icon } from '@iconify/vue';
 import iconPlayerPlayFilled from '@iconify/icons-tabler/player-play-filled';
@@ -24,10 +24,14 @@ import iconMoon from '@iconify/icons-tabler/moon';
 import iconPhoto from '@iconify/icons-tabler/photo';
 import iconPlayerTrackNext from '@iconify/icons-tabler/player-track-next';
 import iconTrash from '@iconify/icons-tabler/trash';
+import iconAdjustments from '@iconify/icons-tabler/adjustments';
+import iconDisc from '@iconify/icons-tabler/disc';
+import iconLayoutColumns from '@iconify/icons-tabler/layout-columns';
 import type { SongClimaxRange } from '@/types/music';
-import { formatCompactCount, kugouApi } from '@/services/kugou/kugouEngine';
+import { kugouApi } from '@/services/kugou/kugouEngine';
 import { openArtistProfileFromSong } from '@/services/playback/artistNavigation';
 import {
+  computeCoverCarouselLayout,
   computeQueueWindow,
   computeSharedArtworkTransform,
   type BoxRect,
@@ -40,20 +44,64 @@ import { useI18n } from '@/i18n';
 import { echoSystem } from '@/native/echoSystem';
 import FluidCoverBackground from './FluidCoverBackground.vue';
 import KrcLyricsView from './KrcLyricsView.vue';
+import CoverFlowStage from './CoverFlowStage.vue';
 
 const router = useRouter();
 const player = usePlayerStore();
 const settings = useSettingsStore();
 const ui = useUiStore();
-const { t, effectiveLocale } = useI18n();
+const { t } = useI18n();
 
 // Double-buffered pre-decoded cover URL: zero empty gray flash on track switch!
 const { displayedCoverUrl } = useDecodedCover(() => player.currentSong?.coverUrl || '');
 
-// Track extras: Comment Count badge & Chorus Climax marker
-const commentCount = ref(0);
+// Landscape Dual-Mode detection (Split Lyrics + Cover / 3D Cover Flow)
+function checkIsLandscape(): boolean {
+  if (typeof window === 'undefined') return false;
+  return window.innerWidth > window.innerHeight && window.innerWidth >= 560;
+}
+const isLandscape = ref(checkIsLandscape());
+const landscapeMode = ref<'split' | 'coverflow'>('split');
+const landscapeRightPane = ref<'lyrics' | 'queue'>('lyrics');
+
+function handleViewportResize() {
+  const next = checkIsLandscape();
+  if (next !== isLandscape.value) {
+    isLandscape.value = next;
+    if (!next && ui.nowPlayingOpen) {
+      void nextTick(() => {
+        measureArtworkSlots();
+        attachSlotObserver();
+      });
+    }
+  } else if (!next && ui.nowPlayingOpen) {
+    measureArtworkSlots();
+  }
+}
+
+onMounted(() => {
+  if (typeof window !== 'undefined') {
+    window.addEventListener('resize', handleViewportResize);
+    window.addEventListener('orientationchange', handleViewportResize);
+  }
+});
+
+// Track extras: Chorus Climax marker (no comment count badge!)
 const climaxRange = ref<SongClimaxRange | null>(null);
 const showLyricOffsetBar = ref(false);
+
+// Adjacent queue songs for 3-card interactive physical swipe carousel
+const prevQueueSong = computed(() => {
+  const len = player.queue.length;
+  if (len <= 1 || player.currentIndex < 0) return null;
+  return player.queue[(player.currentIndex - 1 + len) % len] || null;
+});
+
+const nextQueueSong = computed(() => {
+  const len = player.queue.length;
+  if (len <= 1 || player.currentIndex < 0) return null;
+  return player.queue[(player.currentIndex + 1) % len] || null;
+});
 
 // Windowed Up Next Queue (~60 rows max instead of 1,500+ DOM nodes)
 const queueBeforeCount = ref(15);
@@ -152,18 +200,76 @@ function detachSlotObserver() {
   }
 }
 
-// Sheet Drag-to-Dismiss & Cover Swipe/Double-Tap state
+// ==================== 120HZ 3-CARD INTERACTIVE COVER SWIPE CAROUSEL ====================
 const dragOffsetY = ref(0);
 const isDraggingSheet = ref(false);
 const coverSwipeX = ref(0);
-const isSwipingCover = ref(false);
+const swipePhase = ref<'idle' | 'dragging' | 'settling' | 'snapping'>('idle');
+const swipeSnapInstant = ref(false);
+const skipArtXfade = ref(false);
+const swipeFrozenCovers = ref<{ prev: string; cur: string; next: string } | null>(null);
 const heartBurst = ref(false);
+
 let sheetTouchY = 0;
 let coverTouchStartX = 0;
 let coverTouchStartY = 0;
+let coverLastTouchX = 0;
+let coverLastTouchTime = 0;
+let coverSwipeVelocity = 0; // px/ms
 let coverGestureAxis: 'none' | 'x' | 'y' = 'none';
 let lastCoverTapAt = 0;
 let heartBurstTimer: ReturnType<typeof setTimeout> | null = null;
+let swipeFinishTimer: ReturnType<typeof setTimeout> | null = null;
+let swipeXfadeTimer: ReturnType<typeof setTimeout> | null = null;
+
+function clearSwipeTimers() {
+  if (swipeFinishTimer) {
+    clearTimeout(swipeFinishTimer);
+    swipeFinishTimer = null;
+  }
+  if (swipeXfadeTimer) {
+    clearTimeout(swipeXfadeTimer);
+    swipeXfadeTimer = null;
+  }
+}
+
+const isCarouselActive = computed(
+  () =>
+    !isLandscape.value &&
+    ui.nowPlayingMode === 'cover' &&
+    (swipePhase.value !== 'idle' || Math.abs(coverSwipeX.value) > 0.5),
+);
+
+const portraitSwipeStride = computed(() => Math.max(220, (coverSlotRect.value?.width || 300) + 34));
+const landscapeSwipeStride = 230;
+
+const carouselLayout = computed(() =>
+  computeCoverCarouselLayout(
+    coverSwipeX.value,
+    isLandscape.value ? landscapeSwipeStride : portraitSwipeStride.value,
+    player.isPlaying ? 1 : 0.84,
+  ),
+);
+
+const activeCurrentCoverUrl = computed(
+  () => swipeFrozenCovers.value?.cur ?? displayedCoverUrl.value,
+);
+const activePrevCoverUrl = computed(
+  () => swipeFrozenCovers.value?.prev ?? prevQueueSong.value?.coverUrl ?? '',
+);
+const activeNextCoverUrl = computed(
+  () => swipeFrozenCovers.value?.next ?? nextQueueSong.value?.coverUrl ?? '',
+);
+
+const artworkTransitionRule = computed(() => {
+  if (!artworkReadyForTransition.value || swipePhase.value === 'dragging' || swipeSnapInstant.value) {
+    return 'none';
+  }
+  if (swipePhase.value === 'settling' || swipePhase.value === 'snapping') {
+    return 'transform 265ms cubic-bezier(0.22, 1, 0.36, 1), opacity 250ms ease';
+  }
+  return undefined;
+});
 
 const sharedArtworkStyle = computed(() => {
   const hr = stageRect.value;
@@ -173,21 +279,86 @@ const sharedArtworkStyle = computed(() => {
     return { opacity: '0', pointerEvents: 'none' as const };
   }
 
+  const basePos = {
+    left: `${(cr.left - hr.left).toFixed(2)}px`,
+    top: `${(cr.top - hr.top).toFixed(2)}px`,
+    width: `${cr.width.toFixed(2)}px`,
+    height: `${cr.height.toFixed(2)}px`,
+  };
+
+  if (isCarouselActive.value) {
+    return {
+      ...basePos,
+      transform: carouselLayout.value.current.transform,
+      opacity: String(carouselLayout.value.current.opacity),
+      transition: artworkTransitionRule.value,
+    };
+  }
+
   const tf = computeSharedArtworkTransform(cr, mr, {
     mode: ui.nowPlayingMode,
     isPlaying: player.isPlaying,
-    swipeX: ui.nowPlayingMode === 'cover' ? coverSwipeX.value : 0,
+    swipeX: 0,
   });
 
+  return {
+    ...basePos,
+    transform: tf.transform,
+    opacity: '1',
+    transition: artworkTransitionRule.value,
+  };
+});
+
+function buildSiblingCardStyle(side: 'prev' | 'next') {
+  const hr = stageRect.value;
+  const cr = coverSlotRect.value;
+  if (!hr || !cr) return { opacity: '0', pointerEvents: 'none' as const };
+  const card = side === 'prev' ? carouselLayout.value.prev : carouselLayout.value.next;
   return {
     left: `${(cr.left - hr.left).toFixed(2)}px`,
     top: `${(cr.top - hr.top).toFixed(2)}px`,
     width: `${cr.width.toFixed(2)}px`,
     height: `${cr.height.toFixed(2)}px`,
-    transform: tf.transform,
-    transition: !artworkReadyForTransition.value || isSwipingCover.value ? 'none' : undefined,
+    transform: card.transform,
+    opacity: String(card.opacity),
+    transition: artworkTransitionRule.value,
+  };
+}
+
+const prevSiblingStyle = computed(() => buildSiblingCardStyle('prev'));
+const nextSiblingStyle = computed(() => buildSiblingCardStyle('next'));
+
+// Landscape Split-Mode 3-Card Cover Style
+const landscapeCurrentCoverStyle = computed(() => {
+  if (swipePhase.value !== 'idle' || Math.abs(coverSwipeX.value) > 0.5) {
+    return {
+      transform: carouselLayout.value.current.transform,
+      opacity: String(carouselLayout.value.current.opacity),
+      transition:
+        swipePhase.value === 'dragging' || swipeSnapInstant.value
+          ? 'none'
+          : 'transform 265ms cubic-bezier(0.22, 1, 0.36, 1), opacity 250ms ease',
+    };
+  }
+  const scale = player.isPlaying ? 1 : 0.90;
+  return {
+    transform: `translate3d(0, 0, 0) scale3d(${scale}, ${scale}, 1)`,
+    opacity: '1',
+    transition: swipeSnapInstant.value ? 'none' : 'transform 360ms var(--spring-ease), opacity 220ms ease',
   };
 });
+
+function buildLandscapeSiblingStyle(side: 'prev' | 'next') {
+  const card = side === 'prev' ? carouselLayout.value.prev : carouselLayout.value.next;
+  return {
+    transform: card.transform,
+    opacity: String(card.opacity),
+    transition:
+      swipePhase.value === 'dragging' || swipeSnapInstant.value
+        ? 'none'
+        : 'transform 265ms cubic-bezier(0.22, 1, 0.36, 1), opacity 250ms ease',
+  };
+}
 
 const currentTrackOffsetKey = computed(() => {
   const s = player.currentSong;
@@ -203,20 +374,15 @@ const lyricOffsetLabel = computed(() => {
 
 let extrasSeq = 0;
 watch(
-  () => [player.currentSong?.hash, player.currentSong?.mixSongId, ui.nowPlayingOpen],
-  async ([hash, mixId, open]) => {
+  () => [player.currentSong?.hash, ui.nowPlayingOpen],
+  async ([hash, open]) => {
     if (!open || !player.currentSong) return;
     const seq = ++extrasSeq;
-    commentCount.value = 0;
     climaxRange.value = null;
     const s = player.currentSong;
     const durMs = player.durationMs || (s.duration ? s.duration * 1000 : 0);
-    const [cnt, clx] = await Promise.all([
-      kugouApi.getSongCommentCount({ hash: String(hash || ''), mixSongId: Number(mixId || 0) || undefined }).catch(() => 0),
-      hash ? kugouApi.getSongClimax(String(hash), durMs).catch(() => null) : Promise.resolve(null),
-    ]);
+    const clx = hash ? await kugouApi.getSongClimax(String(hash), durMs).catch(() => null) : null;
     if (seq !== extrasSeq) return;
-    commentCount.value = cnt;
     climaxRange.value = clx;
   },
   { immediate: true },
@@ -300,10 +466,10 @@ function clearLyricsHideTimer() {
 
 function scheduleLyricsAutoHide() {
   clearLyricsHideTimer();
-  if (ui.nowPlayingMode !== 'lyrics' || !ui.nowPlayingOpen) return;
+  if (isLandscape.value || ui.nowPlayingMode !== 'lyrics' || !ui.nowPlayingOpen) return;
   if (!player.isPlaying || scrubbing.value) return;
   lyricsHideTimer = setTimeout(() => {
-    if (ui.nowPlayingMode === 'lyrics' && player.isPlaying && !scrubbing.value) {
+    if (!isLandscape.value && ui.nowPlayingMode === 'lyrics' && player.isPlaying && !scrubbing.value) {
       lyricsHudVisible.value = false;
     }
   }, 3000);
@@ -316,13 +482,13 @@ function revealLyricsHud(autoHide = true) {
 }
 
 function onLyricsUserScroll() {
-  if (ui.nowPlayingMode === 'lyrics') {
+  if (!isLandscape.value && ui.nowPlayingMode === 'lyrics') {
     revealLyricsHud(true);
   }
 }
 
 function onLyricsTapBlank() {
-  if (ui.nowPlayingMode !== 'lyrics') return;
+  if (isLandscape.value || ui.nowPlayingMode !== 'lyrics') return;
   if (lyricsHudVisible.value) {
     clearLyricsHideTimer();
     lyricsHudVisible.value = false;
@@ -331,19 +497,19 @@ function onLyricsTapBlank() {
   }
 }
 
-const isLyricsImmersive = computed(() => ui.nowPlayingMode === 'lyrics' && !lyricsHudVisible.value);
+const isLyricsImmersive = computed(() => !isLandscape.value && ui.nowPlayingMode === 'lyrics' && !lyricsHudVisible.value);
 
 const coverLyricsPreview = computed(() => {
   if (!settings.showCoverLyricsPreview) return null;
   const lines = player.lyrics.lines;
   if (!lines.length) return null;
-  const t = Math.max(0, player.currentTimeMs + currentLyricOffsetMs.value + 120);
+  const tMs = Math.max(0, player.currentTimeMs + currentLyricOffsetMs.value + 120);
   let lo = 0;
   let hi = lines.length - 1;
   let idx = -1;
   while (lo <= hi) {
     const mid = (lo + hi) >> 1;
-    if (lines[mid].startMs <= t) {
+    if (lines[mid].startMs <= tMs) {
       idx = mid;
       lo = mid + 1;
     } else {
@@ -369,24 +535,30 @@ watch(
   async ([open, hasSong]) => {
     settings.applyThemeClass(Boolean(open));
     if (open && hasSong) {
+      isLandscape.value = checkIsLandscape();
       artworkReadyForTransition.value = false;
       await nextTick();
-      measureArtworkSlots();
-      attachSlotObserver();
-      readyRaf1 = requestAnimationFrame(() => {
+      if (!isLandscape.value) {
         measureArtworkSlots();
-        readyRaf2 = requestAnimationFrame(() => {
-          artworkReadyForTransition.value = true;
+        attachSlotObserver();
+        readyRaf1 = requestAnimationFrame(() => {
+          measureArtworkSlots();
+          readyRaf2 = requestAnimationFrame(() => {
+            artworkReadyForTransition.value = true;
+          });
         });
-      });
+      }
       if (ui.nowPlayingMode === 'lyrics') {
         revealLyricsHud(true);
       }
     } else {
       detachSlotObserver();
+      clearSwipeTimers();
       artworkReadyForTransition.value = false;
       isDraggingSheet.value = false;
-      isSwipingCover.value = false;
+      swipePhase.value = 'idle';
+      swipeFrozenCovers.value = null;
+      swipeSnapInstant.value = false;
       dragOffsetY.value = 0;
       coverSwipeX.value = 0;
       showLyricOffsetBar.value = false;
@@ -423,8 +595,13 @@ watch(
 );
 
 onUnmounted(() => {
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('resize', handleViewportResize);
+    window.removeEventListener('orientationchange', handleViewportResize);
+  }
   detachSlotObserver();
   clearLyricsHideTimer();
+  clearSwipeTimers();
   if (heartBurstTimer) clearTimeout(heartBurstTimer);
 });
 
@@ -517,56 +694,114 @@ function onHandleTouchEnd() {
   dragOffsetY.value = 0;
 }
 
-// ---- Cover Gestures: Swipe Skip / Drag Down Dismiss / Double-Tap Heart ----
+// ---- Cover Gestures: 120Hz 3-Card Physical Swipe / Drag Down Dismiss / Double-Tap Heart ----
 
 function onCoverTouchStart(e: TouchEvent) {
-  if (ui.nowPlayingMode !== 'cover') return;
-  const t = e.touches[0];
-  if (!t) return;
-  coverTouchStartX = t.clientX;
-  coverTouchStartY = t.clientY;
+  if (!isLandscape.value && ui.nowPlayingMode !== 'cover') return;
+  if (swipePhase.value === 'settling') return;
+  const touch = e.touches[0];
+  if (!touch) return;
+  clearSwipeTimers();
+  coverTouchStartX = touch.clientX;
+  coverTouchStartY = touch.clientY;
+  coverLastTouchX = touch.clientX;
+  coverLastTouchTime = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  coverSwipeVelocity = 0;
   coverGestureAxis = 'none';
 }
 
 function onCoverTouchMove(e: TouchEvent) {
-  if (ui.nowPlayingMode !== 'cover') return;
-  const t = e.touches[0];
-  if (!t) return;
-  const dx = t.clientX - coverTouchStartX;
-  const dy = t.clientY - coverTouchStartY;
+  if (!isLandscape.value && ui.nowPlayingMode !== 'cover') return;
+  if (swipePhase.value === 'settling') return;
+  const touch = e.touches[0];
+  if (!touch) return;
+  const dx = touch.clientX - coverTouchStartX;
+  const dy = touch.clientY - coverTouchStartY;
 
   if (coverGestureAxis === 'none') {
-    if (Math.abs(dx) > 12 || Math.abs(dy) > 12) {
+    if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
       coverGestureAxis = Math.abs(dx) >= Math.abs(dy) ? 'x' : 'y';
-      if (coverGestureAxis === 'x') isSwipingCover.value = true;
-      else if (coverGestureAxis === 'y' && dy > 0) isDraggingSheet.value = true;
+      if (coverGestureAxis === 'x') {
+        swipePhase.value = 'dragging';
+      } else if (coverGestureAxis === 'y' && dy > 0 && !isLandscape.value) {
+        isDraggingSheet.value = true;
+      }
     }
   }
+
   if (coverGestureAxis === 'x') {
-    coverSwipeX.value = dx * 0.42;
-  } else if (coverGestureAxis === 'y' && dy > 0) {
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const dt = Math.max(4, now - coverLastTouchTime);
+    coverSwipeVelocity = (touch.clientX - coverLastTouchX) / dt;
+    coverLastTouchX = touch.clientX;
+    coverLastTouchTime = now;
+
+    // 1:1 responsive finger tracking when multiple tracks exist; soft rubber band when single track
+    const hasSiblings = player.queue.length > 1;
+    coverSwipeX.value = hasSiblings ? dx * 0.96 : dx * 0.24;
+  } else if (coverGestureAxis === 'y' && dy > 0 && !isLandscape.value) {
     isDraggingSheet.value = true;
     dragOffsetY.value = dy * 0.85;
   }
 }
 
 function onCoverTouchEnd(e: TouchEvent) {
-  if (ui.nowPlayingMode !== 'cover') return;
-  const t = e.changedTouches[0];
-  const dx = (t?.clientX ?? coverTouchStartX) - coverTouchStartX;
-  const dy = (t?.clientY ?? coverTouchStartY) - coverTouchStartY;
+  if (!isLandscape.value && ui.nowPlayingMode !== 'cover') return;
+  if (swipePhase.value === 'settling') return;
+  const touch = e.changedTouches[0];
+  const dx = (touch?.clientX ?? coverTouchStartX) - coverTouchStartX;
+  const dy = (touch?.clientY ?? coverTouchStartY) - coverTouchStartY;
 
-  isSwipingCover.value = false;
   isDraggingSheet.value = false;
 
   if (coverGestureAxis === 'x') {
-    if (dx < -58) {
-      void player.next();
-    } else if (dx > 58) {
-      void player.previous();
+    const stride = isLandscape.value ? landscapeSwipeStride : portraitSwipeStride.value;
+    const hasSiblings = player.queue.length > 1;
+    const vx = coverSwipeVelocity;
+    const commitNext = hasSiblings && (dx < -stride * 0.23 || (vx < -0.40 && dx < -20));
+    const commitPrev = hasSiblings && (dx > stride * 0.23 || (vx > 0.40 && dx > 20));
+
+    if (commitNext || commitPrev) {
+      const dir = commitNext ? -1 : 1;
+      // Freeze the 3 visual card images for the 265ms glide while kicking off audio immediately (0ms delay!)
+      swipeFrozenCovers.value = {
+        prev: prevQueueSong.value?.coverUrl || '',
+        cur: displayedCoverUrl.value || '',
+        next: nextQueueSong.value?.coverUrl || '',
+      };
+      skipArtXfade.value = true;
+      swipePhase.value = 'settling';
+      coverSwipeX.value = dir * stride;
+
+      if (commitNext) {
+        void player.next();
+      } else {
+        void player.previous(true);
+      }
+
+      swipeFinishTimer = setTimeout(() => {
+        swipeFinishTimer = null;
+        swipeSnapInstant.value = true;
+        coverSwipeX.value = 0;
+        swipePhase.value = 'idle';
+        swipeFrozenCovers.value = null;
+        requestAnimationFrame(() => {
+          swipeSnapInstant.value = false;
+          swipeXfadeTimer = setTimeout(() => {
+            swipeXfadeTimer = null;
+            skipArtXfade.value = false;
+          }, 120);
+        });
+      }, 270);
+    } else {
+      swipePhase.value = 'snapping';
+      coverSwipeX.value = 0;
+      swipeFinishTimer = setTimeout(() => {
+        swipeFinishTimer = null;
+        swipePhase.value = 'idle';
+      }, 270);
     }
-    coverSwipeX.value = 0;
-  } else if (coverGestureAxis === 'y') {
+  } else if (coverGestureAxis === 'y' && !isLandscape.value) {
     if (dragOffsetY.value > 95) {
       echoSystem.haptic('light');
       ui.nowPlayingOpen = false;
@@ -590,7 +825,7 @@ function onCoverTouchEnd(e: TouchEvent) {
 }
 
 function onSharedArtworkClick() {
-  if (ui.nowPlayingMode !== 'cover') {
+  if (!isLandscape.value && ui.nowPlayingMode !== 'cover') {
     returnToCover();
   }
 }
@@ -631,6 +866,7 @@ function handleClearQueue() {
 const fluidBgActive = computed(
   () =>
     ui.nowPlayingOpen &&
+    !ui.audioEffectSheetOpen &&
     !ui.commentsSheetSong &&
     !ui.actionSheetSong &&
     !(ui.addToPlaylistSongs && ui.addToPlaylistSongs.length > 0) &&
@@ -640,6 +876,19 @@ const fluidBgActive = computed(
     !ui.loginModalOpen &&
     !ui.artistPickerCandidates,
 );
+
+const hasActiveAudioDsp = computed(() => settings.eqPreset !== 'flat' || settings.volumeLeveling);
+
+function openAudioEffectSheet() {
+  echoSystem.haptic('light');
+  ui.audioEffectSheetOpen = true;
+}
+
+function switchLandscapeMode(mode: 'split' | 'coverflow') {
+  if (landscapeMode.value === mode) return;
+  echoSystem.haptic('selection');
+  landscapeMode.value = mode;
+}
 </script>
 
 <template>
@@ -647,7 +896,7 @@ const fluidBgActive = computed(
     <div
       v-if="ui.nowPlayingOpen && player.currentSong"
       class="np-overlay"
-      :class="{ 'is-dragging': isDraggingSheet }"
+      :class="{ 'is-dragging': isDraggingSheet, 'is-landscape': isLandscape }"
       :style="overlayDragStyle"
     >
       <FluidCoverBackground
@@ -655,7 +904,326 @@ const fluidBgActive = computed(
         :colors="player.palette.fluidColors"
       />
 
-      <div class="np-content">
+      <!-- ==================== LANDSCAPE DUAL-MODE STAGE (Split Lyrics / 3D Cover Flow) ==================== -->
+      <div v-if="isLandscape" class="np-land-content" data-landscape-split>
+        <!-- Compact Top Floating Bar: Mode Switcher + Actions + Dismiss -->
+        <div class="np-land-topbar">
+          <div class="np-land-seg">
+            <button
+              type="button"
+              class="np-land-seg-btn am-tap"
+              :class="{ 'is-active': landscapeMode === 'split' }"
+              @click="switchLandscapeMode('split')"
+            >
+              <Icon :icon="iconLayoutColumns" class="w-3.5 h-3.5 shrink-0" />
+              <span>{{ t('np.landscapeSplit') }}</span>
+            </button>
+            <button
+              type="button"
+              class="np-land-seg-btn am-tap"
+              :class="{ 'is-active': landscapeMode === 'coverflow' }"
+              @click="switchLandscapeMode('coverflow')"
+            >
+              <Icon :icon="iconDisc" class="w-3.5 h-3.5 shrink-0" />
+              <span>{{ t('np.landscapeCoverFlow') }}</span>
+            </button>
+          </div>
+
+          <div class="flex items-center gap-1.5">
+            <template v-if="landscapeMode === 'split'">
+              <button
+                v-if="landscapeRightPane === 'lyrics'"
+                type="button"
+                class="np-glass-chip h-8 px-2.5 rounded-full text-[11px] font-semibold text-white/90 tabular-nums am-tap"
+                :class="{ '!bg-white/30 !text-white': showLyricOffsetBar || currentLyricOffsetMs !== 0 }"
+                @click="showLyricOffsetBar = !showLyricOffsetBar; echoSystem.haptic('selection')"
+              >
+                {{ currentLyricOffsetMs !== 0 ? lyricOffsetLabel : t('np.lyricOffset') }}
+              </button>
+              <button
+                v-if="landscapeRightPane === 'lyrics' && player.lyrics.hasTranslation"
+                type="button"
+                class="np-land-circle np-glass-chip am-tap"
+                :class="{ '!bg-white/30 !text-white': settings.showTranslation }"
+                aria-label="Toggle translation"
+                @click="settings.showTranslation = !settings.showTranslation; echoSystem.haptic('selection')"
+              >
+                <Icon :icon="iconLanguage" class="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                class="np-land-circle np-glass-chip am-tap"
+                :class="{ '!bg-white/90 !text-[#111]': landscapeRightPane === 'queue' }"
+                aria-label="Up Next"
+                @click="echoSystem.haptic('selection'); landscapeRightPane = landscapeRightPane === 'queue' ? 'lyrics' : 'queue'"
+              >
+                <Icon :icon="iconPlaylist" class="w-4 h-4" />
+              </button>
+            </template>
+            <button
+              type="button"
+              class="np-land-circle np-glass-chip am-tap"
+              :aria-label="t('common.close')"
+              @click="echoSystem.haptic('light'); ui.nowPlayingOpen = false"
+            >
+              <Icon :icon="iconX" class="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        <!-- MODE A: Left Cover & Controls + Right 120Hz Lyrics / Queue -->
+        <div v-if="landscapeMode === 'split'" class="np-land-split">
+          <!-- Left Column: Interactive 3-Card Swipe Artwork + Transport -->
+          <div class="np-land-left">
+            <div
+              class="np-land-art-stage"
+              @touchstart.passive="onCoverTouchStart"
+              @touchmove.passive="onCoverTouchMove"
+              @touchend.passive="onCoverTouchEnd"
+            >
+              <div
+                v-if="swipePhase !== 'idle' && activePrevCoverUrl"
+                class="np-land-art-card is-sibling"
+                :style="buildLandscapeSiblingStyle('prev')"
+              >
+                <img :src="activePrevCoverUrl" decoding="async" class="w-full h-full object-cover" alt="" />
+              </div>
+
+              <div
+                class="np-land-art-card"
+                :style="landscapeCurrentCoverStyle"
+              >
+                <img
+                  v-if="activeCurrentCoverUrl"
+                  :src="activeCurrentCoverUrl"
+                  decoding="async"
+                  :alt="player.currentSong.title"
+                  class="w-full h-full object-cover"
+                />
+                <div
+                  v-else
+                  class="w-full h-full flex items-center justify-center bg-white/10 text-white/40"
+                >
+                  <Icon :icon="iconMusic" class="w-12 h-12" />
+                </div>
+                <Transition name="heart-pop">
+                  <div v-if="heartBurst" class="heart-burst-overlay">
+                    <Icon :icon="iconHeartFilled" class="w-16 h-16 text-[#ff375f] drop-shadow-2xl" />
+                  </div>
+                </Transition>
+              </div>
+
+              <div
+                v-if="swipePhase !== 'idle' && activeNextCoverUrl"
+                class="np-land-art-card is-sibling"
+                :style="buildLandscapeSiblingStyle('next')"
+              >
+                <img :src="activeNextCoverUrl" decoding="async" class="w-full h-full object-cover" alt="" />
+              </div>
+            </div>
+
+            <!-- Song Meta + Heart + More -->
+            <div class="flex items-center justify-between gap-2 w-full">
+              <div class="min-w-0 flex-1">
+                <div class="text-[16px] font-bold text-white truncate leading-snug">
+                  {{ player.currentSong.title }}
+                </div>
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-0.5 max-w-full bg-transparent border-0 p-0 text-[13px] text-white/68 active:text-white text-left"
+                  @click.stop="openCurrentArtist"
+                >
+                  <span class="truncate">{{ player.currentSong.artist }}</span>
+                  <Icon :icon="iconChevronRight" class="w-3.5 h-3.5 opacity-60 shrink-0" />
+                </button>
+              </div>
+              <div class="flex items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  class="np-land-circle np-glass-chip am-tap"
+                  aria-label="收藏到我喜欢"
+                  @click="player.toggleFavorite(player.currentSong)"
+                >
+                  <Icon
+                    :icon="player.isCurrentFavorite ? iconHeartFilled : iconHeart"
+                    class="w-4 h-4"
+                    :class="player.isCurrentFavorite ? 'text-[#ff375f]' : 'text-white/95'"
+                  />
+                </button>
+                <button
+                  type="button"
+                  class="np-land-circle np-glass-chip am-tap"
+                  aria-label="更多选项"
+                  @click="ui.openSongActions(player.currentSong)"
+                >
+                  <Icon :icon="iconDots" class="w-4 h-4 text-white/95" />
+                </button>
+              </div>
+            </div>
+
+            <!-- Scrubber & Quality/Chorus Chips -->
+            <div class="w-full">
+              <div
+                class="scrub-hit !py-2"
+                @pointerdown="onScrubPointerDown"
+                @pointermove="onScrubPointerMove"
+                @pointerup="finishScrub($event, true)"
+                @pointercancel="finishScrub($event, false)"
+              >
+                <div class="scrub-track" :class="{ 'is-scrubbing': scrubbing }">
+                  <div v-if="climaxBarStyle" class="scrub-climax" :style="climaxBarStyle" />
+                  <div class="scrub-fill" :style="{ width: `${progressRatio * 100}%` }" />
+                </div>
+              </div>
+              <div class="flex items-center justify-between text-[10.5px] font-medium tabular-nums text-white/60 gap-1.5">
+                <span>{{ fmtTime(displayElapsedMs) }}</span>
+                <div class="flex items-center justify-center gap-1 min-w-0">
+                  <button
+                    v-if="player.sourceTag"
+                    type="button"
+                    class="px-1.5 py-0.5 rounded-[5px] bg-white/14 text-white/90 text-[9.5px] font-semibold border-0 truncate am-tap"
+                    @click.stop="openAudioEffectSheet"
+                  >
+                    {{ player.sourceTag }}
+                  </button>
+                  <button
+                    v-if="showChorusJump"
+                    type="button"
+                    class="px-1.5 py-0.5 rounded-[5px] bg-white/18 text-white/95 text-[9.5px] font-semibold border-0 inline-flex items-center gap-0.5 am-tap shrink-0"
+                    @click.stop="jumpToChorus"
+                  >
+                    <Icon :icon="iconSparkles" class="w-2.5 h-2.5" />
+                    <span>{{ t('np.chorusJump') }}</span>
+                  </button>
+                </div>
+                <span>-{{ fmtTime(displayRemainingMs) }}</span>
+              </div>
+            </div>
+
+            <!-- Compact Landscape Transport & Utility Row -->
+            <div class="flex items-center justify-between w-full pt-0.5">
+              <button
+                type="button"
+                class="np-land-tool am-tap"
+                :aria-label="t('np.comments')"
+                @click="ui.openSongComments(player.currentSong, 'comments')"
+              >
+                <Icon :icon="iconMessageCircle" class="w-5 h-5" />
+              </button>
+              <button type="button" class="np-land-skip am-tap" aria-label="上一首" @click="player.previous()">
+                <Icon :icon="iconPlayerTrackPrevFilled" class="w-7 h-7" />
+              </button>
+              <button
+                type="button"
+                class="np-land-play am-tap"
+                :aria-label="player.isPlaying ? '暂停' : '播放'"
+                @click="player.togglePlay()"
+              >
+                <Icon
+                  :icon="player.isPlaying ? iconPlayerPauseFilled : iconPlayerPlayFilled"
+                  class="w-9 h-9"
+                />
+              </button>
+              <button type="button" class="np-land-skip am-tap" aria-label="下一首" @click="player.next()">
+                <Icon :icon="iconPlayerTrackNextFilled" class="w-7 h-7" />
+              </button>
+              <button
+                type="button"
+                class="np-land-tool relative am-tap"
+                :class="{ 'text-white': hasActiveAudioDsp }"
+                :aria-label="t('audio.sheetTitle')"
+                @click="openAudioEffectSheet"
+              >
+                <Icon :icon="iconAdjustments" class="w-5 h-5" />
+                <span v-if="hasActiveAudioDsp" class="np-dsp-dot !top-1 !right-1" />
+              </button>
+            </div>
+          </div>
+
+          <!-- Right Column: Full-Height 120Hz Lyrics OR Queue -->
+          <div class="np-land-right">
+            <Transition name="am-expand">
+              <div
+                v-if="landscapeRightPane === 'lyrics' && showLyricOffsetBar"
+                class="flex items-center justify-center gap-1.5 pb-1 shrink-0"
+              >
+                <button type="button" class="np-glass-chip h-7 px-2 rounded-full text-[11px] font-semibold text-white tabular-nums am-tap" @click="nudgeLyricOffset(-1000)">-1s</button>
+                <button type="button" class="np-glass-chip h-7 px-2 rounded-full text-[11px] font-semibold text-white tabular-nums am-tap" @click="nudgeLyricOffset(-500)">-0.5s</button>
+                <button type="button" class="np-glass-chip h-7 px-2.5 rounded-full text-[11px] font-bold text-white tabular-nums am-tap" @click="resetLyricOffset">{{ lyricOffsetLabel }}</button>
+                <button type="button" class="np-glass-chip h-7 px-2 rounded-full text-[11px] font-semibold text-white tabular-nums am-tap" @click="nudgeLyricOffset(500)">+0.5s</button>
+                <button type="button" class="np-glass-chip h-7 px-2 rounded-full text-[11px] font-semibold text-white tabular-nums am-tap" @click="nudgeLyricOffset(1000)">+1s</button>
+              </div>
+            </Transition>
+
+            <div v-if="landscapeRightPane === 'lyrics'" class="flex-1 min-h-0">
+              <KrcLyricsView
+                :active="ui.nowPlayingOpen && isLandscape && landscapeMode === 'split' && landscapeRightPane === 'lyrics'"
+                @user-scroll="onLyricsUserScroll"
+              />
+            </div>
+
+            <div v-else class="flex-1 min-h-0 flex flex-col">
+              <div class="flex items-center justify-between gap-2 pb-2 shrink-0">
+                <div class="text-[14px] font-bold text-white">
+                  {{ t('np.upNext') }}
+                  <span class="text-[11px] font-normal text-white/55 ml-1.5">{{ player.queue.length }}</span>
+                </div>
+                <div class="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    class="np-glass-chip px-2.5 py-1 rounded-full text-white text-[11px] font-medium flex items-center gap-1 am-tap"
+                    @click="player.cyclePlayMode()"
+                  >
+                    <Icon :icon="playModeIcon" class="w-3.5 h-3.5" />
+                    <span>{{ playModeLabel }}</span>
+                  </button>
+                  <button
+                    type="button"
+                    class="np-glass-chip w-7 h-7 rounded-full text-white/80 flex items-center justify-center am-tap"
+                    :aria-label="t('np.clearQueue')"
+                    @click="handleClearQueue"
+                  >
+                    <Icon :icon="iconTrash" class="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+              <div class="flex-1 am-scroll space-y-1 pr-1">
+                <div
+                  v-for="row in visibleQueueItems"
+                  :key="`land-${row.item.id}-${row.index}`"
+                  class="np-queue-row flex items-center gap-2.5 p-1.5 rounded-xl transition-colors"
+                  :class="row.index === player.currentIndex ? 'bg-white/18' : 'active:bg-white/10'"
+                  @click="player.playQueue(player.queue, row.index)"
+                >
+                  <div class="w-9 h-9 rounded-[8px] overflow-hidden shrink-0 bg-white/10">
+                    <img v-if="row.item.coverUrl" :src="row.item.coverUrl" loading="lazy" decoding="async" class="w-full h-full object-cover" alt="" />
+                  </div>
+                  <div class="min-w-0 flex-1">
+                    <div class="text-[13.5px] font-medium text-white truncate">{{ row.item.title }}</div>
+                    <div class="text-[11.5px] text-white/55 truncate">{{ row.item.artist }}</div>
+                  </div>
+                  <button
+                    type="button"
+                    class="w-7 h-7 rounded-full flex items-center justify-center text-white/50 bg-transparent border-0 am-tap shrink-0"
+                    aria-label="Remove"
+                    @click.stop="player.removeFromQueue(row.index)"
+                  >
+                    <Icon :icon="iconX" class="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- MODE B: Classic 3D Cover Flow Album Selector -->
+        <div v-else class="flex-1 min-h-0">
+          <CoverFlowStage :active="ui.nowPlayingOpen && isLandscape && landscapeMode === 'coverflow'" />
+        </div>
+      </div>
+
+      <!-- ==================== PORTRAIT STAGE (Single Artwork Morph + 3-Card Swipe Carousel) ==================== -->
+      <div v-else class="np-content">
         <!-- Top drag pill (Apple Music dismiss handle) -->
         <div
           class="np-handle-area"
@@ -686,6 +1254,16 @@ const fluidBgActive = computed(
             </div>
           </Transition>
 
+          <!-- SIBLING PREV COVER CARD (Only mounted during interactive horizontal cover swipe!) -->
+          <div
+            v-if="isCarouselActive && activePrevCoverUrl"
+            class="np-sibling-artwork"
+            :style="prevSiblingStyle"
+            aria-hidden="true"
+          >
+            <img :src="activePrevCoverUrl" decoding="async" class="w-full h-full object-cover" alt="" />
+          </div>
+
           <!-- SINGLE PERSISTENT SHARED ARTWORK (Always opacity:1, pure GPU transform -> ZERO flicker!) -->
           <div
             class="np-shared-artwork"
@@ -695,11 +1273,11 @@ const fluidBgActive = computed(
             @touchmove.passive="onCoverTouchMove"
             @touchend.passive="onCoverTouchEnd"
           >
-            <Transition name="art-xfade">
+            <Transition :name="skipArtXfade ? '' : 'art-xfade'">
               <img
-                v-if="displayedCoverUrl"
-                :key="displayedCoverUrl"
-                :src="displayedCoverUrl"
+                v-if="activeCurrentCoverUrl"
+                :key="activeCurrentCoverUrl"
+                :src="activeCurrentCoverUrl"
                 decoding="async"
                 :alt="player.currentSong.title"
                 class="art-layer w-full h-full object-cover"
@@ -719,6 +1297,16 @@ const fluidBgActive = computed(
                 <Icon :icon="iconHeartFilled" class="w-20 h-20 text-[#ff375f] drop-shadow-2xl" />
               </div>
             </Transition>
+          </div>
+
+          <!-- SIBLING NEXT COVER CARD (Only mounted during interactive horizontal cover swipe!) -->
+          <div
+            v-if="isCarouselActive && activeNextCoverUrl"
+            class="np-sibling-artwork"
+            :style="nextSiblingStyle"
+            aria-hidden="true"
+          >
+            <img :src="activeNextCoverUrl" decoding="async" class="w-full h-full object-cover" alt="" />
           </div>
 
           <!-- Persistent Mini Header (absolute top inside stage host -> ZERO layout reflow!) -->
@@ -914,7 +1502,7 @@ const fluidBgActive = computed(
             :class="{ 'is-active': ui.nowPlayingMode === 'lyrics' }"
           >
             <KrcLyricsView
-              :active="ui.nowPlayingOpen && ui.nowPlayingMode === 'lyrics'"
+              :active="ui.nowPlayingOpen && !isLandscape && ui.nowPlayingMode === 'lyrics'"
               @user-scroll="onLyricsUserScroll"
               @tap-blank="onLyricsTapBlank"
               @line-seek="scheduleLyricsAutoHide"
@@ -1047,7 +1635,15 @@ const fluidBgActive = computed(
               :class="scrubbing ? 'text-white' : 'text-white/58'"
             >
               <span>{{ fmtTime(displayElapsedMs) }}</span>
-              <div class="flex items-center gap-1.5 min-w-0">
+              <div class="flex items-center justify-center gap-1.5 min-w-0">
+                <button
+                  v-if="player.sourceTag"
+                  type="button"
+                  class="px-2 py-0.5 rounded-[6px] bg-white/14 text-white/90 text-[10px] font-semibold tracking-wide border-0 truncate am-tap"
+                  @click.stop="openAudioEffectSheet"
+                >
+                  {{ player.sourceTag }}
+                </button>
                 <button
                   v-if="showChorusJump"
                   type="button"
@@ -1057,12 +1653,6 @@ const fluidBgActive = computed(
                   <Icon :icon="iconSparkles" class="w-2.5 h-2.5" />
                   <span>{{ t('np.chorusJump') }}</span>
                 </button>
-                <span
-                  v-else-if="player.sourceTag"
-                  class="px-2 py-0.5 rounded-[6px] bg-white/14 text-white/88 text-[10px] font-semibold tracking-wide truncate"
-                >
-                  {{ player.sourceTag }}
-                </span>
               </div>
               <span>-{{ fmtTime(displayRemainingMs) }}</span>
             </div>
@@ -1101,17 +1691,22 @@ const fluidBgActive = computed(
 
             <button
               type="button"
-              class="np-tool-btn relative am-tap"
+              class="np-tool-btn am-tap"
               :aria-label="t('np.comments')"
               @click="ui.openSongComments(player.currentSong, 'comments')"
             >
               <Icon :icon="iconMessageCircle" class="w-6 h-6" />
-              <span
-                v-if="commentCount > 0"
-                class="np-cmt-badge tabular-nums"
-              >
-                {{ formatCompactCount(commentCount, effectiveLocale) }}
-              </span>
+            </button>
+
+            <button
+              type="button"
+              class="np-tool-btn relative am-tap"
+              :class="{ 'text-white': hasActiveAudioDsp }"
+              :aria-label="t('audio.sheetTitle')"
+              @click="openAudioEffectSheet"
+            >
+              <Icon :icon="iconAdjustments" class="w-6 h-6" />
+              <span v-if="hasActiveAudioDsp" class="np-dsp-dot" />
             </button>
 
             <button
@@ -1169,6 +1764,147 @@ const fluidBgActive = computed(
   padding-bottom: calc(var(--safe-bottom) + 12px);
 }
 
+/* ==================== LANDSCAPE DUAL-MODE LAYOUT ==================== */
+.np-land-content {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding-top: calc(var(--safe-top) + 6px);
+  padding-bottom: calc(var(--safe-bottom) + 8px);
+}
+
+.np-land-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 2px calc(var(--safe-right) + 20px) 6px calc(var(--safe-left) + 20px);
+  flex-shrink: 0;
+}
+
+.np-land-seg {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.13);
+  border: 0.5px solid rgba(255, 255, 255, 0.18);
+}
+
+.np-land-seg-btn {
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 11.5px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition: background-color 200ms ease, color 200ms ease;
+}
+
+.np-land-seg-btn.is-active {
+  background: rgba(255, 255, 255, 0.92);
+  color: #111116;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.22);
+}
+
+.np-land-circle {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  color: rgba(255, 255, 255, 0.92);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.np-land-split {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(250px, 42%) 1fr;
+  gap: 18px;
+  padding: 0 calc(var(--safe-right) + 20px) 4px calc(var(--safe-left) + 20px);
+}
+
+.np-land-left {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 0;
+  padding-right: 6px;
+}
+
+.np-land-art-stage {
+  position: relative;
+  width: min(44vh, 196px);
+  height: min(44vh, 196px);
+  flex-shrink: 0;
+  overflow: visible;
+}
+
+.np-land-art-card {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  border-radius: 18px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.44), 0 4px 12px rgba(0, 0, 0, 0.24);
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+}
+
+.np-land-art-card.is-sibling {
+  pointer-events: none;
+}
+
+.np-land-right {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.np-land-skip,
+.np-land-play,
+.np-land-tool {
+  border: 0;
+  background: transparent;
+  color: #ffffff;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.np-land-tool {
+  width: 34px;
+  height: 34px;
+  color: rgba(255, 255, 255, 0.70);
+}
+
+.np-land-skip {
+  width: 40px;
+  height: 40px;
+}
+
+.np-land-play {
+  width: 46px;
+  height: 46px;
+}
+
+/* ==================== PORTRAIT STAGE ==================== */
 .np-handle-area {
   height: 26px;
   display: flex;
@@ -1212,6 +1948,20 @@ const fluidBgActive = computed(
   pointer-events: auto;
 }
 
+/* Interactive 3-Card Sibling Peeks (pure GPU transform/opacity, zero reflow!) */
+.np-sibling-artwork {
+  position: absolute;
+  z-index: 23;
+  border-radius: 22px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+  transform-origin: center center;
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.38);
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+  pointer-events: none;
+}
+
 /* SINGLE PERSISTENT SHARED ARTWORK LAYER (Always opacity:1 -> mathematically flicker-free!) */
 .np-shared-artwork {
   position: absolute;
@@ -1221,8 +1971,8 @@ const fluidBgActive = computed(
   background: rgba(255, 255, 255, 0.08);
   transform-origin: center center;
   box-shadow: 0 22px 54px rgba(0, 0, 0, 0.44), 0 6px 16px rgba(0, 0, 0, 0.26);
-  transition: transform 390ms var(--spring-ease);
-  will-change: transform;
+  transition: transform 390ms var(--spring-ease), opacity 240ms ease;
+  will-change: transform, opacity;
   backface-visibility: hidden;
   cursor: pointer;
 }
@@ -1526,23 +2276,6 @@ const fluidBgActive = computed(
   border-radius: 999px;
 }
 
-.np-cmt-badge {
-  position: absolute;
-  top: 1px;
-  right: -2px;
-  min-width: 18px;
-  height: 14px;
-  padding: 0 4px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.26);
-  color: #ffffff;
-  font-size: 9px;
-  font-weight: 700;
-  line-height: 14px;
-  text-align: center;
-  pointer-events: none;
-}
-
 .np-transport {
   display: flex;
   align-items: center;
@@ -1590,5 +2323,16 @@ const fluidBgActive = computed(
   background: rgba(255, 255, 255, 0.92);
   color: #111111;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.22);
+}
+
+.np-dsp-dot {
+  position: absolute;
+  top: 5px;
+  right: 8px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #67b0ff;
+  box-shadow: 0 0 8px rgba(103, 176, 255, 0.85);
 }
 </style>

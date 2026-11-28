@@ -46,6 +46,7 @@ export interface EchoSystemPluginInterface {
   setStatusBarStyle(options: { darkIcons: boolean }): Promise<void>;
   haptic(options: { style?: HapticStyle }): Promise<void>;
   moveToBackground(): Promise<void>;
+  exitApp(): Promise<void>;
   getLaunchFlags(): Promise<AppLaunchFlags>;
   checkNotificationPermission(): Promise<{ granted: boolean; systemEnabled: boolean; runtimeGranted: boolean }>;
   requestNotificationPermission(): Promise<{ granted: boolean }>;
@@ -160,11 +161,19 @@ export const echoSystem = {
     }
   },
 
+  async exitApp(): Promise<void> {
+    if (Capacitor.isNativePlatform()) {
+      await EchoSystemNative.exitApp().catch(() => {});
+    } else if (typeof window !== 'undefined') {
+      window.close();
+    }
+  },
+
   async getLaunchFlags(): Promise<AppLaunchFlags> {
     if (Capacitor.isNativePlatform()) {
       return EchoSystemNative.getLaunchFlags();
     }
-    return { openNowPlaying: false, versionName: '2.4.11', versionCode: 18 };
+    return { openNowPlaying: false, versionName: '2.4.12', versionCode: 19 };
   },
 
   async checkNotificationPermission(): Promise<{ granted: boolean; systemEnabled: boolean; runtimeGranted: boolean }> {

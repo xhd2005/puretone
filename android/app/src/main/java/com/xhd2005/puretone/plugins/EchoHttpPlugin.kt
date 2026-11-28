@@ -12,7 +12,10 @@ import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.ByteArrayOutputStream
 import java.io.IOException
+import java.io.InputStream
+import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
@@ -36,6 +39,10 @@ class EchoHttpPlugin : Plugin() {
             call.reject("Missing url")
             return
         }
+        if (!isAllowedHttpUrl(url)) {
+            call.reject("Unsupported URL scheme; only http/https are permitted")
+            return
+        }
         val method = (call.getString("method") ?: "GET").uppercase()
         val requestId = call.getString("requestId")
         val headersObj = call.getObject("headers")
@@ -53,7 +60,12 @@ class EchoHttpPlugin : Plugin() {
             .followSslRedirects(followRedirects)
             .build()
 
-        val reqBuilder = Request.Builder().url(url)
+        val reqBuilder = try {
+            Request.Builder().url(url)
+        } catch (e: IllegalArgumentException) {
+            call.reject("Invalid URL: ${e.message}", e)
+            return
+        }
         var contentTypeHeader: String? = null
         if (headersObj != null) {
             val keys = headersObj.keys()
@@ -111,7 +123,17 @@ class EchoHttpPlugin : Plugin() {
                             setCookies.put(cookie)
                         }
 
-                        val rawBytes = res.body?.bytes() ?: ByteArray(0)
+                        val body = res.body
+                        if (body != null && body.contentLength() > MAX_RESPONSE_BYTES.toLong()) {
+                            call.reject("Response exceeds ${MAX_RESPONSE_BYTES / (1024 * 1024)} MB safety limit")
+                            return
+                        }
+                        val rawBytes = if (body != null) {
+                            body.byteStream().use { stream -> readBoundedBytes(stream, MAX_RESPONSE_BYTES) }
+                        } else {
+                            ByteArray(0)
+                        }
+
                         val result = JSObject()
                         result.put("status", res.code)
                         result.put("url", res.request.url.toString())
@@ -144,6 +166,38 @@ class EchoHttpPlugin : Plugin() {
     }
 
     companion object {
+        const val MAX_RESPONSE_BYTES = 16 * 1024 * 1024 // 16 MB hard cap to prevent OOM
+
+        fun isAllowedHttpUrl(rawUrl: String?): Boolean {
+            val clean = rawUrl?.trim().orEmpty()
+            if (clean.isEmpty()) return false
+            return try {
+                val uri = URI(clean)
+                val scheme = uri.scheme?.lowercase()
+                (scheme == "http" || scheme == "https") && !uri.host.isNullOrBlank()
+            } catch (_: Exception) {
+                false
+            }
+        }
+
+        @Throws(IOException::class)
+        fun readBoundedBytes(stream: InputStream, maxBytes: Int = MAX_RESPONSE_BYTES): ByteArray {
+            val cap = maxBytes.coerceAtLeast(1)
+            val out = ByteArrayOutputStream()
+            val buf = ByteArray(16 * 1024)
+            var total = 0
+            while (true) {
+                val n = stream.read(buf)
+                if (n == -1) break
+                total += n
+                if (total > cap) {
+                    throw IOException("Response body exceeds $cap bytes safety limit")
+                }
+                out.write(buf, 0, n)
+            }
+            return out.toByteArray()
+        }
+
         fun extractHeaderValues(pairs: List<Pair<String, String>>, target: String): List<String> {
             return pairs.filter { it.first.equals(target, ignoreCase = true) }.map { it.second }
         }

@@ -299,6 +299,7 @@ const mirrorOptions = computed<Array<{ id: UpdateMirrorMode; label: string }>>((
 ]);
 
 const showUpdateRoutePanel = ref(false);
+const showPhilosophy = ref(false);
 
 async function handleMediaControlAction() {
   echoSystem.haptic('light');
@@ -860,15 +861,16 @@ async function openAuthorProfile() {
                     </div>
                   </div>
 
-                  <!-- Audio Quality -->
+                  <!-- Audio Quality (4 Tiers: Std / HQ / FLAC / Hi-Res) -->
                   <div class="px-4 py-3 space-y-2">
                     <div class="text-[14.5px] font-medium text-[var(--text-primary)]">{{ t('settings.quality') }}</div>
-                    <div class="pt-seg-group grid-cols-3">
+                    <div class="pt-seg-group grid-cols-4">
                       <button
                         v-for="q in [
                           { id: '128', label: t('settings.quality128') },
                           { id: '320', label: t('settings.quality320') },
                           { id: 'flac', label: t('settings.qualityFlac') },
+                          { id: 'high', label: t('settings.qualityHigh') },
                         ]"
                         :key="q.id"
                         type="button"
@@ -1232,167 +1234,85 @@ async function openAuthorProfile() {
                       </button>
                     </div>
                   </div>
+                </div>
+              </section>
 
-                  <!-- 5. Auto-Check App Updates on Cold Launch -->
-                  <label class="px-4 py-3.5 flex items-center justify-between gap-3 cursor-pointer">
+              <!-- Group C: Dedicated Software Update Card (All Update Controls Unified in One Place!) -->
+              <section class="space-y-2" data-settings-update>
+                <div class="text-[12px] font-semibold uppercase tracking-wide text-[var(--text-secondary)] px-2">
+                  {{ t('settings.groupUpdate') }}
+                </div>
+                <div class="rounded-[22px] bg-[var(--bg-card)] overflow-hidden divide-y divide-[var(--hairline)] shadow-xs">
+                  <!-- 1. Current Version Status + One-Tap Check Update Pill -->
+                  <div class="px-4 py-3.5 flex items-center justify-between gap-3">
                     <div class="flex items-center gap-2.5 min-w-0">
                       <Icon :icon="iconDownload" class="w-4 h-4 am-accent-text shrink-0" />
                       <div class="min-w-0">
-                        <div class="text-[14.5px] font-medium text-[var(--text-primary)] leading-snug">
-                          {{ t('settings.autoCheckUpdate') }}
+                        <div class="flex items-center gap-1.5 text-[14.5px] font-medium text-[var(--text-primary)]">
+                          <span class="truncate tabular-nums">v{{ appVersion }}</span>
+                          <span
+                            v-if="ui.availableUpdateVersion"
+                            class="w-2 h-2 rounded-full bg-[#ff3b30] shrink-0"
+                          />
                         </div>
-                        <div class="text-[11px] text-[var(--text-secondary)] leading-snug mt-0.5">
-                          {{ t('settings.autoCheckUpdateSub') }}
+                        <div class="text-[11px] text-[var(--text-secondary)] truncate mt-0.5">
+                          {{
+                            ui.availableUpdateVersion
+                              ? t('settings.updateStatusNew', { ver: ui.availableUpdateVersion })
+                              : t('settings.updateStatusLatest')
+                          }}
                         </div>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      class="h-8 px-3.5 rounded-full text-[12px] font-semibold border-0 inline-flex items-center gap-1.5 am-tap shrink-0"
+                      :class="
+                        ui.availableUpdateVersion
+                          ? 'am-accent-bg text-white shadow-xs'
+                          : 'bg-[var(--bg-subtle)] text-[var(--text-primary)]'
+                      "
+                      :disabled="checkingUpdate"
+                      @click="handleCheckUpdate"
+                    >
+                      <Icon
+                        :icon="checkingUpdate ? iconRefresh : iconDownload"
+                        class="w-3.5 h-3.5 shrink-0"
+                        :class="{ 'animate-spin': checkingUpdate }"
+                      />
+                      <span>
+                        {{
+                          checkingUpdate
+                            ? t('about.checking')
+                            : ui.availableUpdateVersion
+                              ? t('update.newBadge', { ver: ui.availableUpdateVersion })
+                              : t('about.checkUpdate')
+                        }}
+                      </span>
+                    </button>
+                  </div>
+
+                  <!-- 2. Cold-Start Auto-Check Toggle -->
+                  <label class="px-4 py-3 flex items-center justify-between gap-3 cursor-pointer">
+                    <div class="min-w-0">
+                      <div class="text-[14.5px] text-[var(--text-primary)] leading-snug">
+                        {{ t('settings.autoCheckUpdate') }}
+                      </div>
+                      <div class="text-[11px] text-[var(--text-secondary)] leading-snug mt-0.5">
+                        {{ t('settings.autoCheckUpdateSub') }}
                       </div>
                     </div>
                     <input v-model="settings.autoCheckUpdate" type="checkbox" class="ios-switch" />
                   </label>
-                </div>
-              </section>
 
-              <!-- Group C: Unified Adaptive Light/Dark Brand Flagship Card + Clean Meta List -->
-              <section class="space-y-3">
-                <!-- 1. Unified Adaptive Brand & Philosophy Card (Zero Clashing Blocks, Zero Repeated Copy) -->
-                <div
-                  class="ml-about-hero relative rounded-[24px] px-5 pt-6 pb-5 overflow-hidden shadow-xs"
-                  data-brand-philosophy
-                >
-                  <div class="ml-about-glow pointer-events-none absolute -top-14 -right-10 w-52 h-52 rounded-full" />
-                  <div class="ml-about-watermark pointer-events-none absolute -top-3 -right-3">
-                    <PureToneMark :size="108" />
-                  </div>
-
-                  <div class="relative z-10">
-                    <!-- Top Identity Header -->
-                    <div class="flex flex-col items-center text-center">
-                      <PureToneMark :size="56" class="shadow-md rounded-[15px]" />
-                      <div class="mt-3 text-[19px] font-bold tracking-[0.06em] ml-about-title">
-                        {{ t('app.fullName') }}
-                      </div>
-                      <div class="mt-1.5 inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full ml-about-meta-pill text-[11px] font-semibold tabular-nums">
-                        <span>v{{ appVersion }}</span>
-                        <span class="opacity-45">·</span>
-                        <span>GPL-3.0</span>
-                        <span class="opacity-45">·</span>
-                        <span>{{ t('about.philosophyTitle') }}</span>
-                      </div>
-                      <div
-                        v-if="effectiveLocale !== 'en'"
-                        class="mt-1.5 text-[9.5px] font-medium tracking-[0.20em] uppercase ml-about-en"
-                      >
-                        {{ t('app.sloganEn') }}
-                      </div>
-
-                      <!-- Dual Action Pills: Check Update (with new version badge dot) + Replay Splash -->
-                      <div class="mt-4 w-full grid grid-cols-2 gap-2.5">
-                        <button
-                          type="button"
-                          class="relative h-9.5 px-3 rounded-full am-accent-bg text-white text-[13px] font-semibold border-0 inline-flex items-center justify-center gap-1.5 shadow-xs am-tap"
-                          :disabled="checkingUpdate"
-                          @click="handleCheckUpdate"
-                        >
-                          <Icon :icon="checkingUpdate ? iconRefresh : iconDownload" class="w-4 h-4 shrink-0" :class="{ 'animate-spin': checkingUpdate }" />
-                          <span class="truncate">
-                            {{
-                              checkingUpdate
-                                ? t('about.checking')
-                                : ui.availableUpdateVersion
-                                  ? t('update.newBadge', { ver: ui.availableUpdateVersion })
-                                  : t('about.checkUpdate')
-                            }}
-                          </span>
-                          <span
-                            v-if="ui.availableUpdateVersion && !checkingUpdate"
-                            class="w-2 h-2 rounded-full bg-[#ffeb3b] shrink-0"
-                          />
-                        </button>
-                        <button
-                          type="button"
-                          class="h-9.5 px-3 rounded-full ml-about-secondary-btn text-[13px] font-semibold inline-flex items-center justify-center gap-1.5 am-tap"
-                          @click="ui.replaySplash()"
-                        >
-                          <Icon :icon="iconSparkles" class="w-3.5 h-3.5 shrink-0" />
-                          <span class="truncate">{{ t('about.replaySplash') }}</span>
-                        </button>
-                      </div>
-                    </div>
-
-                    <!-- Unified Divider + Full Brand Philosophy (Zero Duplicated Headings!) -->
-                    <div class="mt-5 pt-4 ml-about-divider space-y-2.5">
-                      <p class="m-0 flex items-start gap-2.5">
-                        <span class="ml-about-char w-[22px] h-[22px] rounded-[7px] text-[12px] font-bold inline-flex items-center justify-center shrink-0 mt-[2px]">
-                          {{ t('about.miChar') }}
-                        </span>
-                        <span class="text-[13px] leading-[1.70] ml-about-copy">
-                          {{ t('about.miDesc') }}
-                        </span>
-                      </p>
-                      <p class="m-0 flex items-start gap-2.5">
-                        <span class="ml-about-char w-[22px] h-[22px] rounded-[7px] text-[12px] font-bold inline-flex items-center justify-center shrink-0 mt-[2px]">
-                          {{ t('about.yinChar') }}
-                        </span>
-                        <span class="text-[13px] leading-[1.70] ml-about-copy">
-                          {{ t('about.yinDesc') }}
-                        </span>
-                      </p>
-                      <p class="m-0 pt-0.5 text-[12.5px] leading-[1.72] ml-about-vision">
-                        {{ t('about.vision') }}
-                      </p>
-                      <p class="m-0 pt-2 text-[13.5px] font-semibold tracking-[0.04em] ml-about-title text-center">
-                        {{ t('about.closing') }}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                <!-- 2. Clean iOS-Style Unified Hairline List (No Boxes-Inside-Boxes!) -->
-                <div class="rounded-[22px] bg-[var(--bg-card)] overflow-hidden divide-y divide-[var(--hairline)] shadow-xs">
-                  <!-- Author Row: Hayden Xue -->
-                  <button
-                    type="button"
-                    class="w-full px-4 py-3.5 bg-transparent border-0 flex items-center gap-3 text-left am-tap"
-                    @click="openAuthorProfile"
-                  >
-                    <span class="w-9 h-9 rounded-full am-accent-bg text-white text-[12.5px] font-extrabold flex items-center justify-center shrink-0">
-                      HX
-                    </span>
-                    <div class="min-w-0 flex-1">
-                      <div class="flex items-center gap-1.5">
-                        <span class="text-[14.5px] font-semibold text-[var(--text-primary)] truncate">{{ t('about.authorTitle') }}</span>
-                        <span class="text-[11.5px] text-[var(--text-tertiary)] shrink-0">@{{ APP_AUTHOR }}</span>
-                      </div>
-                      <p class="text-[11.5px] text-[var(--text-secondary)] leading-relaxed m-0 mt-0.5">
-                        {{ t('about.authorBio') }}
-                      </p>
-                    </div>
-                    <span class="text-[12px] font-semibold am-accent-text shrink-0">↗</span>
-                  </button>
-
-                  <!-- Open-Source Repository Row (Never Truncates!) -->
-                  <button
-                    type="button"
-                    class="w-full px-4 py-3.5 bg-transparent border-0 flex items-center justify-between gap-2.5 text-left am-tap"
-                    @click="openGithubRepo"
-                  >
-                    <div class="flex items-center gap-2.5 min-w-0">
-                      <Icon :icon="iconBrandGithub" class="w-4.5 h-4.5 text-[var(--text-secondary)] shrink-0" />
-                      <span class="text-[14.5px] font-medium text-[var(--text-primary)] truncate">{{ t('about.repoLink') }}</span>
-                    </div>
-                    <span class="text-[12px] text-[var(--text-tertiary)] font-mono shrink-0">xhd2005/puretone ↗</span>
-                  </button>
-
-                  <!-- Collapsible Update Acceleration Route Row (Clean 1-Line Default!) -->
+                  <!-- 3. Collapsible Update Acceleration Route (HTTPS + SHA-256 Verified) -->
                   <div>
                     <button
                       type="button"
-                      class="w-full px-4 py-3.5 bg-transparent border-0 flex items-center justify-between gap-2.5 text-left am-tap"
+                      class="w-full px-4 py-3 bg-transparent border-0 flex items-center justify-between gap-2.5 text-left am-tap"
                       @click="echoSystem.haptic('selection'); showUpdateRoutePanel = !showUpdateRoutePanel"
                     >
-                      <div class="flex items-center gap-2.5 min-w-0">
-                        <Icon :icon="iconDownload" class="w-4.5 h-4.5 am-accent-text shrink-0" />
-                        <span class="text-[14.5px] font-medium text-[var(--text-primary)] truncate">{{ t('update.channel') }}</span>
-                      </div>
+                      <span class="text-[14.5px] text-[var(--text-primary)] truncate">{{ t('update.channel') }}</span>
                       <div class="flex items-center gap-1 text-[12px] text-[var(--text-secondary)] shrink-0">
                         <span>{{ settings.updateMirrorMode === 'direct' ? t('update.channelDirect') : t('update.channelAuto') }}</span>
                         <Icon
@@ -1432,22 +1352,141 @@ async function openAuthorProfile() {
                       </p>
                     </div>
                   </div>
+                </div>
+              </section>
 
-                  <!-- Compliance & Legal Disclaimer Row -->
+              <!-- Group D: Compact iOS 26 About Card (Collapsible Philosophy) + Clean Author / Repo / Compliance List -->
+              <section class="space-y-2.5" data-settings-about>
+                <div class="text-[12px] font-semibold uppercase tracking-wide text-[var(--text-secondary)] px-2">
+                  {{ t('settings.groupAbout') }}
+                </div>
+
+                <!-- 1. Refined Compact Brand Card with Collapsible Philosophy & Replay Splash -->
+                <div
+                  class="ml-about-hero relative rounded-[22px] px-4 py-4 overflow-hidden shadow-xs"
+                  data-brand-philosophy
+                >
+                  <div class="ml-about-glow pointer-events-none absolute -top-12 -right-10 w-44 h-44 rounded-full" />
+                  <div class="relative z-10">
+                    <!-- Compact Horizontal Identity Row -->
+                    <div class="flex items-center gap-3.5">
+                      <PureToneMark :size="48" class="shadow-md rounded-[13px] shrink-0" />
+                      <div class="min-w-0 flex-1">
+                        <div class="flex items-center gap-2">
+                          <span class="text-[17px] font-bold tracking-[0.04em] ml-about-title truncate">
+                            {{ t('app.fullName') }}
+                          </span>
+                          <span class="px-2 py-0.5 rounded-full ml-about-meta-pill text-[10px] font-semibold tabular-nums shrink-0">
+                            v{{ appVersion }} · GPL-3.0
+                          </span>
+                        </div>
+                        <p class="m-0 mt-1 text-[12px] ml-about-copy truncate">
+                          {{ t('app.slogan') }}
+                        </p>
+                      </div>
+                    </div>
+
+                    <!-- Slim Action Row: Expandable Brand Philosophy + Replay Splash -->
+                    <div class="mt-3.5 pt-3 ml-about-divider flex items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        class="flex items-center gap-1.5 bg-transparent border-0 p-0 text-[12.5px] font-semibold ml-about-title am-tap min-w-0"
+                        @click="echoSystem.haptic('selection'); showPhilosophy = !showPhilosophy"
+                      >
+                        <span class="truncate">{{ t('about.philosophyToggle') }}</span>
+                        <span class="text-[11px] font-normal ml-about-en truncate">{{ t('about.philosophyHint') }}</span>
+                        <Icon
+                          :icon="iconChevronDown"
+                          class="w-3.5 h-3.5 shrink-0 transition-transform opacity-75"
+                          :class="{ 'rotate-180': showPhilosophy }"
+                        />
+                      </button>
+                      <button
+                        type="button"
+                        class="h-7 px-2.5 rounded-full ml-about-secondary-btn text-[11px] font-semibold inline-flex items-center gap-1 am-tap shrink-0"
+                        @click="ui.replaySplash()"
+                      >
+                        <Icon :icon="iconSparkles" class="w-3 h-3 shrink-0" />
+                        <span>{{ t('about.replaySplash') }}</span>
+                      </button>
+                    </div>
+
+                    <!-- Smoothly Collapsible Full Brand Philosophy -->
+                    <div v-if="showPhilosophy" class="mt-3 pt-3 ml-about-divider space-y-2">
+                      <p class="m-0 flex items-start gap-2.5">
+                        <span class="ml-about-char w-[20px] h-[20px] rounded-[6px] text-[11px] font-bold inline-flex items-center justify-center shrink-0 mt-[2px]">
+                          {{ t('about.miChar') }}
+                        </span>
+                        <span class="text-[12.5px] leading-[1.68] ml-about-copy">
+                          {{ t('about.miDesc') }}
+                        </span>
+                      </p>
+                      <p class="m-0 flex items-start gap-2.5">
+                        <span class="ml-about-char w-[20px] h-[20px] rounded-[6px] text-[11px] font-bold inline-flex items-center justify-center shrink-0 mt-[2px]">
+                          {{ t('about.yinChar') }}
+                        </span>
+                        <span class="text-[12.5px] leading-[1.68] ml-about-copy">
+                          {{ t('about.yinDesc') }}
+                        </span>
+                      </p>
+                      <p class="m-0 pt-0.5 text-[12px] leading-[1.68] ml-about-vision">
+                        {{ t('about.vision') }}
+                      </p>
+                      <p class="m-0 pt-1 text-[12.5px] font-semibold tracking-[0.03em] ml-about-title">
+                        {{ t('about.closing') }}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 2. Clean 3-Row iOS Grouped List: Author / Open-Source Repo / Legal Disclaimer -->
+                <div class="rounded-[22px] bg-[var(--bg-card)] overflow-hidden divide-y divide-[var(--hairline)] shadow-xs">
                   <button
                     type="button"
-                    class="w-full px-4 py-3.5 bg-transparent border-0 flex items-center justify-between gap-2.5 text-left am-tap"
+                    class="w-full px-4 py-3 bg-transparent border-0 flex items-center gap-3 text-left am-tap"
+                    @click="openAuthorProfile"
+                  >
+                    <span class="w-8 h-8 rounded-full am-accent-bg text-white text-[11.5px] font-extrabold flex items-center justify-center shrink-0">
+                      HX
+                    </span>
+                    <div class="min-w-0 flex-1">
+                      <div class="flex items-center gap-1.5">
+                        <span class="text-[14px] font-semibold text-[var(--text-primary)] truncate">{{ t('about.authorTitle') }}</span>
+                        <span class="text-[11px] text-[var(--text-tertiary)] shrink-0">@{{ APP_AUTHOR }}</span>
+                      </div>
+                      <p class="text-[11px] text-[var(--text-secondary)] truncate m-0 mt-0.5">
+                        {{ t('about.authorShortBio') }}
+                      </p>
+                    </div>
+                    <span class="text-[12px] font-semibold am-accent-text shrink-0">↗</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    class="w-full px-4 py-3 bg-transparent border-0 flex items-center justify-between gap-2.5 text-left am-tap"
+                    @click="openGithubRepo"
+                  >
+                    <div class="flex items-center gap-2.5 min-w-0">
+                      <Icon :icon="iconBrandGithub" class="w-4 h-4 text-[var(--text-secondary)] shrink-0" />
+                      <span class="text-[14px] font-medium text-[var(--text-primary)] truncate">{{ t('about.repoTitle') }}</span>
+                    </div>
+                    <span class="text-[12px] text-[var(--text-tertiary)] font-mono shrink-0">xhd2005/puretone ↗</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    class="w-full px-4 py-3 bg-transparent border-0 flex items-center justify-between gap-2.5 text-left am-tap"
                     @click="echoSystem.haptic('light'); ui.complianceModalOpen = true"
                   >
                     <div class="flex items-center gap-2.5 min-w-0">
-                      <Icon :icon="iconShieldCheck" class="w-4.5 h-4.5 am-accent-text shrink-0" />
-                      <span class="text-[14.5px] font-medium text-[var(--text-primary)] truncate">{{ t('about.disclaimerLink') }}</span>
+                      <Icon :icon="iconShieldCheck" class="w-4 h-4 am-accent-text shrink-0" />
+                      <span class="text-[14px] font-medium text-[var(--text-primary)] truncate">{{ t('about.disclaimerShort') }}</span>
                     </div>
                     <span class="text-[12px] text-[var(--text-tertiary)] shrink-0">{{ t('common.view') }}</span>
                   </button>
                 </div>
 
-                <!-- 3. Quiet Editorial Footer (No Duplicated English Tagline) -->
+                <!-- 3. Quiet Editorial Footer -->
                 <div class="px-3 pt-1 pb-2 text-center">
                   <p class="text-[11px] text-[var(--text-tertiary)] leading-relaxed m-0">
                     {{ t('about.thanks') }}

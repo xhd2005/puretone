@@ -80,7 +80,7 @@ export const useAccountsStore = defineStore('accounts', () => {
     });
   }
 
-  async function hydrate() {
+  async function hydrate(options: { deferNetworkRefresh?: boolean } = {}) {
     const saved = await echoSystem.kvGetJson<PersistedAccounts>(STORAGE_KEY, {
       accounts: [],
       activeUserId: '',
@@ -96,7 +96,7 @@ export const useAccountsStore = defineStore('accounts', () => {
       });
     });
 
-    if (activeAccount.value) {
+    if (activeAccount.value && !options.deferNetworkRefresh) {
       void refreshAccountProfile(activeAccount.value.userid);
     }
   }

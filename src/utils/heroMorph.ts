@@ -188,3 +188,121 @@ export function computeQueueWindow(
     nextCount: Math.max(0, safeTotal - end),
   };
 }
+
+export interface CoverCarouselCardStyle {
+  transform: string;
+  opacity: number;
+}
+
+export interface CoverCarouselLayout {
+  prev: CoverCarouselCardStyle;
+  current: CoverCarouselCardStyle;
+  next: CoverCarouselCardStyle;
+}
+
+/**
+ * Computes synchronized 3-card GPU transforms for interactive horizontal album artwork swiping.
+ * Adjacent prev/next cards glide into view with subtle 3D depth tilt and grow cleanly to full
+ * scale as the finger drags across `stridePx`, eliminating snap-back stutter completely.
+ */
+export function computeCoverCarouselLayout(
+  swipeX: number,
+  stridePx: number,
+  baseScale = 1,
+): CoverCarouselLayout {
+  const safeStride = Math.max(120, Number(stridePx) || 320);
+  const clampedX = Math.max(-safeStride * 1.15, Math.min(safeStride * 1.15, Number(swipeX) || 0));
+  const p = clampedX / safeStride; // -1 (next) .. 0 (center) .. +1 (prev)
+  const absP = Math.abs(p);
+
+  const curScale = Number((baseScale - Math.min(0.11, absP * 0.12)).toFixed(4));
+  const curRotY = Number(Math.max(-14, Math.min(14, -p * 12)).toFixed(2));
+  const curOpacity = Number(Math.max(0.62, 1 - absP * 0.34).toFixed(3));
+
+  const nextFocus = Math.max(0, Math.min(1, -p));
+  const nextTx = safeStride + clampedX;
+  const nextScale = Number((0.84 + nextFocus * (baseScale - 0.84)).toFixed(4));
+  const nextRotY = Number(((1 - nextFocus) * 14).toFixed(2));
+  const nextOpacity = Number((0.40 + nextFocus * 0.60).toFixed(3));
+
+  const prevFocus = Math.max(0, Math.min(1, p));
+  const prevTx = -safeStride + clampedX;
+  const prevScale = Number((0.84 + prevFocus * (baseScale - 0.84)).toFixed(4));
+  const prevRotY = Number((-(1 - prevFocus) * 14).toFixed(2));
+  const prevOpacity = Number((0.40 + prevFocus * 0.60).toFixed(3));
+
+  return {
+    prev: {
+      transform: `perspective(1000px) translate3d(${prevTx.toFixed(2)}px, 0, 0) rotateY(${prevRotY}deg) scale3d(${prevScale}, ${prevScale}, 1)`,
+      opacity: prevOpacity,
+    },
+    current: {
+      transform: `perspective(1000px) translate3d(${clampedX.toFixed(2)}px, 0, 0) rotateY(${curRotY}deg) scale3d(${curScale}, ${curScale}, 1)`,
+      opacity: curOpacity,
+    },
+    next: {
+      transform: `perspective(1000px) translate3d(${nextTx.toFixed(2)}px, 0, 0) rotateY(${nextRotY}deg) scale3d(${nextScale}, ${nextScale}, 1)`,
+      opacity: nextOpacity,
+    },
+  };
+}
+
+export interface CoverFlowCardTransform {
+  tx: number;
+  tz: number;
+  rotateY: number;
+  scale: number;
+  opacity: number;
+  zIndex: number;
+  transform: string;
+}
+
+/**
+ * Classic 3D Cover Flow perspective geometry for landscape album browsing.
+ * `offset = cardIndex - activeFloatIndex` (0 = center focused hero card).
+ */
+export function computeCoverFlowCardTransform(
+  offset: number,
+  cardSizePx = 186,
+): CoverFlowCardTransform {
+  const safeSize = Math.max(100, Number(cardSizePx) || 186);
+  const absOff = Math.abs(offset);
+  const sign = offset === 0 ? 0 : offset > 0 ? 1 : -1;
+
+  let tx: number;
+  let tz: number;
+  let rotateY: number;
+  let scale: number;
+
+  if (absOff <= 1) {
+    tx = offset * safeSize * 0.72;
+    tz = (1 - absOff) * 68 - absOff * 36;
+    rotateY = -offset * 52;
+    scale = 1 - absOff * 0.18;
+  } else {
+    const extra = absOff - 1;
+    tx = sign * (safeSize * 0.72 + extra * safeSize * 0.34);
+    tz = -36 - extra * 24;
+    rotateY = -sign * Math.min(60, 52 + extra * 3);
+    scale = Math.max(0.62, 0.82 - extra * 0.055);
+  }
+
+  const opacity = absOff <= 2.6 ? 1 : Math.max(0, 1 - (absOff - 2.6) * 0.65);
+  const zIndex = Math.max(1, Math.round(50 - absOff * 10));
+
+  const txFixed = Number(tx.toFixed(2));
+  const tzFixed = Number(tz.toFixed(2));
+  const rotFixed = Number(rotateY.toFixed(2));
+  const scaleFixed = Number(scale.toFixed(4));
+  const opacityFixed = Number(opacity.toFixed(3));
+
+  return {
+    tx: txFixed,
+    tz: tzFixed,
+    rotateY: rotFixed,
+    scale: scaleFixed,
+    opacity: opacityFixed,
+    zIndex,
+    transform: `perspective(1100px) translate3d(${txFixed}px, 0, ${tzFixed}px) rotateY(${rotFixed}deg) scale3d(${scaleFixed}, ${scaleFixed}, 1)`,
+  };
+}

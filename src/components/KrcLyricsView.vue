@@ -38,43 +38,105 @@ function getRawShiftedTimeMs(): number {
 
 const scrollerRef = ref<HTMLElement | null>(null);
 const lineRefs = ref<HTMLElement[]>([]);
-// Only flips on actual lyric line transitions (~every 3-5s) -> ZERO 60/120fps Vue VDOM diff!
+// Only flips on actual lyric line transitions (~every 3-5s) -> ZERO 120Hz Vue VDOM diff!
 const activeIndex = ref(-1);
 const userScrolling = ref(false);
 
 let displayTimeMs = -1;
 let scrollResumeTimer: ReturnType<typeof setTimeout> | null = null;
+let cleanupWordTimer: ReturnType<typeof setTimeout> | null = null;
 let rafId = 0;
+let lastRafNow = 0;
 let touchStartY = 0;
 let didScrollGesture = false;
 let paintedLineIdx = -1;
 let cachedWordNodes: HTMLElement[] = [];
 
-function clearWordCache() {
-  for (let i = 0; i < cachedWordNodes.length; i += 1) {
-    const el = cachedWordNodes[i];
+// 120Hz/144Hz Frame-Rate-Independent Critically-Damped Spring Scroller
+const SPRING_OMEGA = 10.5;
+let springActive = false;
+let springTargetTop = 0;
+let springVelocity = 0;
+let springPos = 0;
+
+function cancelSpringScroll() {
+  springActive = false;
+  springVelocity = 0;
+}
+
+function stepSpringScroll(dtSec: number) {
+  if (!springActive || userScrolling.value) {
+    springActive = false;
+    return;
+  }
+  const container = scrollerRef.value;
+  if (!container) {
+    springActive = false;
+    return;
+  }
+  const dt = Math.max(0.001, Math.min(0.05, dtSec));
+  const x = springPos - springTargetTop;
+  const f = 1 + 2 * dt * SPRING_OMEGA;
+  const oo = SPRING_OMEGA * SPRING_OMEGA;
+  const hoo = dt * oo;
+  const hhoo = dt * hoo;
+  const detInv = 1 / (f + hhoo);
+  const nextX = (f * x + dt * springVelocity) * detInv;
+  springVelocity = (springVelocity - hoo * x) * detInv;
+  springPos = springTargetTop + nextX;
+  container.scrollTop = springPos;
+
+  if (Math.abs(nextX) < 0.45 && Math.abs(springVelocity) < 8) {
+    container.scrollTop = springTargetTop;
+    springPos = springTargetTop;
+    springActive = false;
+    springVelocity = 0;
+  }
+}
+
+function clearNodesInlineStyles(nodes: HTMLElement[]) {
+  for (let i = 0; i < nodes.length; i += 1) {
+    const el = nodes[i];
     if (el) {
       el.style.removeProperty('--wp-pos');
       delete el.dataset.wpq;
     }
   }
+}
+
+function clearWordCache(immediate = true) {
+  if (cleanupWordTimer) {
+    clearTimeout(cleanupWordTimer);
+    cleanupWordTimer = null;
+  }
+  const prevNodes = cachedWordNodes;
   cachedWordNodes = [];
   paintedLineIdx = -1;
+  if (!prevNodes.length) return;
+  if (immediate) {
+    clearNodesInlineStyles(prevNodes);
+  } else {
+    // Defer cleanup until the outgoing line's opacity fade settles -> zero 1-frame blank flash!
+    cleanupWordTimer = setTimeout(() => {
+      cleanupWordTimer = null;
+      clearNodesInlineStyles(prevNodes);
+    }, 320);
+  }
 }
 
 function paintActiveLineWords(idx: number, nowMs: number) {
   if (idx < 0) {
-    if (paintedLineIdx >= 0) clearWordCache();
+    if (paintedLineIdx >= 0) clearWordCache(false);
     return;
   }
   const line = player.lyrics.lines[idx];
   if (!line?.words?.length) {
-    if (paintedLineIdx >= 0) clearWordCache();
+    if (paintedLineIdx >= 0) clearWordCache(false);
     return;
   }
 
   if (paintedLineIdx !== idx) {
-    clearWordCache();
+    clearWordCache(false);
     const rowEl = lineRefs.value[idx];
     if (!rowEl) return;
     cachedWordNodes = Array.from(rowEl.querySelectorAll<HTMLElement>('.krc-word'));
@@ -85,12 +147,12 @@ function paintActiveLineWords(idx: number, nowMs: number) {
   const count = Math.min(words.length, cachedWordNodes.length);
   for (let i = 0; i < count; i += 1) {
     const posPct = computeWordSweepPosPercent(words[i], nowMs);
-    // 0.5% quantization avoids redundant style writes while staying ultra-smooth at 120fps
-    const q = String(Math.round(posPct * 2));
+    // 0.25% quantization keeps 120Hz sweeps silky smooth without redundant DOM writes
+    const q = String(Math.round(posPct * 4));
     const el = cachedWordNodes[i];
     if (el.dataset.wpq !== q) {
       el.dataset.wpq = q;
-      el.style.setProperty('--wp-pos', `${posPct.toFixed(1)}%`);
+      el.style.setProperty('--wp-pos', `${posPct.toFixed(2)}%`);
     }
   }
 }
@@ -103,17 +165,44 @@ function syncFrame(forceSnap = false) {
 
   const nextIdx = findActiveLyricIndex(player.lyrics.lines, displayTimeMs, 90);
   if (nextIdx !== activeIndex.value) {
+    // Pre-paint incoming line's word positions BEFORE Vue toggles `.is-active` so first painted frame is exact
+    paintActiveLineWords(nextIdx, displayTimeMs);
     activeIndex.value = nextIdx;
+  } else {
+    paintActiveLineWords(activeIndex.value, displayTimeMs);
   }
-  paintActiveLineWords(activeIndex.value, displayTimeMs);
 }
 
-function tick() {
-  if (!props.active || !player.isPlaying) {
+function needsRaf(): boolean {
+  if (!props.active) return false;
+  return player.isPlaying || springActive;
+}
+
+function tick(now: number) {
+  if (!needsRaf()) {
     rafId = 0;
+    lastRafNow = 0;
     return;
   }
-  syncFrame(false);
+  const dtSec = lastRafNow > 0 ? (now - lastRafNow) / 1000 : 1 / 120;
+  lastRafNow = now;
+  if (player.isPlaying) {
+    syncFrame(false);
+  }
+  if (springActive) {
+    stepSpringScroll(dtSec);
+  }
+  if (needsRaf()) {
+    rafId = requestAnimationFrame(tick);
+  } else {
+    rafId = 0;
+    lastRafNow = 0;
+  }
+}
+
+function ensureRafRunning() {
+  if (rafId || !needsRaf()) return;
+  lastRafNow = typeof performance !== 'undefined' ? performance.now() : 0;
   rafId = requestAnimationFrame(tick);
 }
 
@@ -121,11 +210,10 @@ function syncLoop(forceSnap = false) {
   if (rafId) {
     cancelAnimationFrame(rafId);
     rafId = 0;
+    lastRafNow = 0;
   }
   syncFrame(forceSnap);
-  if (props.active && player.isPlaying) {
-    rafId = requestAnimationFrame(tick);
-  }
+  ensureRafRunning();
 }
 
 function scrollToActive(smooth = true) {
@@ -133,21 +221,41 @@ function scrollToActive(smooth = true) {
   const idx = activeIndex.value;
   const container = scrollerRef.value;
   if (!container) return;
-  if (idx < 0) {
-    container.scrollTo({ top: 0, behavior: smooth ? 'smooth' : 'auto' });
+
+  let desiredTop = 0;
+  if (idx >= 0) {
+    const el = lineRefs.value[idx];
+    if (!el) return;
+    desiredTop = Math.max(0, el.offsetTop - container.clientHeight * 0.30);
+  }
+  const maxScroll = Math.max(0, container.scrollHeight - container.clientHeight);
+  const clampedTarget = Math.min(maxScroll, desiredTop);
+
+  if (!smooth || !props.active) {
+    cancelSpringScroll();
+    container.scrollTop = clampedTarget;
+    springPos = clampedTarget;
     return;
   }
-  const el = lineRefs.value[idx];
-  if (!el) return;
-  const targetTop = el.offsetTop - container.clientHeight * 0.30;
-  container.scrollTo({
-    top: Math.max(0, targetTop),
-    behavior: smooth ? 'smooth' : 'auto',
-  });
+
+  if (!springActive) {
+    springPos = container.scrollTop;
+    springVelocity = 0;
+  }
+  springTargetTop = clampedTarget;
+  if (Math.abs(springPos - clampedTarget) < 1) {
+    container.scrollTop = clampedTarget;
+    springPos = clampedTarget;
+    cancelSpringScroll();
+    return;
+  }
+  springActive = true;
+  ensureRafRunning();
 }
 
 function snapToActiveNow() {
   userScrolling.value = false;
+  cancelSpringScroll();
   displayTimeMs = -1;
   syncLoop(true);
   void nextTick(() => {
@@ -157,15 +265,19 @@ function snapToActiveNow() {
   });
 }
 
-// Start/stop single RAF loop strictly on visibility or play/pause state (NEVER cancelled on 250ms ticks!)
+// Start/stop single RAF loop strictly on visibility or play/pause state (NEVER cancelled on 160ms ticks!)
 watch(
   () => [props.active, player.isPlaying],
   ([isActive]) => {
     if (isActive) {
       syncLoop(!player.isPlaying);
-    } else if (rafId) {
-      cancelAnimationFrame(rafId);
-      rafId = 0;
+    } else {
+      cancelSpringScroll();
+      if (rafId) {
+        cancelAnimationFrame(rafId);
+        rafId = 0;
+        lastRafNow = 0;
+      }
     }
   },
   { immediate: true },
@@ -199,7 +311,8 @@ watch(lyricOffsetMs, () => {
 watch(
   () => player.lyrics.lines,
   () => {
-    clearWordCache();
+    cancelSpringScroll();
+    clearWordCache(true);
     lineRefs.value = [];
     displayTimeMs = -1;
     if (props.active) snapToActiveNow();
@@ -230,12 +343,14 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  cancelSpringScroll();
   if (rafId) cancelAnimationFrame(rafId);
   if (scrollResumeTimer) clearTimeout(scrollResumeTimer);
-  clearWordCache();
+  clearWordCache(true);
 });
 
 function markUserScrolling() {
+  cancelSpringScroll();
   userScrolling.value = true;
   emit('userScroll');
   if (scrollResumeTimer) clearTimeout(scrollResumeTimer);
@@ -246,6 +361,7 @@ function markUserScrolling() {
 }
 
 function onTouchStart(e: TouchEvent) {
+  cancelSpringScroll();
   touchStartY = e.touches[0]?.clientY ?? 0;
   didScrollGesture = false;
 }
@@ -279,8 +395,8 @@ function handleLineClick(line: LyricLine) {
   const targetAudioMs = Math.max(0, line.startMs - lyricOffsetMs.value);
   void player.seek(targetAudioMs);
   const nextIdx = findActiveLyricIndex(player.lyrics.lines, displayTimeMs, 90);
+  paintActiveLineWords(nextIdx, displayTimeMs);
   if (nextIdx !== activeIndex.value) activeIndex.value = nextIdx;
-  paintActiveLineWords(activeIndex.value, displayTimeMs);
   emit('lineSeek');
   void nextTick(() => scrollToActive(true));
 }
@@ -295,74 +411,73 @@ function getLineClass(idx: number) {
 </script>
 
 <template>
-  <div
-    ref="scrollerRef"
-    class="krc-scroller"
-    @touchstart.passive="onTouchStart"
-    @touchmove.passive="onTouchMove"
-    @wheel.passive="markUserScrolling"
-    @click="onContainerClick"
-  >
-    <Transition name="am-fade" mode="out-in">
-      <div v-if="player.lyricsLoading" key="krc-loading" class="krc-empty">
-        <div class="krc-dots">
-          <span /><span /><span />
+  <!-- Static outer mask layer avoids per-frame 120Hz mask re-rasterization on the scrolling child! -->
+  <div class="krc-viewport">
+    <div
+      ref="scrollerRef"
+      class="krc-scroller"
+      @touchstart.passive="onTouchStart"
+      @touchmove.passive="onTouchMove"
+      @wheel.passive="markUserScrolling"
+      @click="onContainerClick"
+    >
+      <Transition name="am-fade" mode="out-in">
+        <div v-if="player.lyricsLoading" key="krc-loading" class="krc-empty">
+          <div class="krc-dots">
+            <span /><span /><span />
+          </div>
         </div>
-      </div>
 
-      <div v-else-if="!player.lyrics.lines.length" key="krc-none" class="krc-empty">
-        <p class="text-[22px] font-bold text-white/75 tracking-tight">{{ t('lyrics.none') }}</p>
-        <p class="text-[14px] text-white/45 mt-2">{{ t('lyrics.noneSub') }}</p>
-      </div>
+        <div v-else-if="!player.lyrics.lines.length" key="krc-none" class="krc-empty">
+          <p class="text-[22px] font-bold text-white/75 tracking-tight">{{ t('lyrics.none') }}</p>
+          <p class="text-[14px] text-white/45 mt-2">{{ t('lyrics.noneSub') }}</p>
+        </div>
 
-      <div v-else key="krc-list" class="krc-list" :class="fontSizeClass">
-        <button
-          v-for="(line, idx) in player.lyrics.lines"
-          :key="`${line.startMs}-${idx}`"
-          :ref="(el) => { if (el) lineRefs[idx] = el as HTMLElement }"
-          type="button"
-          class="krc-line"
-          :class="getLineClass(idx)"
-          @click.stop="handleLineClick(line)"
-        >
-          <!-- Word-by-word karaoke: constant GPU gradient mask driven imperatively -> ZERO flicker! -->
-          <div v-if="line.words && line.words.length" class="krc-main">
-            <span
-              v-for="(w, wi) in line.words"
-              :key="wi"
-              class="krc-word"
-            >{{ w.text }}</span>
-          </div>
-
-          <!-- Standard LRC line -->
-          <div v-else class="krc-main">
-            {{ line.text }}
-          </div>
-
-          <!-- Bilingual translation -->
-          <div
-            v-if="settings.showTranslation && line.translation"
-            class="krc-trans"
+        <div v-else key="krc-list" class="krc-list" :class="fontSizeClass">
+          <button
+            v-for="(line, idx) in player.lyrics.lines"
+            :key="`${line.startMs}-${idx}`"
+            :ref="(el) => { if (el) lineRefs[idx] = el as HTMLElement }"
+            type="button"
+            class="krc-line"
+            :class="getLineClass(idx)"
+            @click.stop="handleLineClick(line)"
           >
-            {{ line.translation }}
-          </div>
-        </button>
-      </div>
-    </Transition>
+            <!-- Word-by-word karaoke: constant inline box model + GPU opacity only -> ZERO reflow/flicker! -->
+            <div v-if="line.words && line.words.length" class="krc-main">
+              <span
+                v-for="(w, wi) in line.words"
+                :key="wi"
+                class="krc-word"
+              >{{ w.text }}</span>
+            </div>
+
+            <!-- Standard LRC line -->
+            <div v-else class="krc-main">
+              {{ line.text }}
+            </div>
+
+            <!-- Bilingual translation -->
+            <div
+              v-if="settings.showTranslation && line.translation"
+              class="krc-trans"
+            >
+              {{ line.translation }}
+            </div>
+          </button>
+        </div>
+      </Transition>
+    </div>
   </div>
 </template>
 
 <style scoped>
-.krc-scroller {
+.krc-viewport {
   position: relative;
   width: 100%;
   height: 100%;
-  overflow-y: auto;
-  overflow-x: hidden;
-  contain: layout style;
-  -webkit-overflow-scrolling: touch;
-  padding: 20vh 26px 40vh;
-  scrollbar-width: none;
+  overflow: hidden;
+  contain: strict;
   mask-image: linear-gradient(
     to bottom,
     transparent 0%,
@@ -378,6 +493,18 @@ function getLineClass(idx: number) {
     transparent 100%
   );
 }
+
+.krc-scroller {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  contain: layout style;
+  -webkit-overflow-scrolling: touch;
+  padding: 20vh 26px 40vh;
+  scrollbar-width: none;
+}
 .krc-scroller::-webkit-scrollbar {
   display: none;
 }
@@ -388,6 +515,7 @@ function getLineClass(idx: number) {
   gap: 26px;
 }
 
+/* Constant #ffffff text color with GPU-only transform & opacity transitions -> zero Skia color/mask conflict! */
 .krc-line {
   display: block;
   width: 100%;
@@ -395,13 +523,13 @@ function getLineClass(idx: number) {
   background: transparent;
   border: 0;
   padding: 4px 0;
-  color: rgba(255, 255, 255, 0.36);
+  color: #ffffff;
+  opacity: 0.34;
   transform-origin: left center;
   backface-visibility: hidden;
   transition:
     transform 340ms var(--spring-ease),
-    opacity 300ms ease,
-    color 240ms ease;
+    opacity 280ms ease;
 }
 
 .krc-main {
@@ -439,32 +567,32 @@ function getLineClass(idx: number) {
 }
 
 .krc-line.is-active {
-  color: #ffffff;
   transform: scale(1.03);
   opacity: 1;
 }
 
 .krc-line.is-near {
-  opacity: 0.50;
+  opacity: 0.46;
   transform: scale(0.985);
 }
 
 .krc-line.is-far {
-  opacity: 0.28;
+  opacity: 0.25;
   transform: scale(0.97);
 }
 
 .krc-line.is-scrolling {
-  opacity: 0.68;
+  opacity: 0.66;
   transform: scale(1);
 }
 
-/* Constant-layer Apple Music syllable sweep:
-   100% -> dim unsung white; 0% -> solid pure #ffffff.
-   NEVER switches background:none or toggles text-shadow -> ZERO Skia syllable flash! */
-.krc-line.is-active .krc-word {
-  display: inline-block;
+/* Constant inline layout (never toggles inline -> inline-block!) eliminates text reflow & syllable flash */
+.krc-word {
+  display: inline;
   white-space: pre-wrap;
+}
+
+.krc-line.is-active .krc-word {
   background-image: linear-gradient(
     90deg,
     #ffffff 0%,
@@ -475,6 +603,8 @@ function getLineClass(idx: number) {
   background-size: 220% 100%;
   background-repeat: no-repeat;
   background-position: var(--wp-pos, 100%) 0;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;

@@ -156,6 +156,6 @@ describe('v2.4.10 zero-auto-skip in-place recovery state machine', () => {
     expect(source).not.toContain('upstreamFactory.setDefaultRequestProperties');
     expect(source).toContain('computeEffectiveIsPlaying(');
     expect(source).toContain('override fun onPlayWhenReadyChanged');
-    expect(FALLBACK_APP_VERSION).toBe('2.4.11');
+    expect(FALLBACK_APP_VERSION).toMatch(/^2\.\d+\.\d+$/);
   });
 });

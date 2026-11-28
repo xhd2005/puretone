@@ -2,12 +2,19 @@ package com.xhd2005.puretone
 
 import androidx.media3.common.Player
 import com.xhd2005.puretone.player.EchoPlaybackService
+import com.xhd2005.puretone.player.PureToneDspAudioProcessor
 import com.xhd2005.puretone.plugins.EchoHttpPlugin
 import com.xhd2005.puretone.plugins.EchoSystemPlugin
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.ByteArrayInputStream
+import java.io.IOException
+import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.sin
+import kotlin.math.sqrt
 
 class PureTonePluginUnitTest {
 
@@ -257,5 +264,104 @@ class PureTonePluginUnitTest {
                 playbackState = Player.STATE_IDLE,
             ),
         )
+    }
+
+    @Test
+    fun pureToneDspAudioProcessor_bitPerfectZeroClipZeroPopAndLoudnessBoost() {
+        val dsp = PureToneDspAudioProcessor()
+        val sr = 48000
+        val frames = 2400 // 50ms stereo block
+        val quietSine = FloatArray(frames * 2) { idx ->
+            val f = idx / 2
+            (0.08 * sin(2.0 * PI * 440.0 * f / sr)).toFloat()
+        }
+
+        // 1. Flat + volumeLeveling OFF => bit-perfect passthrough (exact float equality!)
+        dsp.setPreset("flat")
+        dsp.setVolumeLeveling(false)
+        val passOut = dsp.processFloatSamplesForTest(quietSine, sr, 2)
+        for (i in quietSine.indices) {
+            assertEquals(quietSine[i], passOut[i], 0.0f)
+        }
+
+        // 2. Loud full-scale sine + Bass boost + Volume Leveling => strictly zero clipping (<= 0.967f)
+        val hotSine = FloatArray(frames * 2) { idx ->
+            val f = idx / 2
+            (1.0 * sin(2.0 * PI * 60.0 * f / sr)).toFloat()
+        }
+        dsp.setPreset("bass")
+        dsp.setVolumeLeveling(true)
+        val hotOut = dsp.processFloatSamplesForTest(hotSine, sr, 2)
+        var maxPeak = 0.0f
+        for (s in hotOut) {
+            maxPeak = maxOf(maxPeak, abs(s))
+        }
+        assertTrue("Soft-knee limiter must prevent hard clipping (peak=$maxPeak)", maxPeak <= 0.967f)
+        assertTrue("Hot signal should preserve strong fullness (peak=$maxPeak)", maxPeak >= 0.85f)
+
+        // 3. Zero-pop smooth switching across presets mid-sine wave (no sudden impulse jump)
+        val dspSwitch = PureToneDspAudioProcessor()
+        val contA = FloatArray(frames * 2) { idx ->
+            val f = idx / 2
+            (0.45 * sin(2.0 * PI * 440.0 * f / sr)).toFloat()
+        }
+        val contB = FloatArray(frames * 2) { idx ->
+            val f = frames + idx / 2
+            (0.45 * sin(2.0 * PI * 440.0 * f / sr)).toFloat()
+        }
+        dspSwitch.setPreset("flat")
+        val outA = dspSwitch.processFloatSamplesForTest(contA, sr, 2)
+        dspSwitch.setPreset("vocal")
+        val outB = dspSwitch.processFloatSamplesForTest(contB, sr, 2)
+        val boundaryDelta = abs(outB[0] - outA[outA.size - 2])
+        assertTrue("Preset switch boundary must be click-free (delta=$boundaryDelta)", boundaryDelta < 0.08f)
+
+        // 4. Volume leveling lifts quiet track RMS meaningfully
+        val dspLvl = PureToneDspAudioProcessor()
+        dspLvl.setPreset("flat")
+        dspLvl.setVolumeLeveling(true)
+        // Warm up envelope across 4 blocks (~200ms)
+        var leveled = quietSine
+        repeat(4) {
+            leveled = dspLvl.processFloatSamplesForTest(quietSine, sr, 2)
+        }
+        val inRms = sqrt(quietSine.map { it * it }.average())
+        val outRms = sqrt(leveled.map { it * it }.average())
+        assertTrue("Volume leveling should boost quiet track RMS ($inRms -> $outRms)", outRms > inRms * 1.15)
+    }
+
+    @Test
+    fun securityHelpers_validateHttpSchemeBoundedBodyAndSignedUpdateMirrors() {
+        // EchoHttpPlugin URL scheme allowlist
+        assertTrue(EchoHttpPlugin.isAllowedHttpUrl("https://api.github.com/repos/xhd2005/puretone"))
+        assertTrue(EchoHttpPlugin.isAllowedHttpUrl("http://imge.kugou.com/cover.jpg"))
+        assertFalse(EchoHttpPlugin.isAllowedHttpUrl("file:///data/data/com.xhd2005.puretone/databases/puretone_kv.db"))
+        assertFalse(EchoHttpPlugin.isAllowedHttpUrl("content://com.xhd2005.puretone.fileprovider/updates/a.apk"))
+        assertFalse(EchoHttpPlugin.isAllowedHttpUrl("javascript:alert(1)"))
+        assertFalse(EchoHttpPlugin.isAllowedHttpUrl(""))
+
+        // EchoHttpPlugin bounded response reader OOM guard
+        val small = EchoHttpPlugin.readBoundedBytes(ByteArrayInputStream(ByteArray(128)), 256)
+        assertEquals(128, small.size)
+        var threw = false
+        try {
+            EchoHttpPlugin.readBoundedBytes(ByteArrayInputStream(ByteArray(512)), 256)
+        } catch (_: IOException) {
+            threw = true
+        }
+        assertTrue("readBoundedBytes must reject payloads over cap", threw)
+
+        // EchoSystemPlugin Keystore sensitivity & APK update mirror policy
+        assertTrue(EchoSystemPlugin.isSensitiveKvKey("accounts.v1"))
+        assertFalse(EchoSystemPlugin.isSensitiveKvKey("settings.v1"))
+
+        val validSha = "a".repeat(64)
+        val ghApk = "https://github.com/xhd2005/puretone/releases/download/v2.4.12/MELUNE-v2.4.12-release.apk"
+        val mirrorApk = "https://ghfast.top/$ghApk"
+
+        assertTrue(EchoSystemPlugin.isUpdateCandidateAllowed(ghApk, ""))
+        assertTrue(EchoSystemPlugin.isUpdateCandidateAllowed(mirrorApk, validSha))
+        assertFalse("Non-GitHub mirror without SHA-256 must be rejected", EchoSystemPlugin.isUpdateCandidateAllowed(mirrorApk, ""))
+        assertFalse("Cleartext HTTP APK must always be rejected", EchoSystemPlugin.isUpdateCandidateAllowed("http://github.com/a.apk", validSha))
     }
 }

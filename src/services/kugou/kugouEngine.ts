@@ -551,8 +551,11 @@ export function normalizeSong(raw: Record<string, any>): Song {
   const hashFlac = String(
     raw.hash_flac ?? raw.SQFileHash ?? raw.sqhash ?? raw.SQ?.Hash ?? raw.audio_info?.hash_flac ?? '',
   ).trim();
+  const hashHigh = String(
+    raw.hash_high ?? raw.HiResFileHash ?? raw.high_hash ?? raw.audio_info?.hash_high ?? '',
+  ).trim();
 
-  const hash = hash128 || hash320 || hashFlac;
+  const hash = hash128 || hash320 || hashFlac || hashHigh;
   const rawName = String(
     raw.songname ?? raw.SongName ?? raw.ori_audio_name ?? raw.audio_name ?? raw.base?.audio_name ?? raw.name ?? raw.filename ?? '',
   );
@@ -616,6 +619,7 @@ export function normalizeSong(raw: Record<string, any>): Song {
     hash,
     hash320: hash320 || undefined,
     hashFlac: hashFlac || undefined,
+    hashHigh: hashHigh || undefined,
     mixSongId,
     fileId,
     addedAt,
@@ -1739,19 +1743,33 @@ export const kugouApi = {
     return callKugouRoute('/playlist/tracks/del', { listid, fileids: clean.join(',') });
   },
 
-  async getSongPrivilegeLite(hash: string) {
-    return callKugouRoute('/privilege/lite', { hash });
+  async getSongPrivilegeLite(hash: string, albumId?: string) {
+    const params: Record<string, unknown> = { hash };
+    if (albumId) params.album_id = albumId;
+    return callKugouRoute('/privilege/lite', params);
   },
 
-  async getSongUrl(hash: string, quality = '', freePart?: boolean) {
+  async getSongUrl(
+    hash: string,
+    quality = '',
+    options?: boolean | { freePart?: boolean; albumId?: string | number; albumAudioId?: number },
+  ) {
     const params: Record<string, unknown> = { hash };
     if (quality) params.quality = quality;
-    if (freePart) params.free_part = 1;
+    if (typeof options === 'boolean') {
+      if (options) params.free_part = 1;
+    } else if (options) {
+      if (options.freePart) params.free_part = 1;
+      if (options.albumId) params.album_id = options.albumId;
+      if (options.albumAudioId) params.album_audio_id = options.albumAudioId;
+    }
     return callKugouRoute('/song/url', params);
   },
 
-  async getSongUrlNew(hash: string, quality = '') {
-    return callKugouRoute('/song/url/new', { hash, quality });
+  async getSongUrlNew(hash: string, quality = '', options?: { albumAudioId?: number }) {
+    const params: Record<string, unknown> = { hash, quality };
+    if (options?.albumAudioId) params.album_audio_id = options.albumAudioId;
+    return callKugouRoute('/song/url/new', params);
   },
 
   async searchLyric(keyword: string, hash: string, durationMs?: number) {

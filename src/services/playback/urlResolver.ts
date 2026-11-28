@@ -12,6 +12,15 @@ export interface ResolvedStream {
   cacheKey?: string;
 }
 
+export interface ExtractedQualityHashes {
+  high?: string;
+  flac?: string;
+  ogg320?: string;
+  mp3320?: string;
+  ogg128?: string;
+  mp3128?: string;
+}
+
 interface CachedStreamEntry {
   stream: ResolvedStream;
   quality: AudioQuality;
@@ -34,7 +43,7 @@ export function classifyAudioSourceBucket(sourceTag?: string, isUnblocked?: bool
 }
 
 /**
- * Generates a quality- and source-isolated SimpleCache key so switching quality (128/320/FLAC)
+ * Generates a quality- and source-isolated SimpleCache key so switching quality (128/320/FLAC/Hi-Res)
  * or unblocked sources NEVER collides with previously cached byte spans or lengths.
  * Trial snippets intentionally return `undefined` so they are never persisted into audio cache.
  */
@@ -79,17 +88,141 @@ export function clearCachedResolvedStream(song?: Song): void {
   resolvedCache.delete(getTrackKey(song));
 }
 
-function pickQualityHashFromPrivilege(privBody: any, quality: AudioQuality, fallbackHash: string): string {
-  const goods = privBody?.data?.[0]?.relate_goods;
-  if (!Array.isArray(goods)) return fallbackHash;
+function cleanHash(val: unknown): string | undefined {
+  const s = String(val || '').trim();
+  return s.length >= 16 ? s : undefined;
+}
 
-  const targetLevel = quality === 'flac' ? 5 : quality === '320' ? 4 : 2;
-  const matched =
-    goods.find((g: any) => Number(g?.level) === targetLevel && g?.hash) ||
-    (quality === 'flac' ? goods.find((g: any) => /flac/i.test(String(g?.quality || '')) && g?.hash) : null) ||
-    (quality === '320' ? goods.find((g: any) => /320|high/i.test(String(g?.quality || '')) && g?.hash) : null);
+/**
+ * Extracts independent per-tier hashes from KuGou `/privilege/lite` (`relate_goods`, `trans_param`,
+ * and `quality_vip`) so Hi-Res / FLAC / OGG 320 / MP3 320 / 128 NEVER silently fall back to a
+ * 128k hash while mislabeling itself as 320k!
+ */
+export function extractQualityHashesFromPrivilege(
+  privBody: any,
+  song?: Partial<Pick<Song, 'hash' | 'hash320' | 'hashFlac' | 'hashHigh'>>,
+): ExtractedQualityHashes {
+  const out: ExtractedQualityHashes = {
+    high: cleanHash(song?.hashHigh),
+    flac: cleanHash(song?.hashFlac),
+    mp3320: cleanHash(song?.hash320),
+    mp3128: cleanHash(song?.hash),
+  };
 
-  return String(matched?.hash || fallbackHash);
+  const firstData = Array.isArray(privBody?.data) ? privBody.data[0] : privBody?.data;
+  const transParam = firstData?.trans_param;
+  if (transParam && typeof transParam === 'object') {
+    const ogg320 = cleanHash(transParam.ogg_320_hash);
+    const ogg128 = cleanHash(transParam.ogg_128_hash);
+    if (ogg320) out.ogg320 = ogg320;
+    if (ogg128) out.ogg128 = ogg128;
+  }
+
+  const goods = firstData?.relate_goods;
+  if (Array.isArray(goods)) {
+    for (const g of goods) {
+      const h = cleanHash(g?.hash);
+      if (!h) continue;
+      const lvl = Number(g?.level ?? 0);
+      const q = String(g?.quality || '').toLowerCase();
+      if (!out.high && (lvl === 6 || q === 'high')) {
+        out.high = h;
+      } else if (!out.flac && (lvl === 5 || q === 'flac')) {
+        out.flac = h;
+      } else if (!out.mp3320 && (lvl === 4 || q === '320')) {
+        out.mp3320 = h;
+      } else if (!out.ogg128 && lvl === 1 && q === '128') {
+        out.ogg128 = h;
+      } else if (!out.mp3128 && (lvl === 2 || q === '128')) {
+        out.mp3128 = h;
+      }
+    }
+  }
+
+  const qVipList = privBody?.quality_vip?.[0]?.qualities;
+  if (Array.isArray(qVipList)) {
+    for (const item of qVipList) {
+      const h = cleanHash(item?.hash);
+      if (!h || item?.exists === false) continue;
+      const q = String(item?.quality || '').toLowerCase();
+      const ext = String(item?.extname || '').toLowerCase();
+      if (q === 'high' && !out.high) out.high = h;
+      else if (q === 'flac' && !out.flac) out.flac = h;
+      else if (q === '320') {
+        if (ext === 'ogg' && !out.ogg320) out.ogg320 = h;
+        else if (!out.mp3320) out.mp3320 = h;
+      } else if (q === '128') {
+        if (ext === 'ogg' && !out.ogg128) out.ogg128 = h;
+        else if (!out.mp3128) out.mp3128 = h;
+      }
+    }
+  }
+
+  return out;
+}
+
+/**
+ * Computes the honest stream quality tier & display badge directly from upstream response metadata
+ * (`bitRate`, `extName`, resolved URL extension) instead of trusting the requested quality blindly.
+ */
+export function formatVerifiedQualityTag(
+  body: any,
+  fallbackQuality: AudioQuality,
+  resolvedUrl = '',
+): { quality: AudioQuality; sourceTag: string } {
+  const firstItem = Array.isArray(body?.data) ? body.data[0] : null;
+  const rawBitrate = Number(
+    body?.bitRate ??
+      body?.bitrate ??
+      body?.data?.bitRate ??
+      body?.data?.bitrate ??
+      firstItem?.info?.bitrate ??
+      0,
+  );
+  // Some KuGou responses report bps (e.g. 320000) instead of kbps (320)
+  const bitRateKbps = rawBitrate > 10000 ? Math.round(rawBitrate / 1000) : Math.round(rawBitrate);
+
+  let ext = String(
+    body?.extName ??
+      body?.extname ??
+      body?.data?.extName ??
+      body?.data?.extname ??
+      firstItem?.info?.extname ??
+      '',
+  )
+    .trim()
+    .toLowerCase();
+
+  if (!ext && resolvedUrl) {
+    const m = /\.(flac|ogg|mp3|m4a|wav|aac)(?:\?|#|$)/i.exec(resolvedUrl);
+    if (m) ext = m[1].toLowerCase();
+  }
+
+  if (bitRateKbps >= 1100 || (fallbackQuality === 'high' && (ext === 'flac' || bitRateKbps >= 950 || bitRateKbps === 0))) {
+    if (bitRateKbps >= 1100 || fallbackQuality === 'high') {
+      return { quality: 'high', sourceTag: 'Hi-Res' };
+    }
+  }
+  if (ext === 'flac' || bitRateKbps >= 600) {
+    return { quality: 'flac', sourceTag: '无损 FLAC' };
+  }
+  if (bitRateKbps >= 256 || (bitRateKbps === 0 && fallbackQuality === '320')) {
+    return { quality: '320', sourceTag: ext === 'ogg' ? 'OGG 320k' : '高品 320k' };
+  }
+  if (bitRateKbps > 0 && bitRateKbps < 256) {
+    return { quality: '128', sourceTag: ext === 'ogg' ? 'OGG 128k' : '标准 128k' };
+  }
+
+  switch (fallbackQuality) {
+    case 'high':
+      return { quality: 'high', sourceTag: 'Hi-Res' };
+    case 'flac':
+      return { quality: 'flac', sourceTag: '无损 FLAC' };
+    case '320':
+      return { quality: '320', sourceTag: ext === 'ogg' ? 'OGG 320k' : '高品 320k' };
+    default:
+      return { quality: '128', sourceTag: ext === 'ogg' ? 'OGG 128k' : '标准 128k' };
+  }
 }
 
 export function isTrialSnippet(body: any, expectedDurationSec: number, quality: AudioQuality = '128'): boolean {
@@ -130,14 +263,17 @@ export function isTrialSnippet(body: any, expectedDurationSec: number, quality: 
       0,
   );
   const rawBitrate = Number(body?.bitRate ?? body?.bitrate ?? firstItem?.info?.bitrate ?? 0);
+  const normalizedBr = rawBitrate > 10000 ? rawBitrate / 1000 : rawBitrate;
   const bitrateKbps =
-    rawBitrate >= 64 && rawBitrate <= 3200
-      ? rawBitrate
-      : quality === 'flac'
-        ? 850
-        : quality === '320'
-          ? 320
-          : 128;
+    normalizedBr >= 64 && normalizedBr <= 6400
+      ? normalizedBr
+      : quality === 'high'
+        ? 1600
+        : quality === 'flac'
+          ? 850
+          : quality === '320'
+            ? 320
+            : 128;
   if (expectedDurationSec >= 90 && fileSize > 0 && bitrateKbps > 0) {
     const estSec = (fileSize * 8) / (bitrateKbps * 1000);
     if (estSec <= 72 && estSec < expectedDurationSec * 0.62) {
@@ -156,7 +292,7 @@ async function tryResolveLocalCachedStream(
   if (!baseKey) return null;
 
   const qualityOrder: AudioQuality[] = Array.from(
-    new Set<AudioQuality>([preferredQuality, 'flac', '320', '128']),
+    new Set<AudioQuality>([preferredQuality, 'high', 'flac', '320', '128']),
   );
   const bucketOrder = ['official', 'kugou-alt', 'kuwo', 'joox', 'bilibili', 'unblock'];
 
@@ -221,46 +357,77 @@ export async function resolvePlayableStream(
   const skipOfficialRetries = forceUnblock || Boolean(song.isGray && enableUnblock);
 
   if (song.hash && !skipOfficialRetries) {
-    let targetHash =
-      (preferredQuality === 'flac' && song.hashFlac) ||
-      (preferredQuality === '320' && song.hash320) ||
-      song.hash;
+    let hashes: ExtractedQualityHashes = {
+      high: cleanHash(song.hashHigh),
+      flac: cleanHash(song.hashFlac),
+      mp3320: cleanHash(song.hash320),
+      mp3128: cleanHash(song.hash),
+    };
 
     try {
-      const priv = await kugouApi.getSongPrivilegeLite(song.hash);
-      targetHash = pickQualityHashFromPrivilege(priv?.body, preferredQuality, targetHash);
+      const priv = await kugouApi.getSongPrivilegeLite(song.hash, song.albumId);
+      hashes = extractQualityHashesFromPrivilege(priv?.body, song);
     } catch {
       // non-fatal
     }
 
     const attempts: Array<{ hash: string; quality: string; useNew?: boolean; label: AudioQuality }> = [];
-    if (preferredQuality === 'flac') {
-      if (targetHash) attempts.push({ hash: targetHash, quality: 'flac', label: 'flac' });
-      if (song.hash320 || song.hash) attempts.push({ hash: song.hash320 || song.hash, quality: '320', label: '320' });
+    const seen = new Set<string>();
+    const pushAttempt = (hash: string | undefined, quality: string, label: AudioQuality, useNew = false) => {
+      if (!hash) return;
+      const key = `${hash.toLowerCase()}|${quality}|${useNew ? 'new' : 'v5'}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      attempts.push({ hash, quality, label, useNew });
+    };
+
+    // Each quality tier STRICTLY uses its own real hash (never mislabeling 128k as 320k/FLAC!)
+    if (preferredQuality === 'high') {
+      pushAttempt(hashes.high, 'high', 'high');
+      pushAttempt(hashes.flac, 'flac', 'flac');
+      pushAttempt(hashes.ogg320, '320', '320');
+      pushAttempt(hashes.mp3320, '320', '320');
+    } else if (preferredQuality === 'flac') {
+      pushAttempt(hashes.flac, 'flac', 'flac');
+      pushAttempt(hashes.ogg320, '320', '320');
+      pushAttempt(hashes.mp3320, '320', '320');
     } else if (preferredQuality === '320') {
-      if (targetHash) attempts.push({ hash: targetHash, quality: '320', label: '320' });
+      pushAttempt(hashes.ogg320, '320', '320');
+      pushAttempt(hashes.mp3320, '320', '320');
     }
-    attempts.push({ hash: song.hash, quality: '128', label: '128' });
-    attempts.push({ hash: song.hash, quality: '', label: '128' });
-    attempts.push({ hash: song.hash, quality: preferredQuality, useNew: true, label: preferredQuality });
+
+    pushAttempt(hashes.ogg128, '128', '128');
+    pushAttempt(hashes.mp3128 || song.hash, '128', '128');
+    pushAttempt(song.hash, '', '128');
+
+    // v6 priv_url fallback using the highest available real hash for the requested tier
+    const bestNewHash =
+      (preferredQuality === 'high' && (hashes.high || hashes.flac || hashes.ogg320 || hashes.mp3320)) ||
+      (preferredQuality === 'flac' && (hashes.flac || hashes.ogg320 || hashes.mp3320)) ||
+      (preferredQuality === '320' && (hashes.ogg320 || hashes.mp3320)) ||
+      hashes.ogg128 ||
+      hashes.mp3128 ||
+      song.hash;
+    pushAttempt(bestNewHash, preferredQuality, preferredQuality, true);
+
+    const urlMetaOpts = { albumId: song.albumId, albumAudioId: song.mixSongId };
 
     for (const attempt of attempts) {
-      if (!attempt.hash) continue;
       try {
         const res = attempt.useNew
-          ? await kugouApi.getSongUrlNew(attempt.hash, attempt.quality)
-          : await kugouApi.getSongUrl(attempt.hash, attempt.quality);
+          ? await kugouApi.getSongUrlNew(attempt.hash, attempt.quality, { albumAudioId: song.mixSongId })
+          : await kugouApi.getSongUrl(attempt.hash, attempt.quality, urlMetaOpts);
         const urls = extractUrlsFromPayload(res?.body);
         if (urls.length === 0) continue;
 
-        const trial = isTrialSnippet(res?.body, song.duration, attempt.label);
-        const sourceTag = attempt.label === 'flac' ? '无损 FLAC' : attempt.label === '320' ? '高品 320k' : '标准 128k';
+        const verified = formatVerifiedQualityTag(res?.body, attempt.label, urls[0]);
+        const trial = isTrialSnippet(res?.body, song.duration, verified.quality);
         const candidate: ResolvedStream = {
           url: urls[0],
-          quality: attempt.label,
-          sourceTag,
+          quality: verified.quality,
+          sourceTag: verified.sourceTag,
           isUnblocked: false,
-          cacheKey: trial ? undefined : buildAudioCacheKey(song, attempt.label, sourceTag, false),
+          cacheKey: trial ? undefined : buildAudioCacheKey(song, verified.quality, verified.sourceTag, false),
         };
         if (!trial) {
           setCachedResolvedStream(song, preferredQuality, candidate);

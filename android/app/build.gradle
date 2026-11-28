@@ -21,12 +21,16 @@ android {
         applicationId "com.xhd2005.puretone"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 18
-        versionName "2.4.11"
+        versionCode 19
+        versionName "2.4.12"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
             ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
+    }
+
+    buildFeatures {
+        buildConfig true
     }
 
     compileOptions {

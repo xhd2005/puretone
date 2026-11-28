@@ -60,7 +60,13 @@ async function acceptAndClose() {
     version: ver,
     acceptedAt: Date.now(),
   } satisfies ComplianceAcceptanceRecord);
+  ui.complianceAccepted = true;
   ui.complianceModalOpen = false;
+}
+
+async function declineAndExit() {
+  echoSystem.haptic('light');
+  await echoSystem.exitApp();
 }
 
 async function openRepo() {
@@ -98,7 +104,7 @@ async function openRepo() {
           </div>
         </div>
 
-        <div class="space-y-1.5">
+        <div class="space-y-2">
           <button
             type="button"
             class="w-full h-11 rounded-[14px] am-accent-bg text-white text-[14.5px] font-semibold border-0 am-tap shadow-sm"
@@ -106,13 +112,22 @@ async function openRepo() {
           >
             {{ t('compliance.accept') }}
           </button>
-          <button
-            type="button"
-            class="w-full h-9 rounded-[12px] bg-transparent border-0 text-[12px] font-medium text-[var(--text-secondary)] am-tap"
-            @click="openRepo"
-          >
-            {{ t('compliance.viewRepo') }}
-          </button>
+          <div class="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              class="h-9 rounded-[12px] bg-[var(--bg-subtle)] border-0 text-[12px] font-semibold text-[var(--text-secondary)] am-tap"
+              @click="declineAndExit"
+            >
+              {{ t('compliance.declineExit') }}
+            </button>
+            <button
+              type="button"
+              class="h-9 rounded-[12px] bg-transparent border-0 text-[12px] font-medium am-accent-text am-tap truncate"
+              @click="openRepo"
+            >
+              {{ t('compliance.viewRepo') }}
+            </button>
+          </div>
         </div>
       </div>
     </div>

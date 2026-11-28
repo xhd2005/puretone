@@ -8,6 +8,7 @@ import { echoSystem } from '@/native/echoSystem';
 export const useUiStore = defineStore('ui', () => {
   const nowPlayingOpen = ref(false);
   const nowPlayingMode = ref<'cover' | 'lyrics' | 'queue'>('cover');
+  const audioEffectSheetOpen = ref(false);
   const accountSheetOpen = ref(false);
   const loginModalOpen = ref(false);
   const actionSheetSong = ref<Song | null>(null);
@@ -21,6 +22,7 @@ export const useUiStore = defineStore('ui', () => {
   const updateReleaseInfo = ref<ReleaseUpdateInfo | null>(null);
   const availableUpdateVersion = ref('');
   const complianceModalOpen = ref(false);
+  const complianceAccepted = ref(false);
   /** When true (e.g. playlist batch selection), AppShell smoothly hides MiniPlayer & TabBar for a bottom takeover dock. */
   const batchDockActive = ref(false);
   let batchExitHandler: (() => void) | null = null;
@@ -35,6 +37,7 @@ export const useUiStore = defineStore('ui', () => {
   const hasModalOverlay = computed(() =>
     Boolean(
       nowPlayingOpen.value ||
+        audioEffectSheetOpen.value ||
         accountSheetOpen.value ||
         loginModalOpen.value ||
         actionSheetSong.value ||
@@ -53,6 +56,8 @@ export const useUiStore = defineStore('ui', () => {
     const root = document.documentElement;
     root.style.setProperty('--safe-top', `${Math.max(0, val.top)}px`);
     root.style.setProperty('--safe-bottom', `${Math.max(0, val.bottom)}px`);
+    root.style.setProperty('--safe-left', `${Math.max(0, val.left)}px`);
+    root.style.setProperty('--safe-right', `${Math.max(0, val.right)}px`);
     root.style.setProperty('--ime-height', `${Math.max(0, val.imeBottom)}px`);
   }
 
@@ -147,6 +152,10 @@ export const useUiStore = defineStore('ui', () => {
       closeSongActions();
       return true;
     }
+    if (audioEffectSheetOpen.value) {
+      audioEffectSheetOpen.value = false;
+      return true;
+    }
     if (loginModalOpen.value) {
       loginModalOpen.value = false;
       return true;
@@ -171,6 +180,7 @@ export const useUiStore = defineStore('ui', () => {
   return {
     nowPlayingOpen,
     nowPlayingMode,
+    audioEffectSheetOpen,
     accountSheetOpen,
     loginModalOpen,
     actionSheetSong,
@@ -184,6 +194,7 @@ export const useUiStore = defineStore('ui', () => {
     updateReleaseInfo,
     availableUpdateVersion,
     complianceModalOpen,
+    complianceAccepted,
     batchDockActive,
     splashReplaySeq,
     hasModalOverlay,

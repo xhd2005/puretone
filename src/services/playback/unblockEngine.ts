@@ -399,6 +399,7 @@ export async function findKugouAltCandidates(song: Song, quality: AudioQuality =
     for (const item of songs) {
       if (item.isGray) continue;
       const primaryHash =
+        (quality === 'high' && (item.hashHigh || item.hashFlac)) ||
         (quality === 'flac' && item.hashFlac) ||
         (quality !== '128' && item.hash320) ||
         item.hash;
@@ -410,12 +411,19 @@ export async function findKugouAltCandidates(song: Song, quality: AudioQuality =
         channel: 'kugou-alt',
         channelLabel: '酷狗同曲异版',
         hash: primaryHash,
-        fallbackHashes: [item.hashFlac, item.hash320, item.hash].filter(Boolean) as string[],
+        fallbackHashes: [item.hashHigh, item.hashFlac, item.hash320, item.hash].filter(Boolean) as string[],
         title: item.title,
         artist: item.artist,
         album: item.album,
         duration: item.duration,
-        quality: primaryHash === item.hashFlac ? 'flac' : primaryHash === item.hash320 ? '320' : '128',
+        quality:
+          primaryHash === item.hashHigh
+            ? 'high'
+            : primaryHash === item.hashFlac
+              ? 'flac'
+              : primaryHash === item.hash320
+                ? '320'
+                : '128',
         score: Math.min(1, Number((score + 0.02).toFixed(3))),
       });
     }
@@ -581,7 +589,12 @@ export async function resolveCandidateUrl(
 
   if (cand.channel === 'kugou-alt') {
     const hashes = Array.from(new Set([cand.hash, ...(cand.fallbackHashes || [])].filter(Boolean) as string[]));
-    const qualities = quality === 'flac' ? ['flac', '320', '128', ''] : ['320', '128', ''];
+    const qualities =
+      quality === 'high'
+        ? ['high', 'flac', '320', '128', '']
+        : quality === 'flac'
+          ? ['flac', '320', '128', '']
+          : ['320', '128', ''];
     for (const h of hashes) {
       for (const q of qualities) {
         try {
@@ -608,7 +621,7 @@ export async function resolveCandidateUrl(
   }
 
   if ((cand.provider === 'gdstudio-joox' || cand.provider === 'gdstudio') && cand.externalId) {
-    const br = quality === 'flac' ? '999' : '320';
+    const br = quality === 'flac' || quality === 'high' ? '999' : '320';
     const src = cand.sourcePlatform || 'joox';
     const urlApi = `https://music-api.gdstudio.xyz/api.php?types=url&source=${encodeURIComponent(src)}&id=${encodeURIComponent(cand.externalId)}&br=${br}`;
     const data = await fetchJsonZeroCors(urlApi, {}, 6500);

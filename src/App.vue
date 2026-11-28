@@ -14,6 +14,7 @@ import { useUiStore } from '@/stores/ui';
 import AppShell from '@/layouts/AppShell.vue';
 import SplashOverlay from '@/components/SplashOverlay.vue';
 import NowPlayingSheet from '@/components/NowPlayingSheet.vue';
+import AudioEffectSheet from '@/components/AudioEffectSheet.vue';
 import AccountVipSheet from '@/components/AccountVipSheet.vue';
 import LoginModal from '@/components/LoginModal.vue';
 import SongActionSheet from '@/components/SongActionSheet.vue';
@@ -39,25 +40,82 @@ const stats = useStatsStore();
 const ui = useUiStore();
 
 const splashDone = ref(false);
+const complianceReady = ref(false);
 const pendingCompliancePrompt = ref(false);
 const pendingAutoUpdate = ref<ReleaseUpdateInfo | null>(null);
 let autoUpdatePromptTimer: ReturnType<typeof setTimeout> | null = null;
+let onlineServicesStarted = false;
+let resolvedAppVersion = FALLBACK_APP_VERSION;
+let pendingOpenNowPlayingOnConsent = false;
 
 function flushPendingAutoUpdateIfReady() {
-  if (!splashDone.value || ui.complianceModalOpen || !pendingAutoUpdate.value) return;
+  if (!splashDone.value || !complianceReady.value || ui.complianceModalOpen || !pendingAutoUpdate.value) return;
   if (autoUpdatePromptTimer) clearTimeout(autoUpdatePromptTimer);
   autoUpdatePromptTimer = setTimeout(() => {
     autoUpdatePromptTimer = null;
-    if (!splashDone.value || ui.complianceModalOpen || !pendingAutoUpdate.value || ui.updateReleaseInfo) return;
+    if (!splashDone.value || !complianceReady.value || ui.complianceModalOpen || !pendingAutoUpdate.value || ui.updateReleaseInfo) {
+      return;
+    }
     const next = pendingAutoUpdate.value;
     pendingAutoUpdate.value = null;
     ui.updateReleaseInfo = next;
   }, 260);
 }
 
-watch([splashDone, () => ui.complianceModalOpen, pendingAutoUpdate], () => {
+/**
+ * Strictly gated behind explicit user acceptance of ComplianceDisclaimerModal:
+ * ZERO external network requests fire before the user agrees!
+ */
+function startOnlineServicesOnce() {
+  if (onlineServicesStarted) return;
+  onlineServicesStarted = true;
+  complianceReady.value = true;
+
+  void initKugouEngine();
+  if (accounts.activeAccount) {
+    void accounts.refreshAccountProfile(accounts.activeAccount.userid);
+  }
+  if (pendingOpenNowPlayingOnConsent && player.currentSong) {
+    pendingOpenNowPlayingOnConsent = false;
+    ui.openNowPlaying('cover');
+  }
+
+  setTimeout(() => {
+    void vip.maybeAutoClaimOnLaunch(false);
+  }, 2000);
+
+  // Automatic cold-start update check (queues gracefully behind Splash & Compliance modal)
+  setTimeout(async () => {
+    if (!settings.autoCheckUpdate) return;
+    try {
+      const update = await checkForAppUpdate({
+        silent: true,
+        currentVersion: resolvedAppVersion,
+        mirrorMode: settings.updateMirrorMode,
+        customMirror: settings.customUpdateMirror,
+      });
+      if (update?.hasUpdate) {
+        ui.availableUpdateVersion = update.latestVersion;
+        pendingAutoUpdate.value = update;
+      }
+    } catch {
+      // silent network error
+    }
+  }, 800);
+}
+
+watch([splashDone, complianceReady, () => ui.complianceModalOpen, pendingAutoUpdate], () => {
   flushPendingAutoUpdateIfReady();
 });
+
+watch(
+  () => [ui.complianceAccepted, ui.complianceModalOpen],
+  ([accepted, open]) => {
+    if (accepted && !open && !onlineServicesStarted) {
+      startOnlineServicesOnce();
+    }
+  },
+);
 
 onUnmounted(() => {
   if (autoUpdatePromptTimer) {
@@ -77,29 +135,19 @@ function onSplashDone() {
 
 onMounted(async () => {
   await ui.initSystemInsets();
+  // Pure local-sandbox hydration first (zero external network calls)
   await Promise.all([
     settings.hydrate(),
-    accounts.hydrate(),
+    accounts.hydrate({ deferNetworkRefresh: true }),
     vip.hydrate(),
     player.hydrate(),
     stats.hydrate(),
     hydratePlaylistCoverCache(),
   ]);
 
-  void initKugouEngine();
-
   const launchFlags = await echoSystem.getLaunchFlags();
-  const currentVersion = launchFlags.versionName || FALLBACK_APP_VERSION;
-
-  // Mandatory compliance disclaimer on first launch AND after EVERY version update
-  const compliance = await echoSystem.kvGetJson<ComplianceAcceptanceRecord | null>(COMPLIANCE_ACCEPTED_KEY, null);
-  if (shouldShowComplianceDisclaimer(compliance, currentVersion)) {
-    if (splashDone.value) {
-      ui.complianceModalOpen = true;
-    } else {
-      pendingCompliancePrompt.value = true;
-    }
-  }
+  resolvedAppVersion = launchFlags.versionName || FALLBACK_APP_VERSION;
+  pendingOpenNowPlayingOnConsent = Boolean(launchFlags.openNowPlaying);
 
   await echoSystem.onHardwareBack(() => {
     if (ui.closeTopOverlay()) return;
@@ -112,42 +160,32 @@ onMounted(async () => {
   });
 
   await echoSystem.onOpenNowPlayingIntent(() => {
-    if (player.currentSong) {
+    if (complianceReady.value && player.currentSong) {
       ui.openNowPlaying('cover');
     }
   });
 
-  if (launchFlags.openNowPlaying && player.currentSong) {
-    ui.openNowPlaying('cover');
-  }
-  setTimeout(() => {
-    void vip.maybeAutoClaimOnLaunch(false);
-  }, 2000);
-
-  // Automatic cold-start update check (queues gracefully behind Splash & Compliance modal)
-  setTimeout(async () => {
-    if (!settings.autoCheckUpdate) return;
-    try {
-      const update = await checkForAppUpdate({
-        silent: true,
-        currentVersion,
-        mirrorMode: settings.updateMirrorMode,
-        customMirror: settings.customUpdateMirror,
-      });
-      if (update?.hasUpdate) {
-        ui.availableUpdateVersion = update.latestVersion;
-        pendingAutoUpdate.value = update;
-      }
-    } catch {
-      // silent network error
+  // Mandatory compliance disclaimer gate on first launch AND after EVERY version update
+  const compliance = await echoSystem.kvGetJson<ComplianceAcceptanceRecord | null>(COMPLIANCE_ACCEPTED_KEY, null);
+  if (shouldShowComplianceDisclaimer(compliance, resolvedAppVersion)) {
+    ui.complianceAccepted = false;
+    complianceReady.value = false;
+    if (splashDone.value) {
+      ui.complianceModalOpen = true;
+    } else {
+      pendingCompliancePrompt.value = true;
     }
-  }, 800);
+  } else {
+    ui.complianceAccepted = true;
+    startOnlineServicesOnce();
+  }
 });
 </script>
 
 <template>
-  <AppShell />
+  <AppShell v-if="complianceReady" />
   <NowPlayingSheet />
+  <AudioEffectSheet />
   <AccountVipSheet />
   <LoginModal />
   <SongActionSheet />

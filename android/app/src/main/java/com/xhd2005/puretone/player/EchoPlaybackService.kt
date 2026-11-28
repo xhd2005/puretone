@@ -12,9 +12,6 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.media.AudioManager
-import android.media.audiofx.BassBoost
-import android.media.audiofx.Equalizer
-import android.media.audiofx.LoudnessEnhancer
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -47,7 +44,10 @@ import androidx.media3.datasource.okhttp.OkHttpDataSource
 import java.util.TreeSet
 import java.util.concurrent.ConcurrentHashMap
 import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
@@ -63,6 +63,7 @@ import androidx.media3.session.SessionResult
 import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
+import com.xhd2005.puretone.BuildConfig
 import com.xhd2005.puretone.MainActivity
 import com.xhd2005.puretone.R
 import com.xhd2005.puretone.widget.PureToneWidgetProvider
@@ -175,123 +176,6 @@ private class PureToneMediaNotificationProvider(
 
     override fun handleCustomCommand(session: MediaSession, action: String, extras: Bundle): Boolean {
         return delegate.handleCustomCommand(session, action, extras)
-    }
-}
-
-private class PureToneAudioEffects {
-    private var equalizer: Equalizer? = null
-    private var bassBoost: BassBoost? = null
-    private var loudnessEnhancer: LoudnessEnhancer? = null
-    private var boundSessionId: Int = C.AUDIO_SESSION_ID_UNSET
-    private var currentPreset: String = "flat"
-    private var volumeLevelingEnabled: Boolean = false
-
-    fun attachToSession(audioSessionId: Int) {
-        if (audioSessionId == C.AUDIO_SESSION_ID_UNSET || audioSessionId == 0) return
-        if (boundSessionId == audioSessionId && equalizer != null) {
-            applyPreset(currentPreset)
-            applyVolumeLeveling(volumeLevelingEnabled)
-            return
-        }
-        release()
-        boundSessionId = audioSessionId
-        try {
-            equalizer = Equalizer(0, audioSessionId)
-        } catch (_: Exception) {
-            equalizer = null
-        }
-        try {
-            bassBoost = BassBoost(0, audioSessionId)
-        } catch (_: Exception) {
-            bassBoost = null
-        }
-        try {
-            loudnessEnhancer = LoudnessEnhancer(audioSessionId)
-        } catch (_: Exception) {
-            loudnessEnhancer = null
-        }
-        applyPreset(currentPreset)
-        applyVolumeLeveling(volumeLevelingEnabled)
-    }
-
-    fun applyVolumeLeveling(enabled: Boolean) {
-        volumeLevelingEnabled = enabled
-        val le = loudnessEnhancer ?: return
-        try {
-            // Gentle 2.6 dB ceiling keeps older quiet tracks balanced with modern masters without clipping
-            le.setTargetGain(if (enabled) 260 else 0)
-            le.enabled = enabled
-        } catch (_: Exception) {
-            // OEM DSP restriction — keep playback unaffected
-        }
-    }
-
-    fun applyPreset(preset: String) {
-        currentPreset = preset
-        val eq = equalizer
-        val bass = bassBoost
-        try {
-            if (preset == "flat") {
-                if (eq != null) {
-                    val bandCount = eq.numberOfBands.toInt().coerceAtLeast(1)
-                    for (i in 0 until bandCount) {
-                        eq.setBandLevel(i.toShort(), 0)
-                    }
-                    eq.enabled = false
-                }
-                if (bass != null && bass.strengthSupported) {
-                    bass.setStrength(0)
-                    bass.enabled = false
-                }
-                return
-            }
-            if (eq != null) {
-                val bandCount = eq.numberOfBands.toInt().coerceAtLeast(1)
-                val range = eq.bandLevelRange
-                val minLv = range[0].toInt()
-                val maxLv = min(0, range[1].toInt())
-                val centerFreqsHz = IntArray(bandCount) { idx ->
-                    (eq.getCenterFreq(idx.toShort()) / 1000).coerceAtLeast(30)
-                }
-                val gainsMb = EchoPlaybackService.computeEqBandGains(preset, centerFreqsHz)
-                for (i in 0 until bandCount) {
-                    val target = gainsMb[i].coerceIn(minLv, maxLv).toShort()
-                    eq.setBandLevel(i.toShort(), target)
-                }
-                eq.enabled = true
-            }
-            if (bass != null && bass.strengthSupported) {
-                // Conservative BassBoost ceiling avoids sub-bass clipping on earbuds
-                val strength: Short = when (preset) {
-                    "bass" -> 200
-                    "live" -> 110
-                    else -> 0
-                }
-                bass.setStrength(strength)
-                bass.enabled = strength > 0
-            }
-        } catch (_: Exception) {
-            // Device OEM may restrict audio effects; keep playback unaffected
-        }
-    }
-
-    fun release() {
-        try {
-            equalizer?.release()
-        } catch (_: Exception) {
-        }
-        try {
-            bassBoost?.release()
-        } catch (_: Exception) {
-        }
-        try {
-            loudnessEnhancer?.release()
-        } catch (_: Exception) {
-        }
-        equalizer = null
-        bassBoost = null
-        loudnessEnhancer = null
-        boundSessionId = C.AUDIO_SESSION_ID_UNSET
     }
 }
 
@@ -427,7 +311,7 @@ class EchoPlaybackService : MediaSessionService() {
     private val itemHeadersByKey = ConcurrentHashMap<String, Map<String, String>>()
     private lateinit var exoPlayer: ExoPlayer
     private var mediaSession: MediaSession? = null
-    private val audioEffects = PureToneAudioEffects()
+    private val dspAudioProcessor = PureToneDspAudioProcessor()
     private var transitionWakeLock: PowerManager.WakeLock? = null
 
     private fun effectiveIsPlaying(): Boolean {
@@ -608,7 +492,21 @@ class EchoPlaybackService : MediaSessionService() {
         val mediaSourceFactory = DefaultMediaSourceFactory(cacheDataSourceFactory, extractorsFactory)
             .setLoadErrorHandlingPolicy(ResilientAudioLoadErrorPolicy())
 
-        exoPlayer = ExoPlayer.Builder(this)
+        val renderersFactory = object : DefaultRenderersFactory(this) {
+            override fun buildAudioSink(
+                context: Context,
+                enableFloatOutput: Boolean,
+                enableAudioTrackPlaybackParams: Boolean,
+            ): AudioSink {
+                return DefaultAudioSink.Builder(context)
+                    .setEnableFloatOutput(true)
+                    .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+                    .setAudioProcessors(arrayOf(dspAudioProcessor))
+                    .build()
+            }
+        }
+
+        exoPlayer = ExoPlayer.Builder(this, renderersFactory)
             .setMediaSourceFactory(mediaSourceFactory)
             .setLoadControl(loadControl)
             .setAudioAttributes(audioAttributes, true)
@@ -616,13 +514,7 @@ class EchoPlaybackService : MediaSessionService() {
             .setWakeMode(C.WAKE_MODE_NETWORK)
             .build()
 
-        audioEffects.attachToSession(exoPlayer.audioSessionId)
-
         exoPlayer.addListener(object : Player.Listener {
-            override fun onAudioSessionIdChanged(audioSessionId: Int) {
-                audioEffects.attachToSession(audioSessionId)
-            }
-
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 if (isExplicitLoading || mediaItem == null) return
                 val idx = exoPlayer.currentMediaItemIndex
@@ -981,7 +873,6 @@ class EchoPlaybackService : MediaSessionService() {
         cancelRecoveryFallback()
         releaseTransitionWakeLock()
         mainHandler.removeCallbacks(timeTicker)
-        audioEffects.release()
         try {
             unregisterReceiver(noisyReceiver)
         } catch (_: Exception) {
@@ -1440,29 +1331,15 @@ class EchoPlaybackService : MediaSessionService() {
     }
 
     fun setVolumeLeveling(enabled: Boolean) = mainHandler.post {
-        if (::exoPlayer.isInitialized) {
-            audioEffects.attachToSession(exoPlayer.audioSessionId)
-        }
-        audioEffects.applyVolumeLeveling(enabled)
+        dspAudioProcessor.setVolumeLeveling(enabled)
     }
 
     /**
-     * Applies studio-safe subtractive EQ with a 70ms volume duck + 120ms soft ramp
-     * so switching presets (e.g. to Vocal) mid-playback NEVER causes DSP pops or digital clipping.
+     * Switches EQ preset smoothly inside [PureToneDspAudioProcessor] using a 35ms dual-bank
+     * cosine crossfade in 64-bit Double precision — mathematically zero pops or volume drops.
      */
     fun setEqPreset(preset: String) = mainHandler.post {
-        if (!::exoPlayer.isInitialized) return@post
-        audioEffects.attachToSession(exoPlayer.audioSessionId)
-        if (!exoPlayer.isPlaying) {
-            audioEffects.applyPreset(preset)
-            return@post
-        }
-        val startVol = exoPlayer.volume.coerceIn(0f, 1f)
-        val duckVol = (targetVolume * 0.18f).coerceIn(0.05f, startVol)
-        animateVolume(startVol, duckVol, 70L) {
-            audioEffects.applyPreset(preset)
-            animateVolume(duckVol, targetVolume, 120L)
-        }
+        dspAudioProcessor.setPreset(preset)
     }
 
     fun setLiveLyric(lyricLine: String) = mainHandler.post {
@@ -1660,7 +1537,7 @@ class EchoPlaybackService : MediaSessionService() {
 
     companion object {
         const val MEDIA_CHANNEL_ID = "puretone_media_playback_v2"
-        const val DEFAULT_USER_AGENT = "MELUNE-Android/2.4 (Linux; Android 16)"
+        val DEFAULT_USER_AGENT = "MELUNE-Android/${BuildConfig.VERSION_NAME} (Linux; Android 16)"
         const val RECOVERY_FALLBACK_TIMEOUT_MS = 4_500L
         const val DEFAULT_AUDIO_CACHE_MAX_MB = 2048
         const val MAX_AUDIO_CACHE_BYTES = DEFAULT_AUDIO_CACHE_MAX_MB.toLong() * 1024L * 1024L

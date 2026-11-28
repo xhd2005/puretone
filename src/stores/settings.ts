@@ -50,11 +50,12 @@ const DEFAULTS: PersistedSettings = {
   transitionFadeMs: 1500,
   volumeLeveling: false,
   lyricOffsets: {},
-  enableUnblock: true,
+  // Opt-in compliance policy for fresh installs (existing users' persisted settings.v1 stay intact)
+  enableUnblock: false,
   unblockPlatforms: ['kuwo', 'kugou', 'joox', 'bilibili'],
-  autoClaimOnLaunch: true,
-  autoClaimAllAccounts: true,
-  enableConceptTasks: true,
+  autoClaimOnLaunch: false,
+  autoClaimAllAccounts: false,
+  enableConceptTasks: false,
   showTranslation: true,
   showCoverLyricsPreview: true,
   // Default OFF so lock-screen & live media cards stay rock-solid (no OS rate-limit freeze)
@@ -64,6 +65,11 @@ const DEFAULTS: PersistedSettings = {
   updateMirrorMode: 'auto',
   customUpdateMirror: '',
 };
+
+function sanitizeQuality(raw: unknown): AudioQuality {
+  if (raw === '128' || raw === '320' || raw === 'flac' || raw === 'high') return raw;
+  return DEFAULTS.quality;
+}
 
 function sanitizeFadeMs(raw: unknown): TrackTransitionFadeMs {
   const n = Number(raw);
@@ -191,7 +197,7 @@ export const useSettingsStore = defineStore('settings', () => {
     accentMode.value = saved.accentMode ?? DEFAULTS.accentMode;
     locale.value = saved.locale ?? DEFAULTS.locale;
     lyricFontSize.value = saved.lyricFontSize ?? DEFAULTS.lyricFontSize;
-    quality.value = saved.quality ?? DEFAULTS.quality;
+    quality.value = sanitizeQuality(saved.quality);
     eqPreset.value = saved.eqPreset ?? DEFAULTS.eqPreset;
     transitionFadeMs.value = sanitizeFadeMs(saved.transitionFadeMs);
     volumeLeveling.value = saved.volumeLeveling ?? DEFAULTS.volumeLeveling;
@@ -287,7 +293,7 @@ export const useSettingsStore = defineStore('settings', () => {
     if (saved.accentMode) accentMode.value = saved.accentMode;
     if (saved.locale) locale.value = saved.locale;
     if (saved.lyricFontSize) lyricFontSize.value = saved.lyricFontSize;
-    if (saved.quality) quality.value = saved.quality;
+    if (saved.quality) quality.value = sanitizeQuality(saved.quality);
     if (saved.eqPreset) eqPreset.value = saved.eqPreset;
     if (saved.transitionFadeMs !== undefined) transitionFadeMs.value = sanitizeFadeMs(saved.transitionFadeMs);
     if (typeof saved.volumeLeveling === 'boolean') volumeLeveling.value = saved.volumeLeveling;

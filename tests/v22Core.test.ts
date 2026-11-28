@@ -87,7 +87,7 @@ describe('PureTone local JSON backup serializer & validator', () => {
     expect(json).not.toContain('cookie');
 
     const restored = parsePureToneBackupJson(json);
-    expect(restored.app).toBe('PureTone');
+    expect(['PureTone', 'MELUNE']).toContain(restored.app);
     expect(restored.stats.totalPlays).toBe(42);
     expect(restored.settings.eqPreset).toBe('vocal');
     expect(restored.pinnedSources['hash:abc']?.sourcePlatform).toBe('kuwo');

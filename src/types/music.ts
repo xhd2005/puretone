@@ -1,4 +1,4 @@
-export type AudioQuality = '128' | '320' | 'flac';
+export type AudioQuality = '128' | '320' | 'flac' | 'high';
 
 export type PlayMode = 'sequence' | 'shuffle' | 'repeat-one' | 'fm';
 
@@ -16,6 +16,7 @@ export interface Song {
   hash: string;
   hash320?: string;
   hashFlac?: string;
+  hashHigh?: string;
   mixSongId?: number;
   fileId?: number;
   addedAt?: number;

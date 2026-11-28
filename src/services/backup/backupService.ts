@@ -6,7 +6,7 @@ import type { PinnedSource } from '@/types/music';
 const PINNED_STORAGE_KEY = 'unblock.pinned.v2';
 
 export interface PureToneBackupPayload {
-  app: 'PureTone';
+  app: 'MELUNE' | 'PureTone';
   schemaVersion: 1;
   exportedAt: string;
   /** Strictly excludes account cookies / tokens for privacy safety */
@@ -16,7 +16,7 @@ export interface PureToneBackupPayload {
 }
 
 /**
- * Pure serializer producing a clean, token-free PureTone JSON backup.
+ * Pure serializer producing a clean, token-free MELUNE JSON backup.
  */
 export function buildPureToneBackupJson(input: {
   stats: Partial<PersistedListeningStatsV2>;
@@ -24,7 +24,7 @@ export function buildPureToneBackupJson(input: {
   pinnedSources: Record<string, PinnedSource>;
 }): string {
   const payload: PureToneBackupPayload = {
-    app: 'PureTone',
+    app: 'MELUNE',
     schemaVersion: 1,
     exportedAt: new Date().toISOString(),
     stats: input.stats,
@@ -35,12 +35,12 @@ export function buildPureToneBackupJson(input: {
 }
 
 /**
- * Pure parser & validator for imported PureTone backup JSON.
+ * Pure parser & validator supporting both modern `MELUNE` and legacy `PureTone` backup JSON.
  */
 export function parsePureToneBackupJson(raw: string): PureToneBackupPayload {
   const trimmed = String(raw || '').trim();
   if (!trimmed) {
-    throw new Error('请粘贴有效的 PureTone 备份 JSON 内容');
+    throw new Error('请粘贴有效的 弥音 · MELUNE 备份 JSON 内容');
   }
   let parsed: any;
   try {
@@ -48,15 +48,15 @@ export function parsePureToneBackupJson(raw: string): PureToneBackupPayload {
   } catch {
     throw new Error('JSON 格式错误，请检查是否完整复制');
   }
-  if (!parsed || typeof parsed !== 'object' || parsed.app !== 'PureTone') {
-    throw new Error('非 PureTone 备份格式（缺少 app: "PureTone" 标识）');
+  if (!parsed || typeof parsed !== 'object' || (parsed.app !== 'MELUNE' && parsed.app !== 'PureTone')) {
+    throw new Error('非 弥音 · MELUNE 备份格式（缺少 app 标识）');
   }
   const stats = parsed.stats && typeof parsed.stats === 'object' ? parsed.stats : {};
   const settings = parsed.settings && typeof parsed.settings === 'object' ? parsed.settings : {};
   const pinnedSources =
     parsed.pinnedSources && typeof parsed.pinnedSources === 'object' ? parsed.pinnedSources : {};
   return {
-    app: 'PureTone',
+    app: parsed.app,
     schemaVersion: 1,
     exportedAt: String(parsed.exportedAt || ''),
     stats,

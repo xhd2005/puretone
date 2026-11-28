@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Default-deny cleartext HTTP across the entire app (including APK updates and auth APIs) -->
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+
+    <!-- Scoped cleartext allowlist strictly for upstream media CDNs that still return HTTP streams/covers -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">kugou.com</domain>
+        <domain includeSubdomains="true">kgimg.com</domain>
+        <domain includeSubdomains="true">kuwo.cn</domain>
+        <domain includeSubdomains="true">126.net</domain>
+        <domain includeSubdomains="true">bilivideo.com</domain>
+    </domain-config>
+</network-security-config>
