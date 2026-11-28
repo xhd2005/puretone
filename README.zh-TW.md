@@ -1,248 +1,215 @@
-<div align="center">
-
-<img src="./docs/melune-icon.png" width="112" height="112" alt="彌音 · MELUNE Logo" style="border-radius: 26px;" />
-
 # 彌音 · MELUNE
 
-[简体中文](./README.md) · [English](./README.en.md) · **繁體中文**
-
-### 音樂終會停止，餘音卻可以綿延。
-*Where Music Becomes Memory.*
-
-極簡無廣告 · iOS 26 Liquid Glass 美學 · 原生 Media3 音訊引擎與 2 GB 離線快取 · 簡/繁/英三語開源 Android 音樂用戶端
-
-<p>
-  <a href="https://github.com/xhd2005/puretone/releases/latest">
-    <img src="https://img.shields.io/github/v/release/xhd2005/puretone?style=flat-square&color=3456be&label=Release" alt="Latest Release" />
-  </a>
-  <a href="https://github.com/xhd2005/puretone/actions">
-    <img src="https://img.shields.io/github/actions/workflow/status/xhd2005/puretone/android-apk.yml?branch=main&style=flat-square&label=Android%20CI" alt="Android APK CI" />
-  </a>
-  <a href="https://www.gnu.org/licenses/gpl-3.0">
-    <img src="https://img.shields.io/badge/License-GPL--3.0-2fb350?style=flat-square" alt="License GPL-3.0" />
-  </a>
-  <img src="https://img.shields.io/badge/Android-10%20~%2017-1a2d70?style=flat-square" alt="Android 10 to 17" />
-  <img src="https://img.shields.io/badge/Stack-Kotlin%20%2B%20Vue%203-4c6ef5?style=flat-square" alt="Kotlin and Vue 3" />
+<p align="center">
+  <img src="docs/melune-icon.png" width="128" height="128" alt="彌音 · MELUNE Logo">
 </p>
 
-[📥 下載最新正式版 APK](https://github.com/xhd2005/puretone/releases/latest) · [✨ 核心特性](#features) · [🏗️ 端側架構](#architecture) · [❓ 上手與 FAQ](#install) · [🙏 特別鳴謝](#thanks) · [⚖️ 合規與免責聲明](#disclaimer)
+<p align="center">
+  <a href="README.md">简体中文</a> · <a href="README.en.md">English</a> · <strong>繁體中文</strong>
+</p>
 
-</div>
+<p align="center">
+  <strong>彌音 · MELUNE</strong> —— 一個專為 Android 打造的簡約、精緻、純端側無廣告第三方音樂播放器。<em>音樂終會停止，餘音卻可以綿延。</em>
+</p>
+
+<p align="center">
+  <a href="https://github.com/xhd2005/puretone/releases/latest"><img src="https://img.shields.io/github/v/release/xhd2005/puretone?label=Release&color=3456be" alt="Latest Release"></a>
+  <a href="https://github.com/xhd2005/puretone/actions/workflows/android-build.yml"><img src="https://img.shields.io/github/actions/workflow/status/xhd2005/puretone/android-build.yml?branch=main&label=Android%20CI" alt="Android CI"></a>
+  <img src="https://img.shields.io/badge/Capacitor-7.6-119eff?logo=capacitor" alt="Capacitor">
+  <img src="https://img.shields.io/badge/Vue-3.5-brightgreen?logo=vue.js" alt="Vue 3">
+  <img src="https://img.shields.io/badge/TypeScript-5.8-blue?logo=typescript" alt="TypeScript">
+  <img src="https://img.shields.io/badge/Kotlin-Media3%201.5-7f52ff?logo=kotlin" alt="Kotlin Media3">
+  <img src="https://img.shields.io/badge/Platform-Android%2010%20~%2017-brightgreen?logo=android" alt="Android 10 to 17">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPLv3-orange" alt="License GPLv3"></a>
+</p>
 
 ---
-
-## 🌙 品牌寓意
-
-> **彌**，是綿延，是充盈，也是聲音穿越時間後的餘韻。  
-> **音**，是旋律，是情感，也是每個人獨一無二的精神世界。  
-> 彌音，希望讓每一段旋律都擁有自己的空間，讓每一種情緒都能找到共鳴。  
-> **MELUNE**（*Melody* × *Lune*）象徵旋律與月光——**音樂終會停止，餘音卻可以綿延。**
-
-彌音堅持**純粹、克制、永久無廣告、純端側直連**的產品信條：沒有開屏廣告，沒有資訊流推播，沒有中轉伺服器，把整塊螢幕與聽覺體驗完整歸還給音樂本身。
-
----
-
-<a id="features"></a>
 
 ## ✨ 核心特性
 
-### 一眼看懂彌音
+- **極致美學**：採用 iOS 26 Liquid Glass 質感設計，支援淺色 / 深色 / 跟隨系統自適應（配備自動化 `.dark` 根節點可見性門禁）、專輯封面動態流體取色、零閃屏月夜開屏與簡/繁/英三語介面。
+- **資料路徑透明**：100% 純端側直連，所有協定請求與本機資料均由裝置直接完成；不架設任何音訊中轉伺服器，不提供雲端帳號託管，永久無廣告。
+- **音樂推薦**：支援每日推薦、精選歌單與個人化探索，首頁內容支援本機 SQLite 快照秒開。
+- **多維探索**：支援歌曲、歌手、專輯、歌單 4 頁籤全庫搜尋與多分類熱搜榜，快速觸達心儀曲目。
+- **歌手與專輯檔案**：提供高清歌手主頁（作品/專輯/粉絲統計、簡介彈窗、關注/取消關注、熱門與最新篩選、合唱多歌手選擇器）與完整專輯詳情頁。
+- **進階播放**：基於 Jetpack Media3 原生 2 曲前瞻佇列，支援佇列置頂/移除、播放模式切換、倍速播放、餘弦淡入淡出切歌（關閉 / `1.5s` / `3s` / `5s`），並在 seek 短暫緩衝期維持播放態穩定，徹底消除封面縮放抽搐與進度條回彈。
+- **零中斷自癒與試聽攔截**：每首曲目獨立綁定 HTTP 請求標頭，徹底隔離預載下一首報錯；全鏈路攔截 30s / 60s 試聽片段與提前 EOF 截斷流，異常時依「重新整理直鏈 → 強制解灰完整源 → 穩流降級」3 級原地精確秒數續播，絕不中途自動切歌。
+- **智慧換源解灰**：內建 4 通道併發原唱候選評分配對，支援單曲手動試聽與永久鎖定偏好音源。
+- **私人 FM**：智慧推薦個人化電台，並於播放接近佇列尾端時提前續載，息屏不斷流。
+- **雲端歌單與秒開快照**：支援雲端歌單新建、編輯、隱私設定、刪除、收藏與底部接管式批次加歌/移歌；本機 SQLite 快照透過雲端版本號 `totalVer` 校驗，未變動時 0 網路請求秒開「我喜歡的音樂」與千首大歌單，本機紅心/增刪原地增量更新。
+- **本機智慧快取與離線直放**：基於 `DynamicLruCacheEvictor` + Media3 `SimpleCache`，支援 `500 MB / 1 GB / 2 GB（預設）/ 4 GB / 無上限` 五檔熱調，按「曲目 + 音質 + 音源」分桶隔離（試聽片段不落盤），弱網與飛航模式自動本機直放，音訊快取與歌單快照獨立透明清理。
+- **歌曲詳情與評論**：支援檢視多音質規格檔案，以及推薦 / 最熱 / 最新 / 熱詞 4 模式評論、樓中樓清洗去重、百餘種原生 Emoji 映射、即時按讚與回覆。
+- **逐字歌詞與海報工坊**：內建「酷狗 KRC 逐字 + 譯文 → 網易雲雙語 LRC → LRCLIB」三級回退引擎，單調時鐘零閃爍繪製，支援 3 檔字號、單曲記憶詞軸微調、進度條副歌高潮（`song_climax`）標記跳轉，以及 120fps 5 模板 1080P 歌詞海報工坊。
+- **音訊增強**：內建 5 檔嚴格 `<= 0 dB` 無削波減法均衡器（原聲 / 人聲 / 低音 / 深夜 / 現場，切檔柔降無爆音）與 Android `LoudnessEnhancer` 響度均衡。
+- **系統媒體控制與小工具**：原生整合 `MediaSessionService` 鎖屏/藍牙播控與 Android 16/17 官方 Live Updates，配套 4×2 封面動態取色桌面播控小工具（含紅心聯動）。
+- **多帳號簽到與聽歌洞察**：支援多帳號切換、每日自動續期簽到日曆以及 iOS 螢幕使用時間風格的本機聽歌統計圖表。
+- **持久化與遷移備份**：全量偏好、佇列、歷史與快照由原生 SQLite 持久化儲存；支援匯出/還原純文字 JSON 備份（嚴格排除所有登入 Cookie 與 Token）。
+- **全機型相容**：內建建置期 CSS 相容降級外掛，自動為 Android 11 / Chromium 80+ 舊版 WebView 展開現代語法，老機型與旗艦機同樣流暢。
+- **應用內自動更新**：冷啟動靜默偵測新版本（區分「稍後提醒」與「忽略此版本」），內建多路加速鏡像、jsDelivr CDN、自訂鏡像前綴與端側 APK SHA-256 強制校驗。
+- **持續整合**：完善的 GitHub Actions 流水線，自動完成型別檢查、雙端單元測試、永久簽章建置、Release 發布與 `updates` 分支清單同步。
 
-| 🎧 原生聽感 | 💾 智慧快取與離線 | 🎵 探索、歌詞與創作 | 💎 美學與工程品質 |
-| --- | --- | --- | --- |
-| Media3 3 曲前瞻息屏連播 | 預設 **2 GB** 5 檔熱調快取 | 零閃爍單調時鐘逐字 KRC | iOS 26 Liquid Glass 質感 |
-| 餘弦淡入淡出無縫切歌 | 弱網 / 飛航模式本機直放 | 120fps 5 模板 1080P 海報 | 日夜自適應與零閃屏開屏 |
-| 響度均衡 & 無削波減法 EQ | 版本校驗 0 同步秒開歌單 | 4 模式評論 / 樓中樓 / 按讚 | Android 10–17（含舊版 WebView） |
-| 4 通道併發智慧換源解灰 | 音訊與快照分項透明清理 | 歌手主頁 / 專輯 / 雲端歌單管理 | 自動檢查更新 + 多路加速校驗 |
+## 🛠️ 技術棧
 
----
+- **Mobile Runtime**: [Capacitor](https://capacitorjs.com/) 7.6
+- **Frontend**: [Vue 3.5](https://vuejs.org/) + [TypeScript 5.8](https://www.typescriptlang.org/)
+- **Build Tool**: [Vite](https://vite.dev/) 6（含自研舊版 WebView CSS 相容外掛）
+- **State Management**: [Pinia](https://pinia.vuejs.org/) 3 + 原生 SQLite KV 持久化
+- **CSS**: [Tailwind CSS](https://tailwindcss.com/) v4.1
+- **Routing**: [Vue Router](https://router.vuejs.org/) 4
+- **Package Manager**: [pnpm](https://pnpm.io/) 9+
+- **Native Audio Engine**: [Android Jetpack Media3](https://github.com/androidx/media) 1.5.1（`ExoPlayer` + `MediaSessionService` + `SimpleCache`）
+- **Native Network & System**: [Kotlin](https://kotlinlang.org/) + [OkHttp](https://square.github.io/okhttp/) 4.12 + `kotlinx.coroutines` 1.9 + Android AppWidget
+- **Protocol Engine**: [KuGouMusicApi](https://github.com/MakcRe/KuGouMusicApi)（`server` 子模組，端側零中轉直連）
+- **Testing**: [Vitest](https://vitest.dev/) 3（101 項前端測試）+ JUnit 4（Android 原生單測）
 
-### 1. 🎧 聆聽與原生音訊引擎
-- **Jetpack Media3 原生 3 曲前瞻播放佇列**：提前將後續 3 首曲目解析寫入原生 `ExoPlayer` 播放清單，鎖屏騎行、藍牙耳機切歌（0ms 響應）與戶外弱網切換均不斷播，弱網中斷自動自癒重試。
-- **絲滑歌曲過渡（Track Fade）**：單引擎餘弦曲線曲末淡出 + 下曲柔和淡入（支援關閉 / `1.5s` / `3s` / `5s`），暫停與恢復亦具備 220ms 柔和包絡，零額外耗電。
-- **響度均衡（Volume Leveling）與專業無削波減法均衡器（EQ）**：內建 Android `LoudnessEnhancer` 溫和拉平不同年代母帶響度落差；5 檔調音（原聲 / 人聲 / 低音 / 深夜 / 現場）嚴格遵循 `<= 0 dB` 減法曲線，切檔採用 70ms 柔降 + 120ms 淡入，徹底消除 DSP 爆音與削波失真。
-- **內建 4 通道併發解灰與換源鎖定**：遇到版權受限或試聽片段時自動平行評分配對原唱高品音源，並支援單曲手動試聽與永久鎖定偏好音源。
+## 🚀 快速開始
 
-### 2. 💾 2 GB 可調快取、離線直放與歌單 0 秒秒開
-- **5 檔熱調本機音訊快取（預設 2 GB）**：基於自研 `DynamicLruCacheEvictor` 建構的 Media3 `SimpleCache`，可於偏好設定隨時切換 **`500 MB / 1 GB / 2 GB（預設） / 4 GB / 無上限`**，調低上限時背景自動按 LRU 淘汰最久未聽曲目，熱歌常駐本機。
-- **弱網 / 斷網無縫離線直放**：在地鐵隧道、飛航模式或線上音源逾時時，自動偵測本機 `SimpleCache` 音訊完整性，已快取曲目 0 流量瞬間起播並自動切換至本機快取通道。
-- **「我喜歡的音樂」與歌單智慧版本校驗**：本機 SQLite 快照記錄雲端版本號 `totalVer` 與曲目數——未變動時 **0 網路請求、0 轉圈瞬間開啟上千首大歌單**；其他裝置增刪曲目時自動同步，歌單頂欄亦提供一鍵手動「重新整理」。
-- **本機紅心 / 加歌原地增量更新 & 主頁秒開**：播放頁點紅心或向歌單加/移歌曲後原地更新本機快照並回填最新 `totalVer`，不再刪除整份快照重拉；主頁「每日推薦」與「你的歌單」同步支援 SQLite 持久化秒出與透明分項清理（清音訊絕不誤刪歌單快照、統計與登入狀態）。
+### 前置需求
 
-### 3. 🎵 零閃爍逐字歌詞、120fps 海報工坊與深度音樂社群
-- **單常駐封面舞台 + 單調時鐘逐字 KRC 歌詞**：徹底杜絕切頁、切歌與播放期歌詞閃爍；內建「酷狗 KRC 逐字 + 譯文 → 網易雲雙語 LRC → LRCLIB 國際歌詞」三級回退引擎，支援 3 檔歌詞字號、單曲記憶 `±0.5s / ±1s` 詞軸微調與進度條副歌高潮（`song_climax`）微光標記及一鍵跳轉。
-- **120fps 直繪 5 模板歌詞海報工坊**：提供「月夜玻璃 / 黑膠唱片 / 拍立得 / 電影字幕 / 彌音月色」5 套策展級 1080P 模板，配合 LRU 封面快取與離屏柔焦，預覽切模流暢不卡頓，支援雙語譯文、日期戳、高清存圖與系統分享。
-- **完整曲庫探索與雲端歌單管理**：高清歌手主頁（作品/專輯/粉絲統計、簡介彈窗、關注、熱門與最新頁內篩選、合唱多歌手選擇器）、專輯詳情、4 頁籤全庫搜尋與多榜單熱搜；支援雲端歌單新建、編輯、隱私設定、刪除、收藏/取消收藏與底部接管式批次加歌/移歌列。
-- **歌曲「詳情 / 評論」雙頁籤互動**：提供推薦 / 最熱 / 最新 / 熱詞 4 模式評論瀏覽、樓中樓智慧清洗去重、百餘種表情原生 Emoji 映射，以及已登入帳號即時按讚與回覆。
+- [Node.js](https://nodejs.org/) 22+
+- [pnpm](https://pnpm.io/) 9+
+- [JDK 21](https://adoptium.net/)（建議 Temurin，Android 專案指定 `JavaVersion.VERSION_21`）
+- Android SDK 35（`platforms;android-35`、`build-tools;35.0.0`）
 
-### 4. 💎 Liquid Glass 美學、三語自適應與全機型工程品質
-- **月夜流光無縫開屏與日夜一體化設計**：系統啟動底色 `#0B1336` 與應用內月光詩意開屏零閃屏銜接；淺色 / 深色 / 跟隨系統自然過渡（並配備自動化 `.dark` 根節點可見性安全門禁），附帶 iOS 螢幕使用時間風格聽歌洞察圖表與多帳號自動續期簽到日曆。
-- **Android 16/17 官方 Live Updates & 4×2 動態取色桌面小工具**：規範分離 `EXTRA_COLORIZED` 與 `requestPromotedOngoing` 適配最新系統即時媒體卡片，並提供隨封面動態取色的 4×2 桌面播控小工具（含紅心聯動）。
-- **冷啟動自動檢查更新與多路容災加速**：開屏退場後自動靜默偵測新版並平滑彈窗（清晰區分「稍後提醒」與「忽略此版本」），內建多組加速節點、jsDelivr CDN、自訂鏡像前綴與端側 APK SHA-256 強制校驗。
-- **Android 10–17 全相容管線 & 簡/繁/英三語**：自研建置期 CSS 降級外掛，為 Android 11 / ColorOS 11.1 等舊版 WebView（Chromium 80+）自動展開 `@layer` / `:where()` / `oklch()` / `inset` 與版面屬性，確保老機型與旗艦機同樣細膩順滑。
+請確認目前終端機已設定 `JAVA_HOME` 與 `ANDROID_HOME`（或 `ANDROID_SDK_ROOT`）：
 
----
-
-<a id="architecture"></a>
-
-## 🏗️ 純端側三層架構
-
-彌音採用**完全執行於本機的三層純用戶端架構**，所有協定請求與資料持久化均於您的裝置本機完成，不經過任何開發者自建伺服器：
-
-```mermaid
-flowchart TB
-  subgraph UI["前端互動與視覺層 (Vue 3 + TypeScript + Tailwind CSS v4)"]
-    VIEWS["主頁 / 資料庫 / 搜尋 / 歌手與專輯 / 歌單與批次管理"]
-    PLAYER_UI["零閃爍播放舞台 · 單調時鐘逐字 KRC · 120fps 歌詞海報工坊"]
-    THEME["Liquid Glass 材質 · 日夜自適應 · 簡/繁/英三語 · 聽歌洞察"]
-  end
-
-  subgraph ENGINE["純端側業務與快取引擎 (Pinia + Web Runtime)"]
-    API["端側直連協定層 · 多帳號工作階段 · 每日簽到 · 雲端歌單與評論"]
-    RESOLVER["音源解析 · 4 通道併發解灰 · 離線快取直放 · 歌詞三級回退"]
-    SNAP["SQLite 快照層 · totalVer 智慧校驗 · 增量紅心 · 每日推薦快取"]
-  end
-
-  subgraph NATIVE["Android 原生媒體與系統層 (Kotlin + Capacitor 7)"]
-    MEDIA["Jetpack Media3 ExoPlayer · 3 曲前瞻佇列 · 減法 EQ · 響度均衡"]
-    CACHE["DynamicLruCacheEvictor · SimpleCache (500M ~ 4G / 無限 · 預設 2G)"]
-    SYS["OkHttp 零 CORS · SQLite KV · 4×2 動態小工具 · SHA-256 校驗更新"]
-  end
-
-  UI --> ENGINE
-  ENGINE --> NATIVE
-```
-
----
-
-<a id="install"></a>
-
-## 📥 安裝升級與常見問題（FAQ）
-
-### 快速安裝
-1. 前往 [GitHub Releases](https://github.com/xhd2005/puretone/releases/latest) 下載最新正式版 **`MELUNE-v2.4.9-release.apk`**。
-2. 允許安裝來源後直接安裝即可（若裝置已安裝任意舊版本彌音 / PureTone，支援 **100% 無損覆蓋升級**）。
-3. 建議在系統設定中為「彌音 · MELUNE」開啟**允許通知**並關閉背景省電限制，以獲得最佳息屏連播與鎖屏封面體驗。
-
-### 常見問題
-
-<details>
-<summary><strong>1. 升級新版本會遺失帳號登入、歌單快照或聽歌統計嗎？</strong></summary>
-
-不會。彌音底層永久保留固定包名 `com.xhd2005.puretone` 與 50 年期正式發布簽章憑證（SHA-256 `89c6ca074542578f6faf341ad1a8f57cbac72f1c89e954fbd3f15756d203a723`），本機建置與 GitHub Actions CI 均使用同一憑證。無論跨多少版本直接覆蓋安裝，登入態、聽歌統計、EQ 與快取均完整保留。
-</details>
-
-<details>
-<summary><strong>2. 為什麼之前開啟「我喜歡的音樂」要等很久，現在如何保證秒開？</strong></summary>
-
-自 `v2.4.9` 起，彌音於本機 SQLite 快照中記錄了雲端歌單版本號 `totalVer` 與曲目數。首次同步完成後，只要其他裝置未改動歌單，再次開啟即為 **0 網路請求瞬間呈現**；於本機點紅心或加歌亦會原地增量更新快照。如需主動拉取其他裝置的改動，輕點歌單右上角 **重新整理圖示** 即可一鍵同步。
-</details>
-
-<details>
-<summary><strong>3. 如何調整 2 GB 離線快取，清理快取會刪掉歌單和統計嗎？</strong></summary>
-
-前往「個人中心 → 偏好設定 → **本機音訊智慧快取**」，預設上限為 **2 GB**，可隨時點選 `500M / 1G / 2G / 4G / 無限`。播放過的曲目會自動寫入本機快取，斷網或地鐵弱網時直接離線秒播。設定頁已將「本機音訊快取」與「歌單與主頁本機快照」完全分開管理，點擊任一清理都不會影響您的登入帳號、聽歌柱狀圖與偏好設定。
-</details>
-
-<details>
-<summary><strong>4. 關於 vivo OriginOS 等客製系統頂部原子島 / 靈動島的說明</strong></summary>
-
-部分廠商客製 ROM（如 vivo OriginOS 原子島）對系統級頂部音樂膠囊實施硬編碼商業包名白名單，未入選白名單的開源第三方播放器無法直接呼叫系統私有通道。彌音堅持 100% 開源合規，絕不偽裝他人包名或繞過系統限制；推薦於手機桌面加入 **「彌音 4×2 動態小工具」**，同樣具備隨專輯封面動態取色、切歌與紅心聯動體驗。
-</details>
-
-<details>
-<summary><strong>5. 換手機時如何安全遷移聽歌統計與偏好設定？</strong></summary>
-
-前往「個人中心 → 偏好設定 → **統計與偏好 JSON 備份**」，點擊「匯出」即可將聽歌柱狀圖資料、EQ、音質、單曲詞軸偏移與鎖定音源匯出為純文字 JSON（**嚴格排除所有登入 Cookie 與 Token，絕無憑證外洩風險**），在新手機點擊「還原」貼上即可完成遷移。
-</details>
-
----
-
-<a id="thanks"></a>
-
-## 🙏 特別鳴謝
-
-彌音 · MELUNE 的每一行程式碼、每一處動效與每一次穩定迭代，都站在眾多卓越開源專案與熱心社群夥伴的肩膀之上。在此向以下全部開源專案、維護者與實測夥伴致上最誠摯的謝意：
-
-### 🎵 音樂生態與產品靈感
-
-| 專案 / 社群 | 開源協議 | 貢獻與啟發 |
-| --- | :---: | --- |
-| [**MakcRe/KuGouMusicApi**](https://github.com/MakcRe/KuGouMusicApi) | MIT | 提供詳盡的酷狗概念版端側介面協定與加密簽章技術參考，是彌音純端側直連架構的重要基石。 |
-| [**EchoMusic**](https://github.com/EchoMusicApp) | GPL-3.0 | 帶來極具啟發的行動端極簡播放器互動編排、歌手主頁結構與純粹聽歌產品美學靈感。 |
-| [**LRCLIB**](https://github.com/tranxuanthang/lrclib) | MIT | 開放免費的社群同步歌詞資料庫，作為彌音歌詞三級回退引擎的國際兜底歌詞源。 |
-| [**UnblockNeteaseMusic**](https://github.com/UnblockNeteaseMusic/server) | LGPL-3.0 | 啟發了多源併發候選評分與灰歌無感換源配對的工程設計思路。 |
-
-### 🤖 Android 原生與音視訊基建
-
-| 專案 | 開源協議 | 在彌音中的作用 |
-| --- | :---: | --- |
-| [**Android Jetpack Media3**](https://github.com/androidx/media) | Apache-2.0 | 驅動原生 `ExoPlayer`、`MediaSessionService`、3 曲前瞻播放佇列、`SimpleCache` 動態 LRU 磁碟快取與鎖屏/藍牙播控。 |
-| [**Capacitor**](https://github.com/ionic-team/capacitor) | MIT | 現代 Web-to-Native 原生容器與自訂 Kotlin 外掛橋接框架，無縫連接前端互動與原生音訊引擎。 |
-| [**OkHttp**](https://github.com/square/okhttp) | Apache-2.0 | 支撐零 CORS 原生 HTTP 用戶端、ExoPlayer 音訊上游資料來源與多路鏡像 SHA-256 校驗下載器。 |
-| [**Kotlin**](https://github.com/JetBrains/kotlin) & [**kotlinx.coroutines**](https://github.com/Kotlin/kotlinx.coroutines) | Apache-2.0 | 驅動全部 Android 原生服務、非同步高清封面取色與低開銷背景磁碟讀寫。 |
-| [**AndroidX**](https://github.com/androidx/androidx) | Apache-2.0 | 透過 `AppCompat`、`Core-KTX`、`SplashScreen` 實現 Android 10–17 邊到邊安全區與零閃屏啟動體驗。 |
-| [**Google Guava**](https://github.com/google/guava) | Apache-2.0 | 為 Media3 `MediaSession` 非同步指令回呼與自訂通知按鈕提供 `ListenableFuture` 與不可變集合支撐。 |
-
-### 🎨 前端互動、視覺與核心工具庫
-
-| 專案 | 開源協議 | 在彌音中的作用 |
-| --- | :---: | --- |
-| [**Vue 3**](https://github.com/vuejs/core) | MIT | 驅動全部響應式介面、持久化多頁籤 GPU 舞台與單常駐層零閃爍播放頁。 |
-| [**Vue Router**](https://github.com/vuejs/router) | MIT | 配合 `KeepAlive` 與方向性推入/彈出轉場實現流暢的多層級行動端路由導覽。 |
-| [**Pinia**](https://github.com/vuejs/pinia) | MIT | 管理多帳號工作階段、播放佇列、雲端歌單、聽歌洞察與持久化偏好狀態樹。 |
-| [**Tailwind CSS v4**](https://github.com/tailwindlabs/tailwindcss) | MIT | 建構整套 iOS 26 Liquid Glass 原子樣式系統（結合自研 Android 11 相容降級外掛）。 |
-| [**TypeScript**](https://github.com/microsoft/TypeScript) | Apache-2.0 | 為前端業務邏輯、橋接契約與協定解析提供嚴格靜態型別保障。 |
-| [**Vite**](https://github.com/vitejs/vite) & [**Vitest**](https://github.com/vitest-dev/vitest) | MIT | 提供極速生產打包、自訂 CSS 建置門禁外掛以及 93 項核心回歸自動化單元測試。 |
-| [**Iconify**](https://github.com/iconify/iconify) & [**Tabler Icons**](https://github.com/tabler/tabler-icons) | MIT | 提供精緻統一、按需打包的線性圖示視覺體系。 |
-| [**pako**](https://github.com/nodeca/pako) | MIT | 純端側毫秒級 zlib 解壓酷狗加密 KRC 逐字歌詞載荷。 |
-| [**crypto-js**](https://github.com/brix/crypto-js) & [**node-forge**](https://github.com/digitalbazaar/forge) | MIT / BSD-3-Clause | 支撐跨端純 JS 簽章加密演算法與裝置身分計算。 |
-| [**node-qrcode**](https://github.com/soldair/node-qrcode) | MIT | 本機繪製高清掃碼登入 QR Code。 |
-| [**big-integer**](https://github.com/peterolson/BigInteger.js) & [**Axios**](https://github.com/axios/axios) | Unlicense / MIT | 支撐大整數協定運算與端側零 CORS HTTP 適配層。 |
-
-### 🌐 分發加速與真機測試社群
-
-| 致謝對象 | 貢獻與支持 |
-| --- | --- |
-| [**GitHub Actions**](https://github.com/features/actions) & [**jsDelivr**](https://github.com/jsdelivr/jsdelivr) | 自動化持續整合、永久簽章打包發布及全球 CDN 版本清單加速分發。 |
-| **開源 GitHub 加速鏡像生態** | `ghfast`、`gh-proxy`、`akams`、`ghproxy` 等開源鏡像節點（配合用戶端強制 SHA-256 完整性校驗），保障多網路環境開箱即用的更新體驗。 |
-| **真機測試夥伴與早期回饋用戶** | 衷心感謝每一位在 **Android 11 / ColorOS 11.1**、**vivo OriginOS**、**小米 HyperOS** 等多款真機上反覆實測、截圖回饋深色模式、閃爍、動畫流暢度、評論樓中樓與歌單快取細節的朋友和用戶——每一次迭代都源於你們的真實聲音！ |
-
----
-
-## 🛠️ 本機建置與開發
+**macOS / Linux（Bash）：**
 
 ```bash
-# 1. 安裝相依套件
-pnpm install
-
-# 2. 型別檢查、全量前端單元測試（93 項）與生產建置
-pnpm typecheck && pnpm test && pnpm build
-
-# 3. 同步至 Android 專案並執行 Kotlin 單元測試與 Release 打包
-npx cap sync android
-cd android && ./gradlew :app:testDebugUnitTest :app:assembleRelease
+export JAVA_HOME="/path/to/jdk-21"
+export ANDROID_HOME="$HOME/Android/Sdk"
 ```
 
----
+**Windows（PowerShell）：**
 
-## 👤 作者介紹
+```powershell
+$env:JAVA_HOME = "C:\Android\jdk-21"
+$env:ANDROID_HOME = "C:\Android\Sdk"
+$env:ANDROID_SDK_ROOT = "C:\Android\Sdk"
+```
 
-**Hayden Xue（[@xhd2005](https://github.com/xhd2005)）**  
-獨立開發者 & 音樂與互動美學愛好者。秉持克制、純粹、無廣告的設計信條，專注打磨流暢優雅的行動端音訊體驗與開放原始碼實踐。
+### 本機開發
 
----
+1. **複製倉庫（含 `server` 子模組）**
 
-<a id="disclaimer"></a>
+   ```bash
+   git clone https://github.com/xhd2005/puretone.git
+   cd puretone
+   git submodule update --init --recursive
+   ```
 
-## ⚖️ 合規與完整免責聲明
+2. **安裝相依套件**
 
-> **請在使用或下載本軟體前完整閱讀以下 7 條聲明（本軟體在首次啟動及每次版本更新後均會強制呈現並要求確認）：**
+   ```bash
+   pnpm install
+   ```
 
-1. **開源學習與絕對非商業定位**：彌音 · MELUNE 由獨立開發者 Hayden Xue（@xhd2005）基於 GNU GPL-3.0 協議開源發布，僅供行動端音訊工程、Jetpack Media3 與 Liquid Glass 互動美學技術學習交流。本軟體永久無廣告、無任何付費牆或商業變現，嚴禁任何個人或組織將其或其衍生品用於商業營利與收費分發。
-2. **純端側直連與零資源託管聲明**：本軟體為完全執行於本機裝置的純用戶端工具，開發者不架設、不營運任何音樂中轉或資源伺服器，亦不儲存、快取、上傳、分發或提供任何受著作權保護的音訊、歌詞或封面檔案。所有網路請求均由使用者裝置直接發起。
-3. **智慧財產權歸屬與支持正版原則**：軟體內檢索、展示與播放的曲目音訊、歌詞文本、專輯封面、評論及平台會員權益，其全部智慧財產權均歸屬於原音樂平台、唱片公司及合法著作權人所有。請尊重音樂人創作成果、支持正版音樂服務，並在下載測試後於 24 小時內從個人裝置中清除測試產物。
-4. **第三方介面與實驗性功能風險自負**：登入第三方音樂帳號、發表評論、關注歌手及使用實驗性音源配對或簽到相關功能均由使用者自主操作觸發。因第三方平台介面變更、服務條款限制、風控策略調整或使用者自身不當使用所引發的帳號異常、服務中斷或其他後果，均由使用者自行承擔。
-5. **隱私保護與本機資料邊界**：彌音 · MELUNE 絕不蒐集、上報或追蹤任何使用者個人資訊、登入憑證或聽歌行為日誌。您的帳號工作階段、本機歌單快照與聽歌統計完全隔離儲存於本機應用沙盒中；匯出的 JSON 備份亦嚴格排除所有登入 Cookie 與 Token。
-6. **GPL-3.0 開源授權與「按原樣提供」免責**：本軟體按 GNU GPL-3.0 授權條款「按原樣（AS-IS）」提供，不附帶任何明示或默示的適銷性、特定用途適用性或不侵權擔保。在適用法律允許的最大範圍內，作者及貢獻者不對使用本軟體產生的任何直接、間接、附帶或衍生損害承擔法律責任。
-7. **版權權利人通知與 24 小時快速下架通道**：我們高度重視智慧財產權保護。若任何音樂平台、著作權人或第三方認為本專案的程式碼引用、介面適配或文件內容侵犯了您的合法權益，請攜帶權屬證明透過 [GitHub Issues](https://github.com/xhd2005/puretone/issues) 或公開聯絡管道通知作者，我們將在核實後的 **24 小時內** 立即刪除或下架相關內容。
+3. **前端開發、型別檢查與全量單元測試**
+
+   ```bash
+   pnpm dev
+   pnpm typecheck
+   pnpm test
+   ```
+
+4. **原生 Kotlin 模組一覽**
+
+   Android 原生層位於 `android/app/src/main/java/com/xhd2005/puretone/`，負責音訊播放、磁碟快取、零 CORS 網路與系統整合：
+
+   | 模組檔案 | 用途 |
+   | --- | --- |
+   | `player/EchoPlaybackService.kt` | Media3 `ExoPlayer` 前景播放服務、每曲獨立請求標頭、2 曲前瞻佇列、預載錯誤隔離、60s 試聽/提前 EOF 偵測、`DynamicLruCacheEvictor`（預設 2 GB）、餘弦淡入淡出、無削波減法 EQ、響度均衡與 Live Updates |
+   | `plugins/EchoPlayerPlugin.kt` | Capacitor 播放控制橋接外掛（載入、續播定位、`syncUpcomingTracks`、`playbackRecovery` 事件與單曲/全域快取管理） |
+   | `plugins/EchoHttpPlugin.kt` | 基於 OkHttp 4.12 的零 CORS 原生 HTTP 外掛（完整保留多條 `Set-Cookie` 與二進位串流） |
+   | `plugins/EchoSystemPlugin.kt` | SQLite KV 儲存、多路鏡像 SHA-256 校驗更新下載與安裝、安全區、觸感回饋與相簿存圖/系統分享 |
+   | `widget/PureToneWidgetProvider.kt` | 4×2 封面動態取色桌面播控小工具（播放/切歌/紅心聯動） |
+
+5. **建置前端、同步 Android 並執行原生單測與除錯打包**
+
+   ```bash
+   pnpm build
+   npx cap sync android
+   cd android
+   ./gradlew :app:testDebugUnitTest :app:assembleDebug
+   ```
+
+   **常見問題：**
+   - **`server/` 目錄為空導致建置失敗**：於倉庫根目錄執行 `git submodule update --init --recursive` 拉取 `KuGouMusicApi` 子模組。
+   - **Gradle 報 JVM 版本不符**：確認 `JAVA_HOME` 指向 JDK 21，且 `java -version` 輸出 21.x。
+   - **本機編譯 Release 正式簽章包**：於 `android/keystore.properties` 設定 `storeFile`、`storePassword`、`keyAlias`、`keyPassword`；未設定時可正常編譯臨時簽章的 Debug 包，但無法直接覆蓋安裝正式 Release 包。
+   - **修改前端或原生程式碼後生效**：前端改動需重新執行 `pnpm build && npx cap sync android` 後再打包 APK。
+
+## 🏗️ 編譯發布
+
+專案使用 GitHub Actions（[android-build.yml](.github/workflows/android-build.yml)）進行自動化建置。每次推送 `main` 或手動觸發 `workflow_dispatch` 時會自動執行型別檢查、101 項前端測試、Android 原生單元測試並上傳 APK CI 產物；每當推送 `v*` 格式的 Tag 時，還會使用永久發布憑證自動簽章建置、校驗指紋、產生 `latest.json`、建立 GitHub Release 並同步更新 `updates` 分支與 jsDelivr CDN 快取。
+
+**手動編譯正式包：**
+
+```bash
+pnpm typecheck && pnpm test && pnpm build
+npx cap sync android
+cd android && ./gradlew :app:testDebugUnitTest :app:assembleRelease --no-daemon
+```
+
+## 📦 打包產物
+
+- **正式安裝包**：`MELUNE-vX.Y.Z-release.apk`（位於 GitHub Releases 與 CI Artifact `MELUNE-Release-APK`）
+- **除錯安裝包**：`app-debug.apk`（位於 CI Artifact `MELUNE-Debug-APK`）
+- **更新清單**：`latest.json`（隨 Release 及 `updates` 分支同步發布，包含版本號、檔案大小與 APK SHA-256 摘要）
+
+### 🔐 永久簽章與無損升級
+
+彌音永久固定應用套件名稱 `com.xhd2005.puretone` 與 50 年期正式發布簽章憑證（SHA-256：`89c6ca074542578f6faf341ad1a8f57cbac72f1c89e954fbd3f15756d203a723`）。任意舊版本彌音 / PureTone 均可直接覆蓋安裝新版本，帳號登入態、歌單快照、聽歌統計、EQ 與本機音訊快取 100% 無損保留。
+
+## 💬 回饋與作者
+
+- **問題回饋與建議**：[GitHub Issues](https://github.com/xhd2005/puretone/issues)
+- **正式版下載與日誌**：[GitHub Releases](https://github.com/xhd2005/puretone/releases/latest)
+- **作者**：Hayden Xue（[@xhd2005](https://github.com/xhd2005)）
+
+## 🙏 鳴謝
+
+感謝以下開源專案及其貢獻者與實測夥伴提供的支持（完整授權清單見 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)）：
+
+- [KuGouMusicApi](https://github.com/MakcRe/KuGouMusicApi) - 酷狗概念版端側介面協定與加密簽章技術參考
+- [Android Jetpack Media3](https://github.com/androidx/media) - 原生 ExoPlayer、MediaSessionService 與 SimpleCache 音視訊基礎設施
+- [Capacitor](https://github.com/ionic-team/capacitor) - 現代 Web-to-Native 跨端容器與 Kotlin 原生橋接框架
+- [OkHttp](https://github.com/square/okhttp) - 高效能零 CORS 原生 HTTP 用戶端與下載器引擎
+- [Kotlin](https://github.com/JetBrains/kotlin) & [kotlinx.coroutines](https://github.com/Kotlin/kotlinx.coroutines) - Android 原生服務與非同步協程支撐
+- [AndroidX](https://github.com/androidx/androidx) & [Google Guava](https://github.com/google/guava) - 系統相容性、SplashScreen 與 MediaSession 非同步原語
+- [Vue 3](https://github.com/vuejs/core)、[Vue Router](https://github.com/vuejs/router) & [Pinia](https://github.com/vuejs/pinia) - 前端響應式檢視、路由與狀態管理生態
+- [Tailwind CSS](https://github.com/tailwindlabs/tailwindcss) & [TypeScript](https://github.com/microsoft/TypeScript) - 原子化 Liquid Glass 樣式系統與靜態型別保障
+- [Vite](https://github.com/vitejs/vite) & [Vitest](https://github.com/vitest-dev/vitest) - 生產建置管線、自訂 CSS 門禁外掛與自動化回歸測試
+- [Iconify](https://github.com/iconify/iconify) & [Tabler Icons](https://github.com/tabler/tabler-icons) - 統一按需打包的線性圖示體系
+- [LRCLIB](https://github.com/tranxuanthang/lrclib) - 開放免費的社群同步歌詞兜底資料來源
+- [pako](https://github.com/nodeca/pako)、[crypto-js](https://github.com/brix/crypto-js)、[node-forge](https://github.com/digitalbazaar/forge)、[node-qrcode](https://github.com/soldair/node-qrcode)、[big-integer](https://github.com/peterolson/BigInteger.js) & [Axios](https://github.com/axios/axios) - KRC 歌詞解壓、加解密運算、QR Code 產生與 HTTP 適配
+- [GitHub Actions](https://github.com/features/actions)、[jsDelivr](https://github.com/jsdelivr/jsdelivr) 與開源鏡像節點 - 自動化簽章發布與多路加速更新分發
+- 所有在 **Android 11 / ColorOS 11.1**、**vivo OriginOS**、**小米 HyperOS** 等真機上反覆實測並回饋體驗細節的社群夥伴
+
+## 💡 靈感來源
+
+本專案的設計、互動與工程文件結構受到以下開源專案的啟發：
+
+- [EchoMusic](https://github.com/hoowhoami/EchoMusic) - 一個簡約、精緻、功能強大的跨平台第三方音樂播放器
+- [UnblockNeteaseMusic](https://github.com/UnblockNeteaseMusic/server) - 多源併發候選評分與無感換源配對思路啟發
+- [SPlayer](https://github.com/imsyy/SPlayer) - 一個簡約的開源音樂播放器
+- [MoeKoeMusic](https://github.com/MoeKoeMusic/MoeKoeMusic) - 一款開源簡潔高顏值的酷狗第三方用戶端
+
+## 📄 免責聲明
+
+本專案是基於公開 API 介面開發的純端側第三方音樂用戶端，僅供個人學習和技術研究使用。
+
+- **資料來源**：所有音樂、歌詞、封面與評論資料均由裝置直接向公開介面取得，本專案不架設中轉伺服器，不儲存、不傳播任何音訊檔案
+- **版權聲明**：音樂內容及相關權益歸原平台、唱片公司及合法版權方所有，請尊重智慧財產權，支持正版音樂，測試後請於 24 小時內刪除測試產物
+- **隱私邊界**：本軟體不蒐集、不上報任何個人資訊與行為日誌，帳號工作階段與本機快取僅保存在裝置沙盒內；JSON 備份嚴格排除所有登入 Cookie 與 Token
+- **使用限制**：禁止將本專案或其衍生品用於任何商業用途、收費分發或違法行為
+- **責任聲明**：因第三方介面變動、帳號風控或不當使用本專案產生的任何法律糾紛或損失，均由使用者自行承擔
+- **爭議處理**：如任何版權方認為本專案侵犯其合法權益，請攜帶權屬證明透過 [GitHub Issues](https://github.com/xhd2005/puretone/issues) 聯繫，我們將在核實後 **24 小時內** 立即刪除或下架相關內容
+
+**本專案不接受任何商業合作、廣告或捐贈。**
+
+## ⚖️ 開源協議
+
+基於 [GNU General Public License v3.0](https://www.gnu.org/licenses/gpl-3.0.html) 協議發布，完整協議文本見 [LICENSE](LICENSE)。
+
+第三方相依套件與授權說明見 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
