@@ -37,11 +37,13 @@ import {
   type UpdateMirrorMode,
 } from '@/stores/settings';
 import { useStatsStore } from '@/stores/stats';
+import { usePluginsStore } from '@/stores/plugins';
 import { useUiStore } from '@/stores/ui';
 import { useI18n } from '@/i18n';
 import { useDraggableSheet } from '@/composables/useDraggableSheet';
 import { echoSystem } from '@/native/echoSystem';
 import { echoPlayer } from '@/native/echoPlayer';
+import { resolvePluginVisual } from '@/services/plugins/pluginUiMeta';
 import { exportLocalBackupJson, restoreLocalBackupJson } from '@/services/backup/backupService';
 import {
   APP_AUTHOR,
@@ -59,6 +61,7 @@ type ProfileSectionTab = 'profile' | 'plugins' | 'settings';
 const accounts = useAccountsStore();
 const settings = useSettingsStore();
 const stats = useStatsStore();
+const plugins = usePluginsStore();
 const ui = useUiStore();
 const { t } = useI18n();
 
@@ -617,6 +620,32 @@ async function openAuthorProfile() {
                 </div>
               </section>
 
+              <!-- Pinned Extension Quick-Launch Capsules (zero space when none pinned) -->
+              <section v-if="plugins.pinnedPanelPlugins.length" class="space-y-1.5" data-pinned-plugin-bar>
+                <div class="text-[11.5px] font-semibold uppercase tracking-wide text-[var(--text-secondary)] px-2">
+                  {{ t('plugins.pinnedQuickBar') }}
+                </div>
+                <div class="am-hscroll flex items-center gap-2 pb-0.5">
+                  <button
+                    v-for="item in plugins.pinnedPanelPlugins"
+                    :key="item.manifest.id"
+                    type="button"
+                    class="h-10 pl-2 pr-3.5 rounded-full bg-[var(--bg-card)] shadow-xs border-0 inline-flex items-center gap-2 shrink-0 am-tap"
+                    @click="echoSystem.haptic('light'); plugins.openPluginDetail(item.manifest.id)"
+                  >
+                    <span
+                      class="w-6.5 h-6.5 rounded-full bg-gradient-to-br flex items-center justify-center text-white shrink-0"
+                      :class="resolvePluginVisual(item.manifest).gradientClass"
+                    >
+                      <Icon :icon="resolvePluginVisual(item.manifest).icon" class="w-3.5 h-3.5" />
+                    </span>
+                    <span class="text-[13px] font-semibold text-[var(--text-primary)] whitespace-nowrap">
+                      {{ item.manifest.name }}
+                    </span>
+                  </button>
+                </div>
+              </section>
+
               <ListeningStatsChart />
               </div>
 
@@ -631,7 +660,7 @@ async function openAuthorProfile() {
                 @touchend.passive="dragSheet.onBodyTouchEnd"
                 @touchcancel.passive="dragSheet.onBodyTouchEnd"
               >
-                <PluginHubTab />
+                <PluginHubTab :visible="ui.accountSheetOpen && activeTab === 'plugins'" />
               </div>
 
               <!-- ==================== TAB 3: 偏好设置 ==================== -->
@@ -1343,36 +1372,5 @@ async function openAuthorProfile() {
 }
 .ml-about-vision {
   color: var(--ml-about-vision);
-}
-
-.ios-switch {
-  appearance: none;
-  -webkit-appearance: none;
-  width: 48px;
-  height: 28px;
-  border-radius: 999px;
-  background: var(--bg-subtle);
-  position: relative;
-  cursor: pointer;
-  transition: background-color 220ms ease;
-  flex-shrink: 0;
-}
-.ios-switch::after {
-  content: '';
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  background: #ffffff;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.22);
-  transition: transform 240ms var(--spring-ease);
-}
-.ios-switch:checked {
-  background: #34c759;
-}
-.ios-switch:checked::after {
-  transform: translateX(20px);
 }
 </style>

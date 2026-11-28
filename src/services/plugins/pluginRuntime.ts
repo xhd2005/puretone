@@ -14,7 +14,10 @@ import type {
   MelunePluginContext,
   MelunePluginDefinition,
   PluginAccountSummary,
+  PluginLogEntry,
+  PluginLogLevel,
   PluginResolvedAudio,
+  PluginRuntimeDiagnostics,
 } from './types';
 
 export interface PluginHostBridge {
@@ -44,6 +47,7 @@ const ALLOWED_KUGOU_PLUGIN_ROUTES = new Set<string>([
   '/youth/union/vip',
   '/user/listen/report',
   '/playhistory/upload',
+  '/user/grade/info',
   '/user/vip/detail',
   '/user/batch/union/vipinfo',
   '/v2/batch_union_vipinfo',
@@ -59,6 +63,8 @@ const ALLOWED_KUGOU_PLUGIN_ROUTES = new Set<string>([
   '/song/url/new',
 ]);
 
+const MAX_PLUGIN_LOGS = 20;
+
 interface LoadedPluginEntry {
   id: string;
   installed: InstalledMelunePlugin;
@@ -68,15 +74,31 @@ interface LoadedPluginEntry {
   panelProvider: MelunePanelProvider | null;
   launchHooks: Array<() => Promise<void> | void>;
   authLoginHooks: Array<(userid: string) => Promise<void> | void>;
+  loadDurationMs: number;
   lastError: string;
 }
 
 class MelunePluginRuntime {
   private host: PluginHostBridge = DEFAULT_HOST_BRIDGE;
   private loaded = new Map<string, LoadedPluginEntry>();
+  private pluginLogs = new Map<string, PluginLogEntry[]>();
   private safeMode = false;
   private panelListeners = new Set<(pluginId: string) => void>();
   private statusListeners = new Set<() => void>();
+
+  private appendLog(pluginId: string, level: PluginLogLevel, message: string) {
+    const text = String(message || '').trim().slice(0, 260);
+    if (!text) return;
+    let bucket = this.pluginLogs.get(pluginId);
+    if (!bucket) {
+      bucket = [];
+      this.pluginLogs.set(pluginId, bucket);
+    }
+    bucket.push({ ts: Date.now(), level, message: text });
+    if (bucket.length > MAX_PLUGIN_LOGS) {
+      bucket.splice(0, bucket.length - MAX_PLUGIN_LOGS);
+    }
+  }
 
   setHostBridge(bridge: PluginHostBridge) {
     this.host = bridge;
@@ -126,7 +148,9 @@ class MelunePluginRuntime {
 
   private assertPermission(pluginId: string, granted: Set<MelunePermission>, perm: MelunePermission) {
     if (!granted.has(perm)) {
-      throw new Error(`插件「${pluginId}」未获得权限：${perm}`);
+      const msg = `插件「${pluginId}」未获得权限：${perm}`;
+      this.appendLog(pluginId, 'error', msg);
+      throw new Error(msg);
     }
   }
 
@@ -160,6 +184,7 @@ class MelunePluginRuntime {
       return false;
     }
 
+    const loadStart = Date.now();
     const granted = new Set<MelunePermission>(installed.grantedPermissions || installed.manifest.permissions);
     const entry: LoadedPluginEntry = {
       id,
@@ -170,6 +195,7 @@ class MelunePluginRuntime {
       panelProvider: null,
       launchHooks: [],
       authLoginHooks: [],
+      loadDurationMs: 0,
       lastError: '',
     };
 
@@ -272,11 +298,24 @@ class MelunePluginRuntime {
           // Strip any accidental token injection from params so host controls auth strictly
           const safeParams = { ...params };
           delete safeParams.token;
-          const res = await callKugouRoute(normRoute, safeParams, {
-            authOverride,
-            skipVerification: false,
-          });
-          return { status: res.status, body: res.body || {} };
+          try {
+            const res = await callKugouRoute(normRoute, safeParams, {
+              authOverride,
+              skipVerification: false,
+            });
+            return { status: res.status, body: res.body || {} };
+          } catch (err: any) {
+            // KuGouMusicApi rejects non-zero business responses (e.g. 131001 already claimed,
+            // 297001 already upgraded, 143001/143004/143005/143010 team codes) as plain `{ status: 502, body }` objects.
+            // Preserve structured body so plugins evaluate business error codes accurately instead of failing blindly!
+            const structuredBody = err?.body ?? err?.response?.body ?? err?.response?.data;
+            if (structuredBody && typeof structuredBody === 'object') {
+              const statusNum = Number(err?.status ?? err?.response?.status ?? 502) || 502;
+              return { status: statusNum, body: structuredBody };
+            }
+            this.appendLog(id, 'warn', `路由 ${normRoute} 异常: ${err?.message || String(err || '未知错误')}`);
+            throw err;
+          }
         },
         searchSongs: async (keyword: string, page = 1, pagesize = 12) => {
           this.assertPermission(id, granted, 'kugou.api');
@@ -313,6 +352,10 @@ class MelunePluginRuntime {
         refreshPanel: () => {
           this.emitPanelUpdate(id);
         },
+      },
+      log: (level: PluginLogLevel, message: string) => {
+        const safeLevel: PluginLogLevel = level === 'error' || level === 'warn' ? level : 'info';
+        this.appendLog(id, safeLevel, message);
       },
       registerAudioResolver: (provider: MeluneAudioResolverProvider) => {
         this.assertPermission(id, granted, 'audio.resolver');
@@ -368,7 +411,9 @@ class MelunePluginRuntime {
 
       entry.definition = def;
       await def.setup(ctx);
+      entry.loadDurationMs = Math.max(0, Date.now() - loadStart);
       this.loaded.set(id, entry);
+      this.appendLog(id, 'info', `已加载 v${installed.manifest.version}（耗时 ${entry.loadDurationMs}ms）`);
       this.emitStatusChange();
       this.emitPanelUpdate(id);
       return true;
@@ -379,6 +424,7 @@ class MelunePluginRuntime {
   }
 
   private recordLoadError(installed: InstalledMelunePlugin, message: string) {
+    this.appendLog(installed.manifest.id, 'error', message);
     this.loaded.set(installed.manifest.id, {
       id: installed.manifest.id,
       installed,
@@ -388,6 +434,7 @@ class MelunePluginRuntime {
       panelProvider: null,
       launchHooks: [],
       authLoginHooks: [],
+      loadDurationMs: 0,
       lastError: message,
     });
     this.emitStatusChange();
@@ -402,7 +449,51 @@ class MelunePluginRuntime {
     } catch {
       // non-fatal teardown error
     }
+    this.appendLog(pluginId, 'info', '扩展已卸载/停用');
     this.emitStatusChange();
+  }
+
+  async clearPluginData(pluginId: string): Promise<number> {
+    const cleanId = String(pluginId || '').trim();
+    if (!cleanId) return 0;
+    const prefix = `ext.data.${cleanId}:`;
+    const removed = await echoSystem.kvDeleteByPrefix(prefix);
+    this.appendLog(cleanId, 'info', `已清理隔离存储数据（共 ${removed} 项）`);
+    const existing = this.loaded.get(cleanId);
+    if (existing && !this.safeMode && existing.installed.enabled) {
+      await this.loadPlugin(existing.installed);
+    } else {
+      this.emitPanelUpdate(cleanId);
+      this.emitStatusChange();
+    }
+    return removed;
+  }
+
+  getPluginDiagnostics(pluginId: string): PluginRuntimeDiagnostics {
+    const entry = this.loaded.get(pluginId);
+    const logs = [...(this.pluginLogs.get(pluginId) || [])];
+    if (!entry) {
+      return {
+        loaded: false,
+        loadDurationMs: 0,
+        hasPanel: false,
+        hasAudioResolver: false,
+        hasLyricFilter: false,
+        hasLaunchHook: false,
+        lastError: '',
+        logs,
+      };
+    }
+    return {
+      loaded: !entry.lastError,
+      loadDurationMs: entry.loadDurationMs,
+      hasPanel: Boolean(entry.panelProvider),
+      hasAudioResolver: entry.audioResolvers.length > 0,
+      hasLyricFilter: entry.lyricFilters.length > 0,
+      hasLaunchHook: entry.launchHooks.length > 0 || entry.authLoginHooks.length > 0,
+      lastError: entry.lastError,
+      logs,
+    };
   }
 
   async unloadAll(): Promise<void> {
@@ -578,10 +669,13 @@ class MelunePluginRuntime {
     const entry = this.loaded.get(pluginId);
     if (!entry || entry.lastError || !entry.panelProvider) return;
     try {
+      this.appendLog(pluginId, 'info', `执行面板操作: ${action}`);
       await entry.panelProvider.onAction(action, payload);
       this.emitPanelUpdate(pluginId);
     } catch (err: any) {
-      this.host.showToast(err?.message || '插件执行失败');
+      const msg = err?.message || '插件执行失败';
+      this.appendLog(pluginId, 'error', `操作 ${action} 失败: ${msg}`);
+      this.host.showToast(msg);
     }
   }
 

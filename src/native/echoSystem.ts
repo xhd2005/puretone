@@ -136,6 +136,42 @@ export const echoSystem = {
     }
   },
 
+  async kvKeys(prefix = ''): Promise<string[]> {
+    const cleanPrefix = String(prefix || '');
+    if (Capacitor.isNativePlatform()) {
+      const res = await EchoSystemNative.kvKeys({ prefix: cleanPrefix }).catch(() => ({ keys: [] }));
+      return Array.isArray(res?.keys) ? res.keys : [];
+    }
+    const store = getWebStorage();
+    if (!store) return [];
+    const out: string[] = [];
+    const fullPrefix = STORAGE_PREFIX + cleanPrefix;
+    for (let i = 0; i < store.length; i += 1) {
+      const rawKey = store.key(i);
+      if (rawKey && rawKey.startsWith(fullPrefix)) {
+        out.push(rawKey.slice(STORAGE_PREFIX.length));
+      }
+    }
+    return out;
+  },
+
+  async kvDeleteByPrefix(prefix: string): Promise<number> {
+    const cleanPrefix = String(prefix || '').trim();
+    // Strict safety guard: only allow scoped plugin sandbox prefixes to prevent accidental wipe of accounts/settings
+    if (!cleanPrefix || !cleanPrefix.startsWith('ext.data.') || !cleanPrefix.endsWith(':')) {
+      throw new Error('仅允许按插件隔离前缀（ext.data.<id>:）批量清理存储');
+    }
+    const keys = await this.kvKeys(cleanPrefix);
+    let deleted = 0;
+    for (const k of keys) {
+      if (k.startsWith(cleanPrefix)) {
+        await this.kvDelete(k);
+        deleted += 1;
+      }
+    }
+    return deleted;
+  },
+
   async getInsets(): Promise<SafeAreaInsets> {
     if (Capacitor.isNativePlatform()) {
       return EchoSystemNative.getInsets();
@@ -175,7 +211,7 @@ export const echoSystem = {
     if (Capacitor.isNativePlatform()) {
       return EchoSystemNative.getLaunchFlags();
     }
-    return { openNowPlaying: false, pendingDeepLink: '', versionName: '2.5.0', versionCode: 20 };
+    return { openNowPlaying: false, pendingDeepLink: '', versionName: '2.5.1', versionCode: 21 };
   },
 
   async checkNotificationPermission(): Promise<{ granted: boolean; systemEnabled: boolean; runtimeGranted: boolean }> {

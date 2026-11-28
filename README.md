@@ -35,7 +35,7 @@
 - **进阶播放**：基于 Jetpack Media3 原生 2 曲前瞻队列，支持队列置顶/移除、播放模式切换、倍速播放、余弦淡入淡出切歌（关闭 / `1.5s` / `3s` / `5s`），并在 seek 短暂缓冲期保持播放态稳定，彻底消除封面缩放抽搐与进度条回弹。
 - **零中断自愈与试听拦截**：每首曲目独立绑定 HTTP 请求头，彻底隔离预加载下一首报错；全链路拦截 30s / 60s 试听片段与提前 EOF 截断流，异常时按多级原地精确秒数续播，绝不中途自动切歌。
 - **「弥音唱片台」三模式横屏 & 3-Slot 环形切歌**：横屏内置黑胶唱片台（拟真唱臂落针/抬臂动画 + 旋转微沟槽唱片）、3D 封面墙与巨幕歌词影院三大沉浸模式，严格适配 `340dp+` 矮横屏零裁切；竖屏封面切歌采用 Direct-DOM 3-Slot 环形槽位与 120Hz 物理弹簧，零卡顿、零反向回弹。
-- **原创 `melune-ext/v1` 沙箱扩展生态**：主程序核心保持 100% 纯净合规，不包含内置自动化任务或第三方音源爬虫；提供独立的 `melune-ext/v1` 扩展运行宿主，支持用户自主导入插件源、权限审计、`melune://ext/install` 深链安装、强制 SHA-256 校验、声明式 Liquid Glass 面板、一键安全模式与零明文 Token 代理调用。
+- **原创 `melune-ext/v1` 沙箱扩展生态**：主程序核心保持 100% 纯净合规，不包含内置自动化任务或第三方音源爬虫；`v2.5.1+` 预置官方社区扩展源 [`xhd2005/melune-plugins`](https://github.com/xhd2005/melune-plugins)（冷启动零请求、首次切入扩展页按需同步、绝不自动安装），提供统一原生 iOS 26 扩展中心、独立控制与诊断抽屉、最近 20 条沙箱日志、Semver 无损更新、一键清数据、档案页置顶快捷直达、`melune://ext/install` 深链安装与强制 SHA-256 校验。
 - **私人 FM**：智能推荐个性化电台，并在播放接近队列尾部时提前续载，息屏不断流。
 - **云端歌单与秒开快照**：支持云端歌单新建、编辑、隐私设置、删除、收藏与底部接管式批量加歌/移歌；本地 SQLite 快照通过云端版本号 `totalVer` 校验，未变动时 0 网络请求秒开「我喜欢」与千首大歌单，本机红心/增删原地增量更新。
 - **本地智能缓存与离线直放**：基于 `DynamicLruCacheEvictor` + Media3 `SimpleCache`，支持 `500 MB / 1 GB / 2 GB（默认）/ 4 GB / 无上限` 五档热调，按「曲目 + 音质 + 音源」分桶隔离（试听片段不落盘），弱网与飞行模式自动本地直放，音频缓存与歌单快照独立透明清理。
@@ -49,6 +49,14 @@
 - **应用内自动更新**：冷启动静默检测新版本（区分「稍后提醒」与「忽略此版本」），内置多路国内加速镜像、jsDelivr CDN、自定义镜像前缀与端侧 APK SHA-256 强制校验。
 - **持续集成**：完善的 GitHub Actions 流水线，自动完成类型检查、双端单元测试、永久签名构建、Release 发布与 `updates` 分支清单同步。
 
+## 🧩 扩展插件生态（`melune-ext/v1`）
+
+弥音主程序保持极简与合规，不内置签到脚本、自动组队或第三方音源爬虫。所有可选进阶能力均通过原创的 **`melune-ext/v1`** 沙箱扩展体系承载：
+
+- **默认官方社区源**：[`xhd2005/melune-plugins`](https://github.com/xhd2005/melune-plugins)（内置「每日任务签到助手」「自动组队领 VIP」「多通道智能音源扩展」「歌词元数据净化器」）。冷启动零额外请求，仅在打开 **我的 → 扩展插件** 时按需拉取，随时可移除或恢复，**绝不自动安装**。
+- **硬核安全与统一体验**：强制 UTF-8 SHA-256 校验、零明文 Token 暴露（宿主安全代签）、`ext.data.<id>:*` 隔离存储、声明式原生 Liquid Glass 面板（零 `v-html`）、最近 20 条运行日志、无损更新、档案页置顶直达与一键安全模式。
+- **插件开发与协议文档**：详见 👉 **[`docs/PLUGIN_SPEC.md`](docs/PLUGIN_SPEC.md)**。
+
 ## 🛠️ 技术栈
 
 - **Mobile Runtime**: [Capacitor](https://capacitorjs.com/) 7.6
@@ -61,7 +69,7 @@
 - **Native Audio Engine**: [Android Jetpack Media3](https://github.com/androidx/media) 1.5.1（`ExoPlayer` + `MediaSessionService` + `SimpleCache`）
 - **Native Network & System**: [Kotlin](https://kotlinlang.org/) + [OkHttp](https://square.github.io/okhttp/) 4.12 + `kotlinx.coroutines` 1.9 + Android AppWidget
 - **Protocol Engine**: [KuGouMusicApi](https://github.com/MakcRe/KuGouMusicApi)（`server` 子模块，端侧零中转直连）
-- **Testing**: [Vitest](https://vitest.dev/) 3（101 项前端测试）+ JUnit 4（Android 原生单测）
+- **Testing**: [Vitest](https://vitest.dev/) 3（112 项前端测试）+ JUnit 4（Android 原生单测）
 
 ## 🚀 快速开始
 
@@ -142,7 +150,7 @@ $env:ANDROID_SDK_ROOT = "C:\Android\Sdk"
 
 ## 🏗️ 编译发布
 
-项目使用 GitHub Actions（[android-build.yml](.github/workflows/android-build.yml)）进行自动化构建。每次推送 `main` 或手动触发 `workflow_dispatch` 时会自动运行类型检查、101 项前端测试、Android 原生单元测试并上传 APK CI 产物；每当推送 `v*` 格式的 Tag 时，还会使用永久发布证书自动签名构建、校验指纹、生成 `latest.json`、创建 GitHub Release 并同步刷新 `updates` 分支与 jsDelivr CDN 缓存。
+项目使用 GitHub Actions（[android-build.yml](.github/workflows/android-build.yml)）进行自动化构建。每次推送 `main` 或手动触发 `workflow_dispatch` 时会自动运行类型检查、112 项前端测试、Android 原生单元测试并上传 APK CI 产物；每当推送 `v*` 格式的 Tag 时，还会使用永久发布证书自动签名构建、校验指纹、生成 `latest.json`、创建 GitHub Release 并同步刷新 `updates` 分支与 jsDelivr CDN 缓存。
 
 **手动编译正式包：**
 

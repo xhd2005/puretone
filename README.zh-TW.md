@@ -33,20 +33,29 @@
 - **多維探索**：支援歌曲、歌手、專輯、歌單 4 頁籤全庫搜尋與多分類熱搜榜，快速觸達心儀曲目。
 - **歌手與專輯檔案**：提供高清歌手主頁（作品/專輯/粉絲統計、簡介彈窗、關注/取消關注、熱門與最新篩選、合唱多歌手選擇器）與完整專輯詳情頁。
 - **進階播放**：基於 Jetpack Media3 原生 2 曲前瞻佇列，支援佇列置頂/移除、播放模式切換、倍速播放、餘弦淡入淡出切歌（關閉 / `1.5s` / `3s` / `5s`），並在 seek 短暫緩衝期維持播放態穩定，徹底消除封面縮放抽搐與進度條回彈。
-- **零中斷自癒與試聽攔截**：每首曲目獨立綁定 HTTP 請求標頭，徹底隔離預載下一首報錯；全鏈路攔截 30s / 60s 試聽片段與提前 EOF 截斷流，異常時依「重新整理直鏈 → 強制解灰完整源 → 穩流降級」3 級原地精確秒數續播，絕不中途自動切歌。
-- **智慧換源解灰**：內建 4 通道併發原唱候選評分配對，支援單曲手動試聽與永久鎖定偏好音源。
+- **零中斷自癒與試聽攔截**：每首曲目獨立綁定 HTTP 請求標頭，徹底隔離預載下一首報錯；全鏈路攔截 30s / 60s 試聽片段與提前 EOF 截斷流，異常時按多級原地精確秒數續播，絕不中途自動切歌。
+- **「彌音唱片台」三模式橫螢幕 & 3-Slot 環形切歌**：橫螢幕內建黑膠唱片台（擬真唱臂落針/抬臂動畫 + 旋轉微溝槽唱片）、3D 封面牆與巨幕歌詞影院三大沉浸模式，嚴格適配 `340dp+` 矮橫螢幕零裁切；直螢幕封面切歌採用 Direct-DOM 3-Slot 環形槽位與 120Hz 物理彈簧，零卡頓、零反向回彈。
+- **原創 `melune-ext/v1` 沙盒擴充生態**：主程式核心保持 100% 純淨合規，不包含內建自動化任務或第三方音源爬蟲；`v2.5.1+` 預置官方社群擴充源 [`xhd2005/melune-plugins`](https://github.com/xhd2005/melune-plugins)（冷啟動零請求、首次切入擴充頁按需同步、絕不自動安裝），提供統一原生 iOS 26 擴充中心、獨立控制與診斷抽屜、最近 20 條沙盒日誌、Semver 無損更新、一鍵清資料、檔案頁置頂直達、`melune://ext/install` 深鏈安裝與強制 SHA-256 校驗。
 - **私人 FM**：智慧推薦個人化電台，並於播放接近佇列尾端時提前續載，息屏不斷流。
 - **雲端歌單與秒開快照**：支援雲端歌單新建、編輯、隱私設定、刪除、收藏與底部接管式批次加歌/移歌；本機 SQLite 快照透過雲端版本號 `totalVer` 校驗，未變動時 0 網路請求秒開「我喜歡的音樂」與千首大歌單，本機紅心/增刪原地增量更新。
 - **本機智慧快取與離線直放**：基於 `DynamicLruCacheEvictor` + Media3 `SimpleCache`，支援 `500 MB / 1 GB / 2 GB（預設）/ 4 GB / 無上限` 五檔熱調，按「曲目 + 音質 + 音源」分桶隔離（試聽片段不落盤），弱網與飛航模式自動本機直放，音訊快取與歌單快照獨立透明清理。
 - **歌曲詳情與評論**：支援檢視多音質規格檔案，以及推薦 / 最熱 / 最新 / 熱詞 4 模式評論、樓中樓清洗去重、百餘種原生 Emoji 映射、即時按讚與回覆。
-- **逐字歌詞與海報工坊**：內建「酷狗 KRC 逐字 + 譯文 → 網易雲雙語 LRC → LRCLIB」三級回退引擎，單調時鐘零閃爍繪製，支援 3 檔字號、單曲記憶詞軸微調、進度條副歌高潮（`song_climax`）標記跳轉，以及 120fps 5 模板 1080P 歌詞海報工坊。
-- **音訊增強**：內建 5 檔嚴格 `<= 0 dB` 無削波減法均衡器（原聲 / 人聲 / 低音 / 深夜 / 現場，切檔柔降無爆音）與 Android `LoudnessEnhancer` 響度均衡。
+- **零閃爍逐字歌詞與海報工坊**：內建「酷狗 KRC 逐字 + 譯文 → 網易雲雙語 LRC → LRCLIB」三級回退引擎，純字形圖集直繪（零 Skia `SaveLayer` 瓦片閃爍），支援 120Hz 彈簧捲動、3 檔字號、單曲記憶詞軸微調、副歌高潮標記跳轉與 5 模板 1080P 歌詞海報工坊。
+- **音訊增強**：內建 32-bit Float 自研 `PureToneDspAudioProcessor`（5 檔零爆音切檔均衡器 + 響度提升與透明軟限幅器）及真實 Hi-Res / FLAC / OGG 320 解析。
 - **系統媒體控制與小工具**：原生整合 `MediaSessionService` 鎖屏/藍牙播控與 Android 16/17 官方 Live Updates，配套 4×2 封面動態取色桌面播控小工具（含紅心聯動）。
-- **多帳號簽到與聽歌洞察**：支援多帳號切換、每日自動續期簽到日曆以及 iOS 螢幕使用時間風格的本機聽歌統計圖表。
+- **多帳號與聽歌洞察**：支援 Android Keystore AES-256-GCM 硬體加密儲存工作階段、多帳號切換以及 iOS 螢幕使用時間風格的本機聽歌統計圖表。
 - **持久化與遷移備份**：全量偏好、佇列、歷史與快照由原生 SQLite 持久化儲存；支援匯出/還原純文字 JSON 備份（嚴格排除所有登入 Cookie 與 Token）。
 - **全機型相容**：內建建置期 CSS 相容降級外掛，自動為 Android 11 / Chromium 80+ 舊版 WebView 展開現代語法，老機型與旗艦機同樣流暢。
 - **應用內自動更新**：冷啟動靜默偵測新版本（區分「稍後提醒」與「忽略此版本」），內建多路加速鏡像、jsDelivr CDN、自訂鏡像前綴與端側 APK SHA-256 強制校驗。
 - **持續整合**：完善的 GitHub Actions 流水線，自動完成型別檢查、雙端單元測試、永久簽章建置、Release 發布與 `updates` 分支清單同步。
+
+## 🧩 擴充外掛生態（`melune-ext/v1`）
+
+彌音主程式保持極簡與合規，不內建簽到腳本、自動組隊或第三方音源爬蟲。所有可選進階能力均透過原創的 **`melune-ext/v1`** 沙盒擴充體系承載：
+
+- **預設官方社群源**：[`xhd2005/melune-plugins`](https://github.com/xhd2005/melune-plugins)。冷啟動零額外請求，僅在開啟 **我的 → 擴充外掛** 時按需拉取，隨時可移除或恢復，**絕不自動安裝**。
+- **硬核安全與統一體驗**：強制 UTF-8 SHA-256 校驗、零明文 Token 暴露（宿主安全代簽）、`ext.data.<id>:*` 隔離儲存、宣告式原生 Liquid Glass 面板（零 `v-html`）、最近 20 條執行日誌、無損更新、檔案頁置頂直達與一鍵安全模式。
+- **外掛開發與協定文件**：詳見 👉 **[`docs/PLUGIN_SPEC.md`](docs/PLUGIN_SPEC.md)**。
 
 ## 🛠️ 技術棧
 
@@ -60,7 +69,7 @@
 - **Native Audio Engine**: [Android Jetpack Media3](https://github.com/androidx/media) 1.5.1（`ExoPlayer` + `MediaSessionService` + `SimpleCache`）
 - **Native Network & System**: [Kotlin](https://kotlinlang.org/) + [OkHttp](https://square.github.io/okhttp/) 4.12 + `kotlinx.coroutines` 1.9 + Android AppWidget
 - **Protocol Engine**: [KuGouMusicApi](https://github.com/MakcRe/KuGouMusicApi)（`server` 子模組，端側零中轉直連）
-- **Testing**: [Vitest](https://vitest.dev/) 3（101 項前端測試）+ JUnit 4（Android 原生單測）
+- **Testing**: [Vitest](https://vitest.dev/) 3（112 項前端測試）+ JUnit 4（Android 原生單測）
 
 ## 🚀 快速開始
 
@@ -141,7 +150,7 @@ $env:ANDROID_SDK_ROOT = "C:\Android\Sdk"
 
 ## 🏗️ 編譯發布
 
-專案使用 GitHub Actions（[android-build.yml](.github/workflows/android-build.yml)）進行自動化建置。每次推送 `main` 或手動觸發 `workflow_dispatch` 時會自動執行型別檢查、101 項前端測試、Android 原生單元測試並上傳 APK CI 產物；每當推送 `v*` 格式的 Tag 時，還會使用永久發布憑證自動簽章建置、校驗指紋、產生 `latest.json`、建立 GitHub Release 並同步更新 `updates` 分支與 jsDelivr CDN 快取。
+專案使用 GitHub Actions（[android-build.yml](.github/workflows/android-build.yml)）進行自動化建置。每次推送 `main` 或手動觸發 `workflow_dispatch` 時會自動執行型別檢查、112 項前端測試、Android 原生單元測試並上傳 APK CI 產物；每當推送 `v*` 格式的 Tag 時，還會使用永久發布憑證自動簽章建置、校驗指紋、產生 `latest.json`、建立 GitHub Release 並同步更新 `updates` 分支與 jsDelivr CDN 快取。
 
 **手動編譯正式包：**
 

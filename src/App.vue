@@ -22,6 +22,7 @@ import AddToPlaylistSheet from '@/components/AddToPlaylistSheet.vue';
 import SongCommentsSheet from '@/components/SongCommentsSheet.vue';
 import ArtistPickerSheet from '@/components/ArtistPickerSheet.vue';
 import UnblockSourceSheet from '@/components/UnblockSourceSheet.vue';
+import PluginDetailSheet from '@/components/PluginDetailSheet.vue';
 import PluginInstallModal from '@/components/PluginInstallModal.vue';
 import VerificationModal from '@/components/VerificationModal.vue';
 import UpdateModal from '@/components/UpdateModal.vue';
@@ -164,6 +165,10 @@ onMounted(async () => {
       plugins.cancelInstallReview();
       return;
     }
+    if (plugins.detailPluginId) {
+      plugins.closePluginDetail();
+      return;
+    }
     if (ui.closeTopOverlay()) return;
     const isRootTab = ['/home', '/library', '/search'].includes(router.currentRoute.value.path);
     if (!isRootTab && window.history.length > 1) {
@@ -215,6 +220,7 @@ onMounted(async () => {
   <SongCommentsSheet />
   <ArtistPickerSheet />
   <UnblockSourceSheet />
+  <PluginDetailSheet />
   <PluginInstallModal />
   <LyricPosterModal />
   <VerificationModal />

@@ -33,20 +33,29 @@
 - **Multi-Dimensional Search**: 4-tab search across tracks, artists, albums, and playlists paired with multi-category Trending Charts.
 - **Artist & Album Profiles**: Rich artist pages (track/album/follower stats, full bio modal, follow/unfollow, hot/latest filters, multi-artist picker) and complete paginated album views.
 - **Advanced Playback**: Jetpack Media3 native 2-track lookahead queue with queue pinning/removal, play modes, playback speed, cosine-eased fade transitions (`Off` / `1.5s` / `3s` / `5s`), and seek-buffering state stability that prevents play-button flashes, cover scale twitch, and scrubber bounce.
-- **Zero-Skip Self-Healing & Trial Guard**: Per-track isolated HTTP headers prevent cross-source pre-buffering collisions; full-pipeline 30s/60s trial snippet detection and premature EOF protection drive a 3-tier in-place timestamp recovery cascade (fresh URL → full-length unblock → stable bitrate fallback) without ever auto-skipping mid-song.
-- **Smart Source Unblocking**: Built-in 4-channel concurrent candidate scoring for restricted or preview tracks, with manual auditioning and persistent per-track source pinning.
+- **Zero-Skip Self-Healing & Trial Guard**: Per-track isolated HTTP headers prevent cross-source pre-buffering collisions; full-pipeline 30s/60s trial snippet detection and premature EOF protection drive in-place timestamp recovery without ever auto-skipping mid-song.
+- **"MELUNE Turntable" 3-Mode Landscape & 3-Slot Ring Swipe**: Landscape playback offers a realistic Vinyl Turntable (animated tonearm + spinning micro-groove disc), 3D Cover Flow, and Cinema Lyrics tailored for compact `340dp+` landscape screens; portrait cover swiping uses a Direct-DOM 3-slot ring with 120Hz spring physics for zero stutter and zero rebound.
+- **Original `melune-ext/v1` Sandboxed Extension Ecosystem**: MELUNE core remains 100% clean with zero built-in automation tasks or third-party audio scrapers. Pre-configured on-demand with the official community registry [`xhd2005/melune-plugins`](https://github.com/xhd2005/melune-plugins) (zero cold-start requests, zero auto-install), featuring a unified iOS 26 Extension Hub, dedicated Control & Diagnostics sheet (20 sandbox logs, 1-tap storage clear, Semver lossless updates), profile pinned shortcuts, `melune://ext/install` deep links, mandatory SHA-256 verification, Safe Mode, and zero-plaintext-token host proxying.
 - **Personal FM**: Personalized radio queue with automatic lookahead replenishment for uninterrupted screen-off listening.
 - **Cloud Playlists & 0ms Snapshots**: Full cloud playlist creation, editing, privacy controls, deletion, collection, and a bottom takeover batch dock; SQLite snapshots validate KuGou's cloud `totalVer` to open *Liked Songs* and 1,000+ track playlists in 0ms with zero network requests, plus in-place local updates on likes and edits.
 - **Configurable Audio Cache & Offline Playback**: `DynamicLruCacheEvictor` + Media3 `SimpleCache` offering 5 live-adjustable limits (`500 MB / 1 GB / 2 GB (Default) / 4 GB / Unlimited`), quality- and source-scoped cache keys (trial clips never persisted), seamless offline/weak-network local playback, and independent audio vs. snapshot clearing.
 - **Track Details & Comments**: Multi-quality audio metadata specs alongside Featured / Top / Latest / Hotword comments, deduplicated floor-reply threads, 100+ native emoji mappings, real-time likes, and signed-in replies.
-- **Word-by-Word Lyrics & Poster Studio**: 3-tier fallback engine (*KuGou KRC + Translation → NetEase Bilingual LRC → LRCLIB*), flicker-free monotonic clock rendering, 3 font sizes, per-track sync offsets, scrub-bar chorus climax markers, and a 120fps 5-template 1080p Lyric Poster Studio.
-- **Audio Enhancement**: 5 strictly subtractive (`<= 0 dB`) zero-clip EQ presets (*Flat / Vocal / Bass / Night / Live*) with soft duck/ramp preset switching, plus Android `LoudnessEnhancer` volume leveling.
+- **Zero-Flicker Word-by-Word Lyrics & Poster Studio**: 3-tier fallback engine (*KuGou KRC + Translation → NetEase Bilingual LRC → LRCLIB*), glyph-atlas rendering (zero Skia `SaveLayer` tile flicker), 120Hz spring scrolling, 3 font sizes, per-track sync offsets, scrub-bar chorus climax markers, and a 5-template 1080p Lyric Poster Studio.
+- **Audio Enhancement**: Custom 32-bit Float `PureToneDspAudioProcessor` (5 pop-free EQ presets + transparent loudness & soft limiter) with genuine Hi-Res / FLAC / OGG 320 playback.
 - **System Media Controls & Home Widget**: Native `MediaSessionService` lock-screen/Bluetooth integration, Android 16/17 Live Updates compliance, and a dynamic album-colored 4×2 home widget with live heart syncing.
-- **Multi-Account Check-in & Listening Insights**: Multi-account switcher, daily auto-claim check-in calendar, and iOS Screen-Time-style local listening statistics charts.
+- **Multi-Account & Listening Insights**: Android Keystore AES-256-GCM hardware-encrypted session storage, multi-account switcher, and iOS Screen-Time-style local listening statistics charts.
 - **Persistence & Safe Backup**: All preferences, queues, history, and snapshots persist in local SQLite; plain JSON export/restore migrates stats and settings while strictly excluding all login cookies and tokens.
 - **Broad Device Compatibility**: Build-time CSS downlevel plugin automatically unwraps modern CSS for Android 11 / Chromium 80+ legacy WebViews so older phones render as cleanly as flagships.
 - **In-App Auto-Update**: Silent cold-start version check (with *Remind Later* vs. *Ignore Version*), multi-mirror failover, jsDelivr CDN, custom mirror prefixes, and mandatory on-device APK SHA-256 verification.
 - **Continuous Integration**: Automated GitHub Actions workflow covering typechecking, dual-platform unit tests, permanent release signing, GitHub Releases, and `updates` manifest publishing.
+
+## 🧩 Extension Ecosystem (`melune-ext/v1`)
+
+MELUNE core contains zero built-in check-in scripts, auto-team bots, or external audio scrapers. Optional community extensions run strictly inside the original **`melune-ext/v1`** sandbox:
+
+- **Default Community Registry**: [`xhd2005/melune-plugins`](https://github.com/xhd2005/melune-plugins) — fetched lazily only when opening **Profile → Extensions**, removable/restorable anytime, and never auto-installed.
+- **Security & Native Polish**: Mandatory UTF-8 SHA-256 verification, zero raw token exposure, `ext.data.<id>:*` isolated KV storage, declarative Liquid Glass UI (zero `v-html`), 20-entry sandbox logs, lossless upgrades, profile-pinned quick capsules, and 1-tap Safe Mode.
+- **Developer Specification**: See 👉 **[`docs/PLUGIN_SPEC.md`](docs/PLUGIN_SPEC.md)**.
 
 ## 🛠️ Tech Stack
 
@@ -60,7 +69,7 @@
 - **Native Audio Engine**: [Android Jetpack Media3](https://github.com/androidx/media) 1.5.1 (`ExoPlayer` + `MediaSessionService` + `SimpleCache`)
 - **Native Network & System**: [Kotlin](https://kotlinlang.org/) + [OkHttp](https://square.github.io/okhttp/) 4.12 + `kotlinx.coroutines` 1.9 + Android AppWidget
 - **Protocol Engine**: [KuGouMusicApi](https://github.com/MakcRe/KuGouMusicApi) (`server` submodule, direct on-device execution)
-- **Testing**: [Vitest](https://vitest.dev/) 3 (101 frontend tests) + JUnit 4 (Android native unit tests)
+- **Testing**: [Vitest](https://vitest.dev/) 3 (112 frontend tests) + JUnit 4 (Android native unit tests)
 
 ## 🚀 Quick Start
 
@@ -141,7 +150,7 @@ $env:ANDROID_SDK_ROOT = "C:\Android\Sdk"
 
 ## 🏗️ Build & Release
 
-Automated builds run via GitHub Actions ([android-build.yml](.github/workflows/android-build.yml)). Pushes to `main` and manual `workflow_dispatch` triggers execute typechecking, all 101 frontend unit tests, Android native unit tests, and upload CI APK artifacts. Pushing a `v*` tag additionally signs the Release APK with the permanent keystore, verifies its certificate fingerprint, generates `latest.json`, publishes the GitHub Release, and updates the `updates` branch + jsDelivr CDN cache.
+Automated builds run via GitHub Actions ([android-build.yml](.github/workflows/android-build.yml)). Pushes to `main` and manual `workflow_dispatch` triggers execute typechecking, all 112 frontend unit tests, Android native unit tests, and upload CI APK artifacts. Pushing a `v*` tag additionally signs the Release APK with the permanent keystore, verifies its certificate fingerprint, generates `latest.json`, publishes the GitHub Release, and updates the `updates` branch + jsDelivr CDN cache.
 
 **Manual Release Build:**
 

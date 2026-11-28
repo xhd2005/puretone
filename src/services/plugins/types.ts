@@ -4,6 +4,29 @@ import type { HapticStyle } from '@/native/echoSystem';
 
 export const MELUNE_EXT_PROTOCOL = 'melune-ext/v1' as const;
 export const MELUNE_REGISTRY_PROTOCOL = 'melune-registry/v1' as const;
+export const DEFAULT_PLUGIN_REGISTRY_ID = 'xhd2005-melune-plugins' as const;
+export const DEFAULT_PLUGIN_REGISTRY_REPO = 'xhd2005/melune-plugins' as const;
+export const DEFAULT_PLUGIN_REGISTRY_URL =
+  'https://raw.githubusercontent.com/xhd2005/melune-plugins/main/melune-registry.json' as const;
+
+export type PluginLogLevel = 'info' | 'warn' | 'error';
+
+export interface PluginLogEntry {
+  ts: number;
+  level: PluginLogLevel;
+  message: string;
+}
+
+export interface PluginRuntimeDiagnostics {
+  loaded: boolean;
+  loadDurationMs: number;
+  hasPanel: boolean;
+  hasAudioResolver: boolean;
+  hasLyricFilter: boolean;
+  hasLaunchHook: boolean;
+  lastError: string;
+  logs: PluginLogEntry[];
+}
 
 export type MelunePermission =
   | 'storage'
@@ -271,6 +294,7 @@ export interface MelunePluginContext {
     copy: (text: string) => Promise<void>;
     refreshPanel: () => void;
   };
+  readonly log: (level: PluginLogLevel, message: string) => void;
   readonly registerAudioResolver: (provider: MeluneAudioResolverProvider) => void;
   readonly registerLyricFilter: (filter: MeluneLyricFilter) => void;
   readonly registerPanel: (provider: MelunePanelProvider) => void;

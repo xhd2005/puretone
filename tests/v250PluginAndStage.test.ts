@@ -223,11 +223,12 @@ describe('v2.5.0 melune-ext/v1 Plugin Protocol, Sandbox Isolation & Compliance D
     expect(fs.existsSync(path.resolve(process.cwd(), 'src/services/playback/unblockEngine.ts'))).toBe(false);
 
     const hubSrc = fs.readFileSync(path.resolve(process.cwd(), 'src/components/PluginHubTab.vue'), 'utf8');
-    expect(hubSrc).not.toContain('melune-plugins');
     expect(hubSrc).not.toContain('v-html');
+    expect(hubSrc).not.toContain(':global(.dark)');
 
     const rendererSrc = fs.readFileSync(path.resolve(process.cwd(), 'src/components/PluginPanelRenderer.vue'), 'utf8');
     expect(rendererSrc).not.toContain('v-html');
+    expect(rendererSrc).not.toContain(':global(.dark)');
   });
 
   it('loads and executes all 4 official melune-plugins repository bundles when sibling workspace is present', async () => {

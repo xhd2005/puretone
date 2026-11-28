@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import { echoSystem } from '@/native/echoSystem';
-import { FALLBACK_APP_VERSION } from '@/services/update/updateService';
+import { compareSemver, FALLBACK_APP_VERSION } from '@/services/update/updateService';
 import { useAccountsStore } from './accounts';
 import { useUiStore } from './ui';
 import {
@@ -15,21 +15,39 @@ import {
   validatePluginManifest,
 } from '@/services/plugins/registryClient';
 import { pluginRuntime } from '@/services/plugins/pluginRuntime';
-import type {
-  InstalledMelunePlugin,
-  MelunePluginManifest,
-  SavedPluginRegistry,
+import {
+  DEFAULT_PLUGIN_REGISTRY_ID,
+  DEFAULT_PLUGIN_REGISTRY_URL,
+  type InstalledMelunePlugin,
+  type MelunePluginManifest,
+  type SavedPluginRegistry,
 } from '@/services/plugins/types';
 
 const REGISTRIES_KEY = 'plugins.registries.v1';
 const INSTALLED_KEY = 'plugins.installed.v1';
 const SAFE_MODE_KEY = 'plugins.safemode.v1';
+const META_KEY = 'plugins.meta.v1';
+
+interface PluginsMetaRecord {
+  defaultRegistryDismissed?: boolean;
+  pinnedIds?: string[];
+}
 
 export interface PluginInstallReview {
   manifest: MelunePluginManifest;
   registryUrl?: string;
   registryName?: string;
   isUpdate: boolean;
+}
+
+export interface PluginUpdateCandidate {
+  manifest: MelunePluginManifest;
+  registryUrl: string;
+  registryName: string;
+}
+
+export function isDefaultRegistryEntry(reg: Pick<SavedPluginRegistry, 'id' | 'url'>): boolean {
+  return reg.id === DEFAULT_PLUGIN_REGISTRY_ID || reg.url === DEFAULT_PLUGIN_REGISTRY_URL;
 }
 
 export const usePluginsStore = defineStore('plugins', () => {
@@ -40,12 +58,18 @@ export const usePluginsStore = defineStore('plugins', () => {
   const syncingRegistryUrl = ref('');
   const installingId = ref('');
   const activePanelPluginId = ref('');
+  const detailPluginId = ref('');
   const pendingReview = ref<PluginInstallReview | null>(null);
+  const defaultRegistryDismissed = ref(false);
+  const defaultLoading = ref(false);
+  const defaultLoadError = ref('');
+  const pinnedIds = ref<string[]>([]);
   const runtimeTick = ref(0);
 
   let hydrated = false;
   let unsubStatus: (() => void) | null = null;
   let appVersionCache = FALLBACK_APP_VERSION;
+  let defaultFetchPromise: Promise<boolean> | null = null;
 
   function bindHostBridge() {
     const accounts = useAccountsStore();
@@ -93,6 +117,14 @@ export const usePluginsStore = defineStore('plugins', () => {
     });
   }
 
+  async function persistMeta() {
+    const record: PluginsMetaRecord = {
+      defaultRegistryDismissed: defaultRegistryDismissed.value,
+      pinnedIds: [...pinnedIds.value],
+    };
+    await echoSystem.kvSetJson(META_KEY, record);
+  }
+
   const enabledCount = computed(() => {
     void runtimeTick.value;
     if (safeMode.value) return 0;
@@ -104,11 +136,73 @@ export const usePluginsStore = defineStore('plugins', () => {
     return pluginRuntime.hasAudioResolvers();
   });
 
+  const hasDefaultRegistry = computed(() => registries.value.some((r) => isDefaultRegistryEntry(r)));
+
+  const detailPlugin = computed(() => {
+    if (!detailPluginId.value) return null;
+    return installed.value.find((p) => p.manifest.id === detailPluginId.value) || null;
+  });
+
+  function getAvailableUpdate(pluginId: string): PluginUpdateCandidate | null {
+    const local = installed.value.find((p) => p.manifest.id === pluginId);
+    if (!local) return null;
+    let best: PluginUpdateCandidate | null = null;
+    for (const reg of registries.value) {
+      const candidate = reg.plugins.find((p) => p.id === pluginId);
+      if (!candidate) continue;
+      if (compareSemver(candidate.version, local.manifest.version) > 0) {
+        if (!best || compareSemver(candidate.version, best.manifest.version) > 0) {
+          best = { manifest: candidate, registryUrl: reg.url, registryName: reg.name };
+        }
+      }
+    }
+    return best;
+  }
+
+  const availableUpdatesCount = computed(() => {
+    void runtimeTick.value;
+    let count = 0;
+    for (const item of installed.value) {
+      if (getAvailableUpdate(item.manifest.id)) count += 1;
+    }
+    return count;
+  });
+
+  const pinnedPanelPlugins = computed(() => {
+    void runtimeTick.value;
+    if (safeMode.value || !pinnedIds.value.length) return [];
+    const out: InstalledMelunePlugin[] = [];
+    for (const id of pinnedIds.value) {
+      const item = installed.value.find((p) => p.manifest.id === id && p.enabled);
+      if (item) out.push(item);
+    }
+    return out;
+  });
+
+  function isPinned(pluginId: string): boolean {
+    return pinnedIds.value.includes(pluginId);
+  }
+
+  async function togglePinPlugin(pluginId: string): Promise<boolean> {
+    const idx = pinnedIds.value.indexOf(pluginId);
+    let nextPinned = false;
+    if (idx >= 0) {
+      pinnedIds.value.splice(idx, 1);
+      nextPinned = false;
+    } else {
+      pinnedIds.value.push(pluginId);
+      nextPinned = true;
+    }
+    await persistMeta();
+    return nextPinned;
+  }
+
   async function persistAll() {
     await Promise.all([
       echoSystem.kvSetJson(REGISTRIES_KEY, registries.value),
       echoSystem.kvSetJson(INSTALLED_KEY, installed.value),
       echoSystem.kvSetJson(SAFE_MODE_KEY, { enabled: safeMode.value }),
+      persistMeta(),
     ]);
   }
 
@@ -121,17 +215,23 @@ export const usePluginsStore = defineStore('plugins', () => {
       });
     }
 
-    const [savedRegs, savedInstalled, savedSafe] = await Promise.all([
+    const [savedRegs, savedInstalled, savedSafe, savedMeta] = await Promise.all([
       echoSystem.kvGetJson<SavedPluginRegistry[]>(REGISTRIES_KEY, []),
       echoSystem.kvGetJson<InstalledMelunePlugin[]>(INSTALLED_KEY, []),
       echoSystem.kvGetJson<{ enabled?: boolean }>(SAFE_MODE_KEY, { enabled: false }),
+      echoSystem.kvGetJson<PluginsMetaRecord>(META_KEY, {}),
     ]);
 
     registries.value = Array.isArray(savedRegs) ? savedRegs : [];
     installed.value = Array.isArray(savedInstalled) ? savedInstalled : [];
     safeMode.value = Boolean(savedSafe?.enabled);
+    defaultRegistryDismissed.value = Boolean(savedMeta?.defaultRegistryDismissed);
+    pinnedIds.value = Array.isArray(savedMeta?.pinnedIds)
+      ? savedMeta.pinnedIds.filter((id) => typeof id === 'string' && installed.value.some((p) => p.manifest.id === id))
+      : [];
     pluginRuntime.setSafeMode(safeMode.value);
 
+    // Strictly local hydration: ZERO network fetches on cold start!
     if (!safeMode.value) {
       for (const item of installed.value) {
         if (item.enabled) {
@@ -141,6 +241,42 @@ export const usePluginsStore = defineStore('plugins', () => {
     }
     hydrated = true;
     runtimeTick.value += 1;
+  }
+
+  /**
+   * On-demand official registry bootstrap:
+   * Called ONLY when the user opens the "扩展插件" tab.
+   * Never fires at cold start, never auto-installs any plugin, respects user dismissal.
+   */
+  async function ensureDefaultRegistryLoaded(): Promise<boolean> {
+    if (defaultRegistryDismissed.value || hasDefaultRegistry.value) {
+      return false;
+    }
+    if (defaultFetchPromise) return defaultFetchPromise;
+
+    defaultLoading.value = true;
+    defaultLoadError.value = '';
+    defaultFetchPromise = (async () => {
+      try {
+        await addOrRefreshRegistry(DEFAULT_PLUGIN_REGISTRY_URL);
+        defaultLoadError.value = '';
+        return true;
+      } catch (err: any) {
+        defaultLoadError.value = err?.message || '无法连接官方扩展源，请稍后重试';
+        return false;
+      } finally {
+        defaultLoading.value = false;
+        defaultFetchPromise = null;
+      }
+    })();
+    return defaultFetchPromise;
+  }
+
+  async function restoreDefaultRegistry(): Promise<SavedPluginRegistry> {
+    defaultRegistryDismissed.value = false;
+    defaultLoadError.value = '';
+    await persistMeta();
+    return addOrRefreshRegistry(DEFAULT_PLUGIN_REGISTRY_URL);
   }
 
   async function setSafeMode(enabled: boolean) {
@@ -186,7 +322,12 @@ export const usePluginsStore = defineStore('plugins', () => {
       } else {
         registries.value.unshift(entry);
       }
+      if (isDefaultRegistryEntry(entry) && defaultRegistryDismissed.value) {
+        defaultRegistryDismissed.value = false;
+        await persistMeta();
+      }
       await echoSystem.kvSetJson(REGISTRIES_KEY, registries.value);
+      runtimeTick.value += 1;
       return entry;
     } finally {
       syncingRegistryUrl.value = '';
@@ -194,13 +335,48 @@ export const usePluginsStore = defineStore('plugins', () => {
     }
   }
 
+  async function refreshAllRegistries(): Promise<{ syncedCount: number; updatesCount: number }> {
+    if (!registries.value.length) {
+      if (!defaultRegistryDismissed.value) {
+        await ensureDefaultRegistryLoaded();
+      }
+      return { syncedCount: registries.value.length, updatesCount: availableUpdatesCount.value };
+    }
+    const urls = registries.value.map((r) => r.url);
+    let syncedCount = 0;
+    for (const url of urls) {
+      try {
+        await addOrRefreshRegistry(url);
+        syncedCount += 1;
+      } catch {
+        // continue syncing other registries
+      }
+    }
+    return { syncedCount, updatesCount: availableUpdatesCount.value };
+  }
+
   async function removeRegistry(url: string) {
+    const target = registries.value.find((r) => r.url === url);
+    if (target && isDefaultRegistryEntry(target)) {
+      defaultRegistryDismissed.value = true;
+      await persistMeta();
+    }
     registries.value = registries.value.filter((r) => r.url !== url);
     await echoSystem.kvSetJson(REGISTRIES_KEY, registries.value);
+    runtimeTick.value += 1;
   }
 
   function getInstalledPlugin(id: string): InstalledMelunePlugin | undefined {
     return installed.value.find((p) => p.manifest.id === id);
+  }
+
+  function openPluginDetail(pluginId: string) {
+    if (!getInstalledPlugin(pluginId)) return;
+    detailPluginId.value = pluginId;
+  }
+
+  function closePluginDetail() {
+    detailPluginId.value = '';
   }
 
   function requestInstallReview(manifest: MelunePluginManifest, registryUrl?: string, registryName?: string) {
@@ -238,6 +414,7 @@ export const usePluginsStore = defineStore('plugins', () => {
         grantedPermissions: [...req.manifest.permissions],
       };
 
+      // Lossless upgrade: only replaces manifest/code, strictly preserving ext.data.<id>:* storage!
       if (existingIdx >= 0) {
         installed.value.splice(existingIdx, 1, record);
       } else {
@@ -256,7 +433,7 @@ export const usePluginsStore = defineStore('plugins', () => {
         }
       }
       echoSystem.haptic('success');
-      ui.showToast(`${req.isUpdate ? '已更新' : '已安全安装'}「${record.manifest.name}」（SHA-256 校验通过）`);
+      ui.showToast(`${req.isUpdate ? '已无损更新' : '已安全安装'}「${record.manifest.name}」`);
       return true;
     } catch (err: any) {
       ui.showToast(err?.message || '插件安装失败', 3400);
@@ -285,11 +462,24 @@ export const usePluginsStore = defineStore('plugins', () => {
     runtimeTick.value += 1;
   }
 
+  async function clearPluginStorage(pluginId: string): Promise<number> {
+    const removed = await pluginRuntime.clearPluginData(pluginId);
+    runtimeTick.value += 1;
+    return removed;
+  }
+
   async function uninstallPlugin(pluginId: string) {
     await pluginRuntime.unloadPlugin(pluginId);
     installed.value = installed.value.filter((p) => p.manifest.id !== pluginId);
     if (activePanelPluginId.value === pluginId) {
       activePanelPluginId.value = '';
+    }
+    if (detailPluginId.value === pluginId) {
+      detailPluginId.value = '';
+    }
+    if (pinnedIds.value.includes(pluginId)) {
+      pinnedIds.value = pinnedIds.value.filter((id) => id !== pluginId);
+      await persistMeta();
     }
     await echoSystem.kvSetJson(INSTALLED_KEY, installed.value);
     runtimeTick.value += 1;
@@ -342,6 +532,11 @@ export const usePluginsStore = defineStore('plugins', () => {
     return pluginRuntime.getPluginRuntimeStatus(pluginId);
   }
 
+  function getDiagnostics(pluginId: string) {
+    void runtimeTick.value;
+    return pluginRuntime.getPluginDiagnostics(pluginId);
+  }
+
   return {
     registries,
     installed,
@@ -350,24 +545,43 @@ export const usePluginsStore = defineStore('plugins', () => {
     syncingRegistryUrl,
     installingId,
     activePanelPluginId,
+    detailPluginId,
+    detailPlugin,
     pendingReview,
+    defaultRegistryDismissed,
+    defaultLoading,
+    defaultLoadError,
+    pinnedIds,
+    pinnedPanelPlugins,
+    hasDefaultRegistry,
     enabledCount,
     hasAudioResolverPlugin,
+    availableUpdatesCount,
     hydrate,
     persistAll,
+    ensureDefaultRegistryLoaded,
+    restoreDefaultRegistry,
+    refreshAllRegistries,
     setSafeMode,
     addOrRefreshRegistry,
     removeRegistry,
     getInstalledPlugin,
+    getAvailableUpdate,
+    openPluginDetail,
+    closePluginDetail,
+    isPinned,
+    togglePinPlugin,
     requestInstallReview,
     cancelInstallReview,
     confirmPendingInstall,
     togglePluginEnabled,
+    clearPluginStorage,
     uninstallPlugin,
     handleDeepLinkUri,
     copyShareLink,
     runLaunchHooks,
     notifyAuthLogin,
     getStatus,
+    getDiagnostics,
   };
 });

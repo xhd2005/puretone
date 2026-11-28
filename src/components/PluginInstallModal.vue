@@ -6,24 +6,15 @@ import iconPuzzle from '@iconify/icons-tabler/puzzle';
 import iconRefresh from '@iconify/icons-tabler/refresh';
 import { usePluginsStore } from '@/stores/plugins';
 import { useI18n } from '@/i18n';
-import type { MelunePermission } from '@/services/plugins/types';
+import { PLUGIN_PERMISSION_META, resolvePluginVisual } from '@/services/plugins/pluginUiMeta';
 
 const plugins = usePluginsStore();
 const { t } = useI18n();
 
 const review = computed(() => plugins.pendingReview);
 const isInstalling = computed(() => Boolean(plugins.installingId));
-
-const PERM_LABELS: Record<MelunePermission, { label: string; desc: string }> = {
-  storage: { label: '隔离本地存储', desc: '仅可读写该扩展专属沙盒配置，无法读取账号凭证' },
-  network: { label: 'HTTPS 网络请求', desc: '允许通过应用网络层访问外部公开接口' },
-  'kugou.api': { label: '曲库接口调用', desc: '允许调用白名单曲库与活动查询接口' },
-  'kugou.auth': { label: '账号摘要与代签', desc: '读取当前账号昵称/状态并由宿主安全代理调用（不暴露明文 Token）' },
-  'audio.resolver': { label: '音频源解析扩展', desc: '提供备用候选音源检索与单曲锁定能力' },
-  'lyric.filter': { label: '歌词净化过滤', desc: '在展示前对歌词文本执行过滤或排版增强' },
-  'ui.panel': { label: '扩展控制面板', desc: '在扩展中心展示声明式控制卡片（禁止原始 HTML 注入）' },
-  'lifecycle.launch': { label: '启动与登录事件', desc: '允许按扩展内用户开关响应应用启动或登录完成事件' },
-};
+const visual = computed(() => (review.value ? resolvePluginVisual(review.value.manifest) : null));
+const PERM_LABELS = PLUGIN_PERMISSION_META;
 </script>
 
 <template>
@@ -38,8 +29,11 @@ const PERM_LABELS: Record<MelunePermission, { label: string; desc: string }> = {
         @click.stop
       >
         <div class="flex items-start gap-3">
-          <div class="w-11 h-11 rounded-2xl bg-[var(--bg-subtle)] flex items-center justify-center am-accent-text shrink-0">
-            <Icon :icon="iconPuzzle" class="w-6 h-6" />
+          <div
+            class="w-11 h-11 rounded-[15px] bg-gradient-to-br flex items-center justify-center text-white shadow-sm shrink-0"
+            :class="visual?.gradientClass || 'from-[#3456be] to-[#5d82ff]'"
+          >
+            <Icon :icon="visual?.icon || iconPuzzle" class="w-5.5 h-5.5" />
           </div>
           <div class="min-w-0 flex-1">
             <div class="flex items-center gap-1.5">
