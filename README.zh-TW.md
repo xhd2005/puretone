@@ -34,13 +34,13 @@
 - **歌手與專輯檔案**：提供高清歌手主頁（作品/專輯/粉絲統計、簡介彈窗、關注/取消關注、熱門與最新篩選、合唱多歌手選擇器）與完整專輯詳情頁。
 - **進階播放**：基於 Jetpack Media3 原生 2 曲前瞻佇列，支援佇列置頂/移除、播放模式切換、倍速播放、餘弦淡入淡出切歌（關閉 / `1.5s` / `3s` / `5s`），並在 seek 短暫緩衝期維持播放態穩定，徹底消除封面縮放抽搐與進度條回彈。
 - **零中斷自癒與試聽攔截**：每首曲目獨立綁定 HTTP 請求標頭，徹底隔離預載下一首報錯；全鏈路攔截 30s / 60s 試聽片段與提前 EOF 截斷流，異常時按多級原地精確秒數續播，絕不中途自動切歌。
-- **「彌音唱片台」三模式橫螢幕 & 3-Slot 環形切歌**：橫螢幕內建黑膠唱片台（擬真唱臂落針/抬臂動畫 + 旋轉微溝槽唱片）、3D 封面牆與巨幕歌詞影院三大沉浸模式，嚴格適配 `340dp+` 矮橫螢幕零裁切；直螢幕封面切歌採用 Direct-DOM 3-Slot 環形槽位與 120Hz 物理彈簧，零卡頓、零反向回彈。
+- **全域直向鎖定 & 一鍵真全螢幕橫螢幕播放台**：日常使用全域鎖定直螢幕絕不誤旋轉；在播放頁輕點「橫螢幕」才主動切換至隱藏狀態列與導覽列的真全螢幕橫螢幕，提供「雙欄沉浸台」（封面/黑膠一鍵切換 + 零裁切控制區 + 全高 Canvas 歌詞/佇列）與「3D 封面牆」兩大清爽模式，退出或按返回鍵自動恢復直向；直螢幕封面切歌採用 Direct-DOM 3-Slot 環形槽位與 120Hz 物理彈簧，零卡頓、零反向回彈。
 - **原創 `melune-ext/v1` 沙盒擴充生態**：主程式核心保持 100% 純淨合規，不包含內建自動化任務或第三方音源爬蟲；預置官方精選擴充源 [`xhd2005/melune-plugins`](https://github.com/xhd2005/melune-plugins)（冷啟動零請求、按需同步、絕不自動安裝），提供 **一般模式 / 開發者模式** 雙視圖、App Store 級「精選推薦」大卡、4 字極簡短名與即時狀態徽章、**獨立於 App 本體的單外掛/批次熱更新**、主頁快捷膠囊直達及 `melune://ext/install` 深鏈安裝。
 - **私人 FM**：智慧推薦個人化電台，並於播放接近佇列尾端時提前續載，息屏不斷流。
 - **雲端歌單與秒開快照**：支援雲端歌單新建、編輯、隱私設定、刪除、收藏與底部接管式批次加歌/移歌；本機 SQLite 快照透過雲端版本號 `totalVer` 校驗，未變動時 0 網路請求秒開「我喜歡的音樂」與千首大歌單，本機紅心/增刪原地增量更新。
 - **本機智慧快取與離線直放**：基於 `DynamicLruCacheEvictor` + Media3 `SimpleCache`，支援 `500 MB / 1 GB / 2 GB（預設）/ 4 GB / 無上限` 五檔熱調，按「曲目 + 音質 + 音源」分桶隔離（試聽片段不落盤），弱網與飛航模式自動本機直放，音訊快取與歌單快照獨立透明清理。
 - **歌曲詳情與評論**：支援檢視多音質規格檔案，以及推薦 / 最熱 / 最新 / 熱詞 4 模式評論、樓中樓清洗去重、百餘種原生 Emoji 映射、即時按讚與回覆。
-- **零閃爍逐字歌詞與海報工坊**：內建「酷狗 KRC 逐字 + 譯文 → 網易雲雙語 LRC → LRCLIB」三級回退引擎，純字形圖集直繪（零 Skia `SaveLayer` 瓦片閃爍），支援 120Hz 彈簧捲動、3 檔字號、單曲記憶詞軸微調、副歌高潮標記跳轉與 5 模板 1080P 歌詞海報工坊。
+- **120Hz 硬體 Canvas 零閃爍逐字歌詞與海報工坊**：內建「酷狗 KRC 逐字 + 譯文 → 網易雲雙語 LRC → LRCLIB」三級回退引擎，採用單 `<canvas>` 硬體 2D 直繪引擎徹底杜絕 WebView 逐字與切行閃爍，支援「逐字掃光 / 極簡行級」雙樣式、120Hz 彈簧捲動、3 檔字號、單曲記憶詞軸微調、副歌高潮標記跳轉與 5 模板 1080P 歌詞海報工坊。
 - **音訊增強**：內建 32-bit Float 自研 `PureToneDspAudioProcessor`（5 檔零爆音切檔均衡器 + 響度提升與透明軟限幅器）及真實 Hi-Res / FLAC / OGG 320 解析。
 - **系統媒體控制與小工具**：原生整合 `MediaSessionService` 鎖屏/藍牙播控與 Android 16/17 官方 Live Updates，配套 4×2 封面動態取色桌面播控小工具（含紅心聯動）。
 - **多帳號與聽歌洞察**：支援 Android Keystore AES-256-GCM 硬體加密儲存工作階段、多帳號切換以及 iOS 螢幕使用時間風格的本機聽歌統計圖表。
@@ -69,7 +69,7 @@
 - **Native Audio Engine**: [Android Jetpack Media3](https://github.com/androidx/media) 1.5.1（`ExoPlayer` + `MediaSessionService` + `SimpleCache`）
 - **Native Network & System**: [Kotlin](https://kotlinlang.org/) + [OkHttp](https://square.github.io/okhttp/) 4.12 + `kotlinx.coroutines` 1.9 + Android AppWidget
 - **Protocol Engine**: [KuGouMusicApi](https://github.com/MakcRe/KuGouMusicApi)（`server` 子模組，端側零中轉直連）
-- **Testing**: [Vitest](https://vitest.dev/) 3（116 項前端測試）+ JUnit 4（Android 原生單測）
+- **Testing**: [Vitest](https://vitest.dev/) 3（124 項前端測試）+ JUnit 4（Android 原生單測）
 
 ## 🚀 快速開始
 

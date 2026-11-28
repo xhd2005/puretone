@@ -3,6 +3,7 @@ package com.xhd2005.puretone
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.view.WindowManager
 import android.webkit.WebView
 import androidx.activity.OnBackPressedCallback
 import androidx.core.view.WindowCompat
@@ -22,8 +23,13 @@ class MainActivity : BridgeActivity() {
         registerPlugin(EchoSystemPlugin::class.java)
         super.onCreate(savedInstanceState)
 
-        // Edge-to-edge layout for iOS 26 Liquid Glass full-bleed bars
+        // Edge-to-edge layout for iOS 26 Liquid Glass full-bleed bars & punch-hole safe fullscreen landscape
         WindowCompat.setDecorFitsSystemWindows(window, false)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val lp = window.attributes
+            lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            window.attributes = lp
+        }
         requestHighRefreshRate()
 
         handleLaunchIntent(intent, isColdStart = true)

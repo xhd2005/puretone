@@ -110,26 +110,28 @@ function handleClearAll() {
         </div>
       </div>
 
-      <div v-if="searchOpen" class="px-4 pb-2.5">
-        <div class="h-9 rounded-xl bg-[var(--bg-subtle)] px-3 flex items-center gap-2">
-          <Icon :icon="iconSearch" class="w-4 h-4 text-[var(--text-secondary)] shrink-0" />
-          <input
-            ref="searchInputRef"
-            v-model="searchQuery"
-            type="search"
-            :placeholder="t('recent.searchPlaceholder')"
-            class="flex-1 bg-transparent border-0 outline-none text-[14px] text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]"
-          />
-          <button
-            v-if="searchQuery"
-            type="button"
-            class="w-4.5 h-4.5 rounded-full bg-[var(--text-tertiary)] text-[var(--bg-canvas)] border-0 flex items-center justify-center shrink-0"
-            @click="searchQuery = ''"
-          >
-            <Icon :icon="iconX" class="w-3 h-3" />
-          </button>
+      <Transition name="am-expand">
+        <div v-if="searchOpen" class="px-4 pb-2.5">
+          <div class="h-9 rounded-xl bg-[var(--bg-subtle)] px-3 flex items-center gap-2">
+            <Icon :icon="iconSearch" class="w-4 h-4 text-[var(--text-secondary)] shrink-0" />
+            <input
+              ref="searchInputRef"
+              v-model="searchQuery"
+              type="search"
+              :placeholder="t('recent.searchPlaceholder')"
+              class="flex-1 bg-transparent border-0 outline-none text-[14px] text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]"
+            />
+            <button
+              v-if="searchQuery"
+              type="button"
+              class="w-4.5 h-4.5 rounded-full bg-[var(--text-tertiary)] text-[var(--bg-canvas)] border-0 flex items-center justify-center shrink-0"
+              @click="searchQuery = ''"
+            >
+              <Icon :icon="iconX" class="w-3 h-3" />
+            </button>
+          </div>
         </div>
-      </div>
+      </Transition>
     </header>
 
     <div class="flex-1 am-scroll pb-48" @scroll.passive="onScroll">
@@ -147,7 +149,7 @@ function handleClearAll() {
         <div v-if="filteredSongs.length" class="grid grid-cols-2 gap-3 mt-4 max-w-sm">
           <button
             type="button"
-            class="h-11 rounded-[13px] am-accent-bg text-white text-[15px] font-semibold border-0 flex items-center justify-center gap-1.5 am-tap shadow-sm"
+            class="h-11 rounded-[14px] am-accent-bg text-white text-[15px] font-semibold border-0 flex items-center justify-center gap-1.5 am-tap shadow-sm"
             @click="player.playQueue(filteredSongs, 0)"
           >
             <Icon :icon="iconPlayerPlayFilled" class="w-4 h-4" />
@@ -155,7 +157,7 @@ function handleClearAll() {
           </button>
           <button
             type="button"
-            class="h-11 rounded-[13px] bg-[var(--bg-subtle)] am-accent-text text-[15px] font-semibold border-0 flex items-center justify-center gap-1.5 am-tap"
+            class="h-11 rounded-[14px] bg-[var(--bg-subtle)] am-accent-text text-[15px] font-semibold border-0 flex items-center justify-center gap-1.5 am-tap"
             @click="shufflePlay"
           >
             <Icon :icon="iconArrowsShuffle" class="w-4 h-4" />

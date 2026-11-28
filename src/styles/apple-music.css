@@ -149,7 +149,7 @@ body,
 .pt-seg-group {
   position: relative;
   display: grid;
-  gap: 3px;
+  gap: 0;
   padding: 3px;
   border-radius: 13px;
   background: var(--bg-subtle);
@@ -320,26 +320,23 @@ body,
   }
 }
 
-/* Fullscreen NowPlaying Sheet slide-up with authentic iOS card-to-fullscreen lift */
+/* Fullscreen NowPlaying Sheet slide-up (pure GPU transform + opacity — zero border-radius/scale WebView re-raster flash) */
 .am-sheet-enter-active {
   transition:
-    transform 460ms var(--spring-ease),
-    border-radius 420ms var(--spring-ease),
-    opacity 260ms ease;
+    transform 420ms var(--spring-ease),
+    opacity 220ms ease;
   will-change: transform, opacity;
 }
 .am-sheet-leave-active {
   transition:
-    transform 380ms var(--ios-curve),
-    border-radius 340ms ease,
-    opacity 260ms ease;
+    transform 340ms var(--ios-curve),
+    opacity 220ms ease;
   will-change: transform, opacity;
 }
 .am-sheet-enter-from,
 .am-sheet-leave-to {
-  transform: translate3d(0, 100%, 0) scale(0.965);
-  border-radius: 34px;
-  opacity: 0.88;
+  transform: translate3d(0, 100%, 0);
+  opacity: 0.96;
 }
 
 /* Decoupled Bottom Sheet Transition: Backdrop ONLY fades, .lg-sheet-slide glides smoothly from bottom! */
@@ -637,7 +634,7 @@ body,
 }
 .ios-tab-enter-from {
   opacity: 0;
-  transform: translate3d(0, 6px, 0) scale3d(0.992, 0.992, 1);
+  transform: translate3d(0, 5px, 0);
 }
 .ios-tab-leave-to {
   opacity: 0;

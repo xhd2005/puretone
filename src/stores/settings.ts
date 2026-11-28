@@ -10,6 +10,7 @@ export type AppearanceMode = 'system' | 'light' | 'dark';
 export type AccentThemeMode = 'dynamic' | 'apple-red';
 export type AppLocale = 'system' | 'zh-CN' | 'zh-TW' | 'en';
 export type LyricFontSize = 'standard' | 'large' | 'xlarge';
+export type LyricRenderMode = 'karaoke' | 'line';
 export type TrackTransitionFadeMs = 0 | 1500 | 3000 | 5000;
 export type UpdateMirrorMode = 'auto' | 'direct';
 export type AudioCacheLimitMb = 500 | 1024 | 2048 | 4096 | 0;
@@ -19,6 +20,7 @@ export interface PersistedSettings {
   accentMode: AccentThemeMode;
   locale: AppLocale;
   lyricFontSize: LyricFontSize;
+  lyricRenderMode: LyricRenderMode;
   quality: AudioQuality;
   eqPreset: EqPresetId;
   transitionFadeMs: TrackTransitionFadeMs;
@@ -40,6 +42,7 @@ const DEFAULTS: PersistedSettings = {
   accentMode: 'dynamic',
   locale: 'system',
   lyricFontSize: 'standard',
+  lyricRenderMode: 'karaoke',
   quality: 'flac',
   eqPreset: 'flat',
   transitionFadeMs: 1500,
@@ -69,6 +72,10 @@ function sanitizeMirrorMode(raw: unknown): UpdateMirrorMode {
   return raw === 'direct' ? 'direct' : 'auto';
 }
 
+function sanitizeLyricRenderMode(raw: unknown): LyricRenderMode {
+  return raw === 'line' ? 'line' : 'karaoke';
+}
+
 export function sanitizeAudioCacheLimitMb(raw: unknown): AudioCacheLimitMb {
   const n = Number(raw);
   if (n === 0 || n === 500 || n === 1024 || n === 2048 || n === 4096) return n;
@@ -80,6 +87,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const accentMode = ref<AccentThemeMode>(DEFAULTS.accentMode);
   const locale = ref<AppLocale>(DEFAULTS.locale);
   const lyricFontSize = ref<LyricFontSize>(DEFAULTS.lyricFontSize);
+  const lyricRenderMode = ref<LyricRenderMode>(DEFAULTS.lyricRenderMode);
   const quality = ref<AudioQuality>(DEFAULTS.quality);
   const eqPreset = ref<EqPresetId>(DEFAULTS.eqPreset);
   const transitionFadeMs = ref<TrackTransitionFadeMs>(DEFAULTS.transitionFadeMs);
@@ -180,6 +188,7 @@ export const useSettingsStore = defineStore('settings', () => {
     accentMode.value = saved.accentMode ?? DEFAULTS.accentMode;
     locale.value = saved.locale ?? DEFAULTS.locale;
     lyricFontSize.value = saved.lyricFontSize ?? DEFAULTS.lyricFontSize;
+    lyricRenderMode.value = sanitizeLyricRenderMode(saved.lyricRenderMode);
     quality.value = sanitizeQuality(saved.quality);
     eqPreset.value = saved.eqPreset ?? DEFAULTS.eqPreset;
     transitionFadeMs.value = sanitizeFadeMs(saved.transitionFadeMs);
@@ -213,6 +222,7 @@ export const useSettingsStore = defineStore('settings', () => {
       accentMode,
       locale,
       lyricFontSize,
+      lyricRenderMode,
       quality,
       eqPreset,
       transitionFadeMs,
@@ -238,6 +248,7 @@ export const useSettingsStore = defineStore('settings', () => {
       accentMode: accentMode.value,
       locale: locale.value,
       lyricFontSize: lyricFontSize.value,
+      lyricRenderMode: lyricRenderMode.value,
       quality: quality.value,
       eqPreset: eqPreset.value,
       transitionFadeMs: transitionFadeMs.value,
@@ -258,6 +269,7 @@ export const useSettingsStore = defineStore('settings', () => {
     if (saved.accentMode) accentMode.value = saved.accentMode;
     if (saved.locale) locale.value = saved.locale;
     if (saved.lyricFontSize) lyricFontSize.value = saved.lyricFontSize;
+    if (saved.lyricRenderMode) lyricRenderMode.value = sanitizeLyricRenderMode(saved.lyricRenderMode);
     if (saved.quality) quality.value = sanitizeQuality(saved.quality);
     if (saved.eqPreset) eqPreset.value = saved.eqPreset;
     if (saved.transitionFadeMs !== undefined) transitionFadeMs.value = sanitizeFadeMs(saved.transitionFadeMs);
@@ -288,6 +300,7 @@ export const useSettingsStore = defineStore('settings', () => {
     accentMode,
     locale,
     lyricFontSize,
+    lyricRenderMode,
     quality,
     eqPreset,
     transitionFadeMs,

@@ -45,6 +45,7 @@ export interface EchoSystemPluginInterface {
   clearSnapshotCache(): Promise<{ cleared: boolean }>;
   getInsets(): Promise<SafeAreaInsets>;
   setStatusBarStyle(options: { darkIcons: boolean }): Promise<void>;
+  setScreenOrientation(options: { mode: 'portrait' | 'landscape' }): Promise<void>;
   haptic(options: { style?: HapticStyle }): Promise<void>;
   moveToBackground(): Promise<void>;
   exitApp(): Promise<void>;
@@ -185,6 +186,12 @@ export const echoSystem = {
     }
   },
 
+  async setScreenOrientation(mode: 'portrait' | 'landscape'): Promise<void> {
+    if (Capacitor.isNativePlatform()) {
+      await EchoSystemNative.setScreenOrientation({ mode }).catch(() => {});
+    }
+  },
+
   haptic(style: HapticStyle = 'light'): void {
     if (Capacitor.isNativePlatform()) {
       void EchoSystemNative.haptic({ style }).catch(() => {});
@@ -211,7 +218,7 @@ export const echoSystem = {
     if (Capacitor.isNativePlatform()) {
       return EchoSystemNative.getLaunchFlags();
     }
-    return { openNowPlaying: false, pendingDeepLink: '', versionName: '2.5.2', versionCode: 22 };
+    return { openNowPlaying: false, pendingDeepLink: '', versionName: '2.5.3', versionCode: 23 };
   },
 
   async checkNotificationPermission(): Promise<{ granted: boolean; systemEnabled: boolean; runtimeGranted: boolean }> {

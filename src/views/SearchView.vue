@@ -164,8 +164,8 @@ function openAlbum(al: AlbumSummary) {
         </h1>
       </div>
 
-      <!-- Sticky Search Input Bar cleanly sitting under header -->
-      <div class="px-5 pb-3 sticky top-[calc(var(--safe-top)+44px)] z-15 bg-[var(--bg-canvas)]/95 backdrop-blur-md">
+      <!-- Sticky Search Input Bar cleanly sitting under header (solid canvas prevents double backdrop-filter seam flash) -->
+      <div class="px-5 pb-3 sticky top-[calc(var(--safe-top)+44px)] z-15 bg-[var(--bg-canvas)]">
         <form class="search-box" @submit.prevent="runSearch()">
           <Icon :icon="iconSearch" class="w-4.5 h-4.5 text-[var(--text-secondary)] shrink-0" />
           <input

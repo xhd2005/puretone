@@ -127,7 +127,7 @@ watch(albumId, () => void loadAlbum());
     <div class="flex-1 am-scroll pb-48 relative" @scroll.passive="onScroll">
       <!-- Centered Apple Music Album Hero -->
       <section class="px-5 pt-[calc(var(--safe-top)+56px)] pb-5 flex flex-col items-center text-center space-y-3">
-        <div class="w-[200px] h-[200px] rounded-[20px] overflow-hidden bg-[var(--bg-subtle)] shadow-2xl flex items-center justify-center">
+        <div class="w-[200px] h-[200px] rounded-[18px] overflow-hidden bg-[var(--bg-subtle)] shadow-2xl flex items-center justify-center">
           <img v-if="displayCover" :src="displayCover" :alt="displayTitle" class="w-full h-full object-cover" />
           <Icon v-else :icon="iconDisc" class="w-14 h-14 text-[var(--text-tertiary)]" />
         </div>

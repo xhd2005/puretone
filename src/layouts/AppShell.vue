@@ -58,7 +58,7 @@ function goTab(path: string) {
 
 <template>
   <div class="shell-stage">
-    <div class="shell-root" :class="{ 'is-receded': ui.hasModalOverlay }">
+    <div class="shell-root">
       <!-- Tablet / Landscape iPadOS-style Liquid Glass Sidebar (>= 768px) -->
       <aside class="tablet-sidebar am-glass hidden md:flex flex-col">
         <div class="pt-[calc(var(--safe-top)+18px)] px-4 pb-4 flex items-center justify-between">
@@ -154,18 +154,6 @@ function goTab(path: string) {
   height: 100%;
   display: flex;
   background-color: var(--bg-canvas);
-  transform-origin: center top;
-  transition:
-    transform 400ms var(--spring-ease),
-    border-radius 360ms var(--spring-ease);
-  will-change: transform;
-  backface-visibility: hidden;
-}
-
-.shell-root.is-receded {
-  transform: scale3d(0.95, 0.95, 1) translate3d(0, 6px, 0);
-  border-radius: 24px;
-  overflow: hidden;
 }
 
 .page-layer {
@@ -191,12 +179,6 @@ function goTab(path: string) {
   background: linear-gradient(
     to top,
     var(--bg-canvas) 0%,
-    transparent 100%
-  );
-  background: linear-gradient(
-    to top,
-    var(--bg-canvas) 0%,
-    color-mix(in srgb, var(--bg-canvas) 70%, transparent) 45%,
     transparent 100%
   );
   transition: opacity 260ms ease;

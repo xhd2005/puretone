@@ -225,7 +225,7 @@ describe('v2.4.12 Full-Stack Security, Privacy & Open-Source Compliance Hardenin
       expect(zhTW[k].trim().length).toBeGreaterThan(0);
       expect(enUS[k].trim().length).toBeGreaterThan(0);
     }
-    expect(FALLBACK_APP_VERSION).toBe('2.5.2');
+    expect(FALLBACK_APP_VERSION).toBe('2.5.3');
   });
 
   it('validates 3-card cover swipe physics, 3D Cover Flow math & comment badge removal', () => {

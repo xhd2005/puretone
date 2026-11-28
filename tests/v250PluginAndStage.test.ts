@@ -80,6 +80,7 @@ describe('v2.5.0 Direct-DOM 3-Slot Ring Carousel & Zero-Flicker Lyrics / 3-Mode 
 
     const krcVue = fs.readFileSync(path.resolve(process.cwd(), 'src/components/KrcLyricsView.vue'), 'utf8');
     const krcStyle = krcVue.slice(krcVue.indexOf('<style'));
+    expect(krcVue).toContain('data-canvas-lyrics');
     expect(krcStyle).not.toContain('background-clip: text');
     expect(krcStyle).not.toContain('color: transparent');
     expect(krcStyle).not.toContain('contain: strict');
@@ -87,9 +88,10 @@ describe('v2.5.0 Direct-DOM 3-Slot Ring Carousel & Zero-Flicker Lyrics / 3-Mode 
     expect(krcStyle).not.toContain(':global(.dark)');
 
     const landVue = fs.readFileSync(path.resolve(process.cwd(), 'src/components/LandscapeStudioStage.vue'), 'utf8');
-    expect(landVue).toContain('data-landscape-vinyl');
-    expect(landVue).toContain('data-landscape-cinema');
-    expect(landVue).toContain('ls-tonearm');
+    expect(landVue).toContain('data-landscape-studio');
+    expect(landVue).toContain('data-landscape-split');
+    expect(landVue).toContain('data-landscape-coverflow');
+    expect(landVue).toContain('data-exit-landscape-btn');
     expect(landVue).toContain('CoverFlowStage');
     expect(landVue).not.toContain(':global(.dark)');
   });

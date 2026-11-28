@@ -34,13 +34,13 @@
 - **歌手与专辑档案**：提供高清歌手主页（作品/专辑/粉丝统计、简介弹窗、关注/取关、热门与最新筛选、合唱多歌手选择器）与完整专辑详情页。
 - **进阶播放**：基于 Jetpack Media3 原生 2 曲前瞻队列，支持队列置顶/移除、播放模式切换、倍速播放、余弦淡入淡出切歌（关闭 / `1.5s` / `3s` / `5s`），并在 seek 短暂缓冲期保持播放态稳定，彻底消除封面缩放抽搐与进度条回弹。
 - **零中断自愈与试听拦截**：每首曲目独立绑定 HTTP 请求头，彻底隔离预加载下一首报错；全链路拦截 30s / 60s 试听片段与提前 EOF 截断流，异常时按多级原地精确秒数续播，绝不中途自动切歌。
-- **「弥音唱片台」三模式横屏 & 3-Slot 环形切歌**：横屏内置黑胶唱片台（拟真唱臂落针/抬臂动画 + 旋转微沟槽唱片）、3D 封面墙与巨幕歌词影院三大沉浸模式，严格适配 `340dp+` 矮横屏零裁切；竖屏封面切歌采用 Direct-DOM 3-Slot 环形槽位与 120Hz 物理弹簧，零卡顿、零反向回弹。
+- **全局竖屏锁定 & 一键真全屏横屏播放台**：日常使用全局锁死竖屏绝不误旋转；在播放页轻点「横屏」才主动切换至隐藏状态栏与导航栏的真全屏横屏，提供「双栏沉浸台」（封面/黑胶一键切换 + 零裁切控制区 + 全高 Canvas 歌词/队列）与「3D 封面墙」两大清爽模式，退出或按返回键自动恢复竖屏；竖屏封面切歌采用 Direct-DOM 3-Slot 环形槽位与 120Hz 物理弹簧，零卡顿、零反向回弹。
 - **原创 `melune-ext/v1` 沙箱扩展生态**：主程序核心保持 100% 纯净合规，不包含内置自动化任务或第三方音源爬虫；预置官方精选扩展源 [`xhd2005/melune-plugins`](https://github.com/xhd2005/melune-plugins)（冷启动零请求、按需同步、绝不自动安装），提供 **普通模式 / 开发者模式** 双视图、App Store 级「精选推荐」大卡、4 字极简短名与实时状态徽章、**独立于 App 本体的单插件/批量热更新**（实时防缓存通道 + SHA-256 校验 + 无损保留数据）、首页快捷胶囊直达及 `melune://ext/install` 深链安装。
 - **私人 FM**：智能推荐个性化电台，并在播放接近队列尾部时提前续载，息屏不断流。
 - **云端歌单与秒开快照**：支持云端歌单新建、编辑、隐私设置、删除、收藏与底部接管式批量加歌/移歌；本地 SQLite 快照通过云端版本号 `totalVer` 校验，未变动时 0 网络请求秒开「我喜欢」与千首大歌单，本机红心/增删原地增量更新。
 - **本地智能缓存与离线直放**：基于 `DynamicLruCacheEvictor` + Media3 `SimpleCache`，支持 `500 MB / 1 GB / 2 GB（默认）/ 4 GB / 无上限` 五档热调，按「曲目 + 音质 + 音源」分桶隔离（试听片段不落盘），弱网与飞行模式自动本地直放，音频缓存与歌单快照独立透明清理。
 - **歌曲详情与评论**：支持查看多音质规格档案，以及推荐 / 最热 / 最新 / 热词 4 模式评论、楼中楼清洗去重、百余种原生 Emoji 映射、实时点赞与回复。
-- **零闪烁逐字歌词与海报工坊**：内置「酷狗 KRC 逐字 + 译文 → 网易云双语 LRC → LRCLIB」三级回退引擎，采用纯字形图集直绘（零 Skia `SaveLayer` 瓦片闪烁），支持 120Hz 弹簧滚动、3 档字号、单曲记忆词轴微调、副歌高潮标记跳转与 5 模板 1080P 歌词海报工坊。
+- **120Hz 硬件 Canvas 零闪烁逐字歌词与海报工坊**：内置「酷狗 KRC 逐字 + 译文 → 网易云双语 LRC → LRCLIB」三级回退引擎，采用单 `<canvas>` 硬件 2D 直绘引擎彻底杜绝 WebView 逐字与切行闪烁，支持「逐字扫光 / 极简行级」双样式、120Hz 弹簧滚动、3 档字号、单曲记忆词轴微调、副歌高潮标记跳转与 5 模板 1080P 歌词海报工坊。
 - **音频增强**：内置 32-bit Float 自研 `PureToneDspAudioProcessor`（5 档零爆音切档均衡器 + 响度提升与透明软限幅器）及真实 Hi-Res / FLAC / OGG 320 解析。
 - **系统媒体控制与小组件**：原生集成 `MediaSessionService` 锁屏/蓝牙播控与 Android 16/17 官方 Live Updates，配套 4×2 封面动态取色桌面播控小组件（含红心联动）。
 - **多账号与听歌洞察**：支持 Android Keystore AES-256-GCM 硬件加密存储会话、多账号切换以及 iOS 屏幕时间风格的本地听歌统计图表。
@@ -69,7 +69,7 @@
 - **Native Audio Engine**: [Android Jetpack Media3](https://github.com/androidx/media) 1.5.1（`ExoPlayer` + `MediaSessionService` + `SimpleCache`）
 - **Native Network & System**: [Kotlin](https://kotlinlang.org/) + [OkHttp](https://square.github.io/okhttp/) 4.12 + `kotlinx.coroutines` 1.9 + Android AppWidget
 - **Protocol Engine**: [KuGouMusicApi](https://github.com/MakcRe/KuGouMusicApi)（`server` 子模块，端侧零中转直连）
-- **Testing**: [Vitest](https://vitest.dev/) 3（116 项前端测试）+ JUnit 4（Android 原生单测）
+- **Testing**: [Vitest](https://vitest.dev/) 3（124 项前端测试）+ JUnit 4（Android 原生单测）
 
 ## 🚀 快速开始
 

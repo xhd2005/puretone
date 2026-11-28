@@ -25,6 +25,7 @@ import iconPhoto from '@iconify/icons-tabler/photo';
 import iconPlayerTrackNext from '@iconify/icons-tabler/player-track-next';
 import iconTrash from '@iconify/icons-tabler/trash';
 import iconAdjustments from '@iconify/icons-tabler/adjustments';
+import iconDeviceMobileRotated from '@iconify/icons-tabler/device-mobile-rotated';
 import type { SongClimaxRange } from '@/types/music';
 import { kugouApi } from '@/services/kugou/kugouEngine';
 import { openArtistProfileFromSong } from '@/services/playback/artistNavigation';
@@ -57,27 +58,36 @@ const { t } = useI18n();
 // Double-buffered pre-decoded cover URL: zero empty gray flash on track switch!
 const { displayedCoverUrl } = useDecodedCover(() => player.currentSong?.coverUrl || '');
 
-// Landscape detection (delegated to 3-mode LandscapeStudioStage.vue)
-function checkIsLandscape(): boolean {
-  if (typeof window === 'undefined') return false;
-  return window.innerWidth > window.innerHeight && window.innerWidth >= 560;
+// Explicit user-controlled true-fullscreen landscape playback (phone stays locked portrait unless toggled!)
+const isLandscape = computed(() => ui.nowPlayingLandscape);
+
+function enterLandscapeMode() {
+  ui.setNowPlayingLandscape(true);
 }
-const isLandscape = ref(checkIsLandscape());
 
 function handleViewportResize() {
-  const next = checkIsLandscape();
-  if (next !== isLandscape.value) {
-    isLandscape.value = next;
-    if (!next && ui.nowPlayingOpen) {
-      void nextTick(() => {
-        measureArtworkSlots();
-        attachSlotObserver();
-      });
-    }
-  } else if (!next && ui.nowPlayingOpen) {
+  if (!isLandscape.value && ui.nowPlayingOpen) {
     measureArtworkSlots();
   }
 }
+
+watch(isLandscape, (next) => {
+  if (!next && ui.nowPlayingOpen) {
+    artworkReadyForTransition.value = false;
+    void nextTick(() => {
+      measureArtworkSlots();
+      attachSlotObserver();
+      readyRaf1 = requestAnimationFrame(() => {
+        measureArtworkSlots();
+        readyRaf2 = requestAnimationFrame(() => {
+          artworkReadyForTransition.value = true;
+        });
+      });
+    });
+  } else {
+    detachSlotObserver();
+  }
+});
 
 onMounted(() => {
   if (typeof window !== 'undefined') {
@@ -605,7 +615,6 @@ watch(
   async ([open, hasSong]) => {
     settings.applyThemeClass(Boolean(open));
     if (open && hasSong) {
-      isLandscape.value = checkIsLandscape();
       artworkReadyForTransition.value = false;
       syncIdleSlotUrls();
       await nextTick();
@@ -623,6 +632,9 @@ watch(
         revealLyricsHud(true);
       }
     } else {
+      if (ui.nowPlayingLandscape) {
+        ui.setNowPlayingLandscape(false);
+      }
       detachSlotObserver();
       stopRingSpring();
       clearRingDirectStyles();
@@ -909,6 +921,8 @@ function handleClearQueue() {
 const fluidBgActive = computed(
   () =>
     ui.nowPlayingOpen &&
+    !isLandscape.value &&
+    ui.nowPlayingMode !== 'lyrics' &&
     !ui.audioEffectSheetOpen &&
     !ui.commentsSheetSong &&
     !ui.actionSheetSong &&
@@ -959,6 +973,16 @@ function openAudioEffectSheet() {
           @touchend.passive="onHandleTouchEnd"
         >
           <div class="np-handle" />
+          <button
+            v-if="ui.nowPlayingMode === 'cover'"
+            type="button"
+            class="np-landscape-trigger np-glass-chip am-tap"
+            :aria-label="t('np.enterLandscape')"
+            data-enter-landscape-btn
+            @click.stop="enterLandscapeMode"
+          >
+            <Icon :icon="iconDeviceMobileRotated" class="w-4 h-4 text-white/92" />
+          </button>
         </div>
 
         <div ref="stageHostRef" class="np-stage-host" data-ring-carousel>
@@ -1071,6 +1095,15 @@ function openAudioEffectSheet() {
               <button
                 type="button"
                 class="np-circle-btn np-glass-chip am-tap"
+                :aria-label="t('np.enterLandscape')"
+                data-enter-landscape-btn
+                @click="enterLandscapeMode"
+              >
+                <Icon :icon="iconDeviceMobileRotated" class="w-4.5 h-4.5" />
+              </button>
+              <button
+                type="button"
+                class="np-circle-btn np-glass-chip am-tap"
                 aria-label="More options"
                 @click="ui.openSongActions(player.currentSong)"
               >
@@ -1169,9 +1202,9 @@ function openAudioEffectSheet() {
             </div>
           </div>
 
-          <!-- PERSISTENT LAYER 2: ZERO-FLICKER WORD-BY-WORD KRC LYRICS -->
+          <!-- PERSISTENT LAYER 2: 120HZ CANVAS ZERO-FLICKER LYRICS (constant height, zero reflow!) -->
           <div
-            class="np-pane np-pane-detail"
+            class="np-pane np-pane-detail np-pane-lyrics"
             :class="{ 'is-active': ui.nowPlayingMode === 'lyrics' }"
           >
             <KrcLyricsView
@@ -1184,7 +1217,7 @@ function openAudioEffectSheet() {
 
           <!-- PERSISTENT LAYER 3: WINDOWED UP NEXT QUEUE -->
           <div
-            class="np-pane np-pane-detail flex flex-col px-6 pt-[72px] pb-2"
+            class="np-pane np-pane-detail np-pane-queue flex flex-col px-6 pt-[72px]"
             :class="{ 'is-active': ui.nowPlayingMode === 'queue' }"
           >
             <div class="flex items-center justify-between gap-2 mb-3 shrink-0">
@@ -1281,10 +1314,13 @@ function openAudioEffectSheet() {
           </div>
         </div>
 
-        <!-- Scrubber & Transport Controls -->
+        <!-- Pure-GPU Floating Overlay Scrubber & Transport Controls (ZERO layout reflow!) -->
         <div
           class="np-controls"
-          :class="{ 'is-immersive-hidden': isLyricsImmersive }"
+          :class="{
+            'is-immersive-hidden': isLyricsImmersive,
+            'is-lyrics-backdrop': ui.nowPlayingMode === 'lyrics',
+          }"
         >
           <div class="px-1">
             <div
@@ -1427,16 +1463,30 @@ function openAudioEffectSheet() {
   flex-direction: column;
   height: 100%;
   padding-top: calc(var(--safe-top) + 6px);
-  padding-bottom: calc(var(--safe-bottom) + 12px);
 }
 
 .np-handle-area {
-  height: 26px;
+  position: relative;
+  height: 32px;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
   cursor: pointer;
+}
+
+.np-landscape-trigger {
+  position: absolute;
+  right: 22px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ffffff;
 }
 
 .np-handle {
@@ -1571,12 +1621,11 @@ function openAudioEffectSheet() {
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
-  will-change: transform, opacity;
   backface-visibility: hidden;
   transition:
-    opacity 210ms ease,
-    transform 340ms var(--spring-ease),
-    visibility 0s linear 340ms;
+    opacity 220ms ease,
+    transform 320ms var(--spring-ease),
+    visibility 0s linear 320ms;
 }
 
 .np-pane-cover {
@@ -1601,7 +1650,15 @@ function openAudioEffectSheet() {
 
 .np-pane-detail {
   padding-top: 64px;
-  transform: translate3d(0, 20px, 0) scale3d(0.985, 0.985, 1);
+  transform: translate3d(0, 16px, 0);
+}
+
+.np-pane-lyrics {
+  padding-bottom: calc(var(--safe-bottom) + 12px);
+}
+
+.np-pane-queue {
+  padding-bottom: calc(var(--safe-bottom) + 196px);
 }
 
 .np-pane.is-active {
@@ -1609,10 +1666,10 @@ function openAudioEffectSheet() {
   opacity: 1;
   visibility: visible;
   pointer-events: auto;
-  transform: translate3d(0, 0, 0) scale3d(1, 1, 1);
+  transform: translate3d(0, 0, 0);
   transition:
     opacity 240ms ease 20ms,
-    transform 360ms var(--spring-ease),
+    transform 340ms var(--spring-ease),
     visibility 0s linear 0s;
 }
 
@@ -1620,7 +1677,7 @@ function openAudioEffectSheet() {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  padding: 14px 28px 14px;
+  padding: 12px 28px calc(var(--safe-bottom) + 202px);
 }
 
 .np-artwork-wrap {
@@ -1710,27 +1767,33 @@ function openAudioEffectSheet() {
 }
 
 .np-controls {
-  position: relative;
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
   z-index: 25;
-  padding: 4px 28px 6px;
-  flex-shrink: 0;
-  max-height: 240px;
+  padding: 8px 28px calc(var(--safe-bottom) + 14px);
   opacity: 1;
   transform: translate3d(0, 0, 0);
   transition:
-    max-height 380ms var(--spring-ease),
-    opacity 240ms ease,
+    opacity 260ms ease,
     transform 360ms var(--spring-ease),
-    padding 340ms var(--spring-ease);
+    background 260ms ease;
+}
+
+.np-controls.is-lyrics-backdrop {
+  padding-top: 24px;
+  background: linear-gradient(
+    180deg,
+    rgba(10, 12, 20, 0) 0%,
+    rgba(10, 12, 20, 0.48) 32%,
+    rgba(10, 12, 20, 0.78) 100%
+  );
 }
 
 .np-controls.is-immersive-hidden {
-  max-height: 0;
   opacity: 0;
-  transform: translate3d(0, 26px, 0);
-  padding-top: 0;
-  padding-bottom: 0;
-  overflow: hidden;
+  transform: translate3d(0, 100%, 0);
   pointer-events: none;
 }
 

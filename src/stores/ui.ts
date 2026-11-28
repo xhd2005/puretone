@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia';
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import type { SafeAreaInsets } from '@/native/echoSystem';
 import type { PlaylistActionContext, Song, SongArtistRef } from '@/types/music';
 import type { ReleaseUpdateInfo } from '@/services/update/updateService';
@@ -8,6 +8,8 @@ import { echoSystem } from '@/native/echoSystem';
 export const useUiStore = defineStore('ui', () => {
   const nowPlayingOpen = ref(false);
   const nowPlayingMode = ref<'cover' | 'lyrics' | 'queue'>('cover');
+  /** Explicit user-triggered true-fullscreen landscape playback mode (defaults OFF -> phone stays locked portrait). */
+  const nowPlayingLandscape = ref(false);
   const audioEffectSheetOpen = ref(false);
   const accountSheetOpen = ref(false);
   const accountSheetTab = ref<'profile' | 'plugins' | 'settings'>('profile');
@@ -92,6 +94,28 @@ export const useUiStore = defineStore('ui', () => {
     nowPlayingOpen.value = true;
   }
 
+  function setNowPlayingLandscape(enabled: boolean) {
+    const next = Boolean(enabled) && nowPlayingOpen.value;
+    if (nowPlayingLandscape.value === next) {
+      if (!next) void echoSystem.setScreenOrientation('portrait');
+      return;
+    }
+    echoSystem.haptic('selection');
+    nowPlayingLandscape.value = next;
+    void echoSystem.setScreenOrientation(next ? 'landscape' : 'portrait');
+  }
+
+  watch(
+    nowPlayingOpen,
+    (open) => {
+      if (!open && nowPlayingLandscape.value) {
+        nowPlayingLandscape.value = false;
+        void echoSystem.setScreenOrientation('portrait');
+      }
+    },
+    { flush: 'sync' },
+  );
+
   function openSongComments(song: Song, tab: 'details' | 'comments' = 'comments') {
     echoSystem.haptic('light');
     commentsSheetTab.value = tab;
@@ -171,6 +195,10 @@ export const useUiStore = defineStore('ui', () => {
       accountSheetOpen.value = false;
       return true;
     }
+    if (nowPlayingLandscape.value) {
+      setNowPlayingLandscape(false);
+      return true;
+    }
     if (nowPlayingOpen.value) {
       nowPlayingOpen.value = false;
       return true;
@@ -187,6 +215,7 @@ export const useUiStore = defineStore('ui', () => {
   return {
     nowPlayingOpen,
     nowPlayingMode,
+    nowPlayingLandscape,
     audioEffectSheetOpen,
     accountSheetOpen,
     accountSheetTab,
@@ -212,6 +241,7 @@ export const useUiStore = defineStore('ui', () => {
     showToast,
     openAccountSheet,
     openNowPlaying,
+    setNowPlayingLandscape,
     openSongComments,
     openSongActions,
     closeSongActions,

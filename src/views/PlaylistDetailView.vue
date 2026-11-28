@@ -667,7 +667,7 @@ onUnmounted(() => {
         <div class="grid grid-cols-2 gap-3 mt-5 max-w-sm mx-auto">
           <button
             type="button"
-            class="h-11 rounded-[13px] am-accent-bg text-white text-[15px] font-semibold border-0 flex items-center justify-center gap-1.5 am-tap shadow-sm"
+            class="h-11 rounded-[14px] am-accent-bg text-white text-[15px] font-semibold border-0 flex items-center justify-center gap-1.5 am-tap shadow-sm"
             :disabled="!filteredSongs.length"
             @click="player.playQueue(filteredSongs, 0)"
           >
@@ -676,7 +676,7 @@ onUnmounted(() => {
           </button>
           <button
             type="button"
-            class="h-11 rounded-[13px] bg-[var(--bg-subtle)] am-accent-text text-[15px] font-semibold border-0 flex items-center justify-center gap-1.5 am-tap"
+            class="h-11 rounded-[14px] bg-[var(--bg-subtle)] am-accent-text text-[15px] font-semibold border-0 flex items-center justify-center gap-1.5 am-tap"
             :disabled="!filteredSongs.length"
             @click="shufflePlay"
           >

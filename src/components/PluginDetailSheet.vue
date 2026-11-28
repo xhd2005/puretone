@@ -16,6 +16,7 @@ import { useDraggableSheet } from '@/composables/useDraggableSheet';
 import { echoSystem } from '@/native/echoSystem';
 import { PLUGIN_PERMISSION_META, resolvePluginVisual } from '@/services/plugins/pluginUiMeta';
 import PluginPanelRenderer from './PluginPanelRenderer.vue';
+import SegmentedControl from './SegmentedControl.vue';
 
 const plugins = usePluginsStore();
 const ui = useUiStore();
@@ -23,6 +24,10 @@ const { t } = useI18n();
 
 type DetailSubTab = 'panel' | 'diagnostics';
 const activeTab = ref<DetailSubTab>('panel');
+const detailSubTabs = computed<Array<{ id: DetailSubTab; label: string }>>(() => [
+  { id: 'panel', label: t('plugins.detailTabPanel') },
+  { id: 'diagnostics', label: t('plugins.detailTabDiagnostics') },
+]);
 const bodyScrollRef = ref<HTMLElement | null>(null);
 const confirmClear = ref(false);
 const clearingData = ref(false);
@@ -152,15 +157,15 @@ async function handleUninstall() {
   <Transition name="lg-modal">
     <div
       v-if="isOpen && plugin && visual"
-      class="fixed inset-0 z-[92] flex items-end justify-center lg-scrim"
+      class="fixed inset-0 z-[92] flex flex-col justify-end lg-scrim"
       @click="plugins.closePluginDetail()"
     >
-      <div
-        class="lg-sheet-panel w-full max-w-2xl rounded-t-[30px] shadow-2xl flex flex-col overflow-hidden"
-        :style="dragSheet.sheetStyle.value"
-        data-plugin-detail-sheet
-        @click.stop
-      >
+      <div class="lg-sheet-slide items-center" @click.stop>
+        <div
+          class="lg-sheet-panel w-full max-w-2xl rounded-t-[30px] shadow-2xl flex flex-col overflow-hidden"
+          :style="dragSheet.sheetStyle.value"
+          data-plugin-detail-sheet
+        >
         <!-- Drag Handle + Clean Header -->
         <div
           class="shrink-0 am-hairline-b"
@@ -245,31 +250,14 @@ async function handleUninstall() {
             </div>
 
             <!-- Developer-Only 2-Tab Switcher (hidden completely in Consumer Mode!) -->
-            <div v-if="plugins.developerMode" class="rounded-full bg-[var(--bg-subtle)] p-1 grid grid-cols-2">
-              <button
-                type="button"
-                class="h-8 rounded-full text-[12.5px] font-semibold border-0 transition-colors"
-                :class="
-                  activeTab === 'panel'
-                    ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-xs'
-                    : 'bg-transparent text-[var(--text-secondary)]'
-                "
-                @click="echoSystem.haptic('selection'); activeTab = 'panel'"
-              >
-                {{ t('plugins.detailTabPanel') }}
-              </button>
-              <button
-                type="button"
-                class="h-8 rounded-full text-[12.5px] font-semibold border-0 transition-colors"
-                :class="
-                  activeTab === 'diagnostics'
-                    ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-xs'
-                    : 'bg-transparent text-[var(--text-secondary)]'
-                "
-                @click="echoSystem.haptic('selection'); activeTab = 'diagnostics'; diagTick += 1"
-              >
-                {{ t('plugins.detailTabDiagnostics') }}
-              </button>
+            <div v-if="plugins.developerMode" @touchstart.stop>
+              <SegmentedControl
+                v-model="activeTab"
+                :options="detailSubTabs"
+                variant="pill"
+                size="md"
+                @change="(tab) => { if (tab === 'diagnostics') diagTick += 1; }"
+              />
             </div>
           </div>
         </div>
@@ -496,6 +484,7 @@ async function handleUninstall() {
               </button>
             </section>
           </template>
+        </div>
         </div>
       </div>
     </div>

@@ -298,8 +298,7 @@ onUnmounted(() => {
 }
 
 .song-row-shell.is-highlighted {
-  background-color: rgba(52, 86, 190, 0.14);
-  background-color: color-mix(in srgb, var(--accent) 16%, transparent);
+  background-color: rgba(52, 86, 190, 0.16);
 }
 
 .swipe-actions {

@@ -10,6 +10,7 @@ import android.content.ComponentName
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
@@ -29,6 +30,7 @@ import androidx.core.content.FileProvider
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import com.getcapacitor.JSArray
 import com.getcapacitor.JSObject
 import com.getcapacitor.PermissionState
@@ -316,6 +318,28 @@ class EchoSystemPlugin : Plugin() {
             val controller = WindowCompat.getInsetsController(window, window.decorView)
             controller.isAppearanceLightStatusBars = darkIcons
             controller.isAppearanceLightNavigationBars = darkIcons
+        }
+        call.resolve()
+    }
+
+    @PluginMethod
+    fun setScreenOrientation(call: PluginCall) {
+        val mode = call.getString("mode") ?: "portrait"
+        activity?.runOnUiThread {
+            val act = activity ?: return@runOnUiThread
+            val window = act.window ?: return@runOnUiThread
+            val controller = WindowCompat.getInsetsController(window, window.decorView)
+            if (mode == "landscape") {
+                act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                controller.systemBarsBehavior =
+                    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                controller.hide(WindowInsetsCompat.Type.systemBars())
+            } else {
+                act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
+                controller.show(WindowInsetsCompat.Type.systemBars())
+            }
+            ViewCompat.requestApplyInsets(window.decorView)
         }
         call.resolve()
     }

@@ -14,12 +14,14 @@ import {
 import { useAccountsStore } from '@/stores/accounts';
 import { usePlayerStore } from '@/stores/player';
 import { useI18n } from '@/i18n';
+import { useCollapsingTitle } from '@/composables/useCollapsingTitle';
 import SongRow from '@/components/SongRow.vue';
 
 const router = useRouter();
 const accounts = useAccountsStore();
 const player = usePlayerStore();
 const { t } = useI18n();
+const { compactTitleOpacity, headerGlassActive, onScroll } = useCollapsingTitle();
 const songs = ref<Song[]>([]);
 const loading = ref(true);
 
@@ -55,24 +57,29 @@ function shufflePlay() {
 </script>
 
 <template>
-  <div class="h-full flex flex-col relative">
-    <header class="sticky-glass sticky top-0 z-20 pt-[var(--safe-top)]">
-      <div class="h-11 px-3 flex items-center justify-between">
+  <div class="h-full flex flex-col relative bg-[var(--bg-canvas)]">
+    <header class="sticky-bar" :class="{ 'sticky-glass': headerGlassActive }">
+      <div class="h-11 px-3 flex items-center justify-between gap-2">
         <button
           type="button"
-          class="flex items-center gap-0.5 text-[16px] font-medium am-accent-text bg-transparent border-0 p-1 am-tap"
+          class="flex items-center gap-0.5 text-[16px] font-medium am-accent-text bg-transparent border-0 p-1 am-tap shrink-0"
           @click="router.back()"
         >
           <Icon :icon="iconChevronLeft" class="w-6 h-6" />
           <span>{{ t('common.back') }}</span>
         </button>
-        <span class="text-[16px] font-semibold text-[var(--text-primary)]">{{ t('daily.title') }}</span>
-        <span class="w-12" />
+        <span
+          class="text-[16px] font-semibold truncate flex-1 text-center text-[var(--text-primary)] pointer-events-none"
+          :style="{ opacity: compactTitleOpacity }"
+        >
+          {{ t('daily.title') }}
+        </span>
+        <span class="w-12 shrink-0" />
       </div>
     </header>
 
-    <div class="flex-1 am-scroll pb-44">
-      <div class="px-5 pt-6 pb-5 text-center">
+    <div class="flex-1 am-scroll pb-48" @scroll.passive="onScroll">
+      <div class="px-5 pt-[calc(var(--safe-top)+56px)] pb-5 text-center">
         <div class="w-44 h-44 mx-auto rounded-[18px] am-accent-bg shadow-xl flex flex-col items-center justify-center text-white">
           <span class="text-[13px] font-semibold uppercase tracking-widest opacity-85">Daily Mix</span>
           <span class="text-[36px] font-bold tracking-tight mt-1">{{ todayLabel }}</span>
@@ -83,7 +90,7 @@ function shufflePlay() {
         <div class="grid grid-cols-2 gap-3 mt-5 max-w-sm mx-auto">
           <button
             type="button"
-            class="h-11 rounded-[12px] am-accent-bg text-white text-[15px] font-semibold border-0 flex items-center justify-center gap-1.5 am-tap"
+            class="h-11 rounded-[14px] am-accent-bg text-white text-[15px] font-semibold border-0 flex items-center justify-center gap-1.5 shadow-xs am-tap"
             :disabled="!songs.length"
             @click="player.playQueue(songs, 0)"
           >
@@ -92,7 +99,7 @@ function shufflePlay() {
           </button>
           <button
             type="button"
-            class="h-11 rounded-[12px] bg-[var(--bg-subtle)] am-accent-text text-[15px] font-semibold border-0 flex items-center justify-center gap-1.5 am-tap"
+            class="h-11 rounded-[14px] bg-[var(--bg-subtle)] am-accent-text text-[15px] font-semibold border-0 flex items-center justify-center gap-1.5 am-tap"
             :disabled="!songs.length"
             @click="shufflePlay"
           >
@@ -114,3 +121,15 @@ function shufflePlay() {
     </div>
   </div>
 </template>
+
+<style scoped>
+.sticky-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  padding-top: var(--safe-top);
+  transition: background-color 180ms ease;
+}
+</style>

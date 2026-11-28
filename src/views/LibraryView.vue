@@ -353,14 +353,14 @@ watch(() => accounts.activeAccount?.userid, () => void playlistsStore.fetchPlayl
                 />
                 <span
                   v-if="pl.isPrivate"
-                  class="absolute top-2 left-2 px-1.5 py-0.5 rounded-full bg-black/52 backdrop-blur-md text-white text-[10px] font-semibold inline-flex items-center gap-0.5"
+                  class="absolute top-2 left-2 px-1.5 py-0.5 rounded-full bg-black/62 border border-white/15 text-white text-[10px] font-semibold inline-flex items-center gap-0.5"
                 >
                   <Icon :icon="iconLock" class="w-3 h-3" />
                   <span>{{ t('playlist.privateBadge') }}</span>
                 </span>
                 <button
                   type="button"
-                  class="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/48 backdrop-blur-md text-white border-0 flex items-center justify-center am-tap"
+                  class="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/62 border border-white/15 text-white flex items-center justify-center am-tap"
                   :aria-label="t('playlist.renameBtn')"
                   @click.stop="openManageSheet(pl)"
                 >
@@ -404,7 +404,7 @@ watch(() => accounts.activeAccount?.userid, () => void playlistsStore.fetchPlayl
                 />
                 <button
                   type="button"
-                  class="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/48 backdrop-blur-md text-white border-0 flex items-center justify-center am-tap"
+                  class="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/62 border border-white/15 text-white flex items-center justify-center am-tap"
                   :aria-label="t('playlist.uncollectBtn')"
                   @click.stop="openManageSheet(pl)"
                 >
@@ -474,7 +474,7 @@ watch(() => accounts.activeAccount?.userid, () => void playlistsStore.fetchPlayl
                 <div class="text-[14px] font-semibold text-[var(--text-primary)]">{{ t('playlist.privateToggle') }}</div>
                 <div class="text-[11.5px] text-[var(--text-secondary)]">{{ t('playlist.privateSub') }}</div>
               </div>
-              <input v-model="editorPrivate" type="checkbox" class="accent-[var(--accent)] w-4.5 h-4.5" />
+              <input v-model="editorPrivate" type="checkbox" class="ios-switch" />
             </label>
 
             <div class="grid grid-cols-2 gap-2.5 pt-1">

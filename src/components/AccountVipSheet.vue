@@ -33,6 +33,7 @@ import {
   type AppLocale,
   type AudioCacheLimitMb,
   type LyricFontSize,
+  type LyricRenderMode,
   type TrackTransitionFadeMs,
   type UpdateMirrorMode,
 } from '@/stores/settings';
@@ -55,6 +56,7 @@ import {
 import PureToneMark from './PureToneMark.vue';
 import ListeningStatsChart from './ListeningStatsChart.vue';
 import PluginHubTab from './PluginHubTab.vue';
+import SegmentedControl from './SegmentedControl.vue';
 
 type ProfileSectionTab = 'profile' | 'plugins' | 'settings';
 
@@ -109,12 +111,35 @@ const cacheUsagePercent = computed(() => {
 });
 const snapshotUsedLabel = computed(() => formatStorageSize(snapshotUsedBytes.value));
 
-const audioCacheOptions = computed<Array<{ mb: AudioCacheLimitMb; label: string }>>(() => [
-  { mb: 500, label: '500M' },
-  { mb: 1024, label: '1G' },
-  { mb: 2048, label: '2G' },
-  { mb: 4096, label: '4G' },
-  { mb: 0, label: t('settings.cacheUnlimitedShort') },
+const audioCacheOptions = computed<Array<{ id: AudioCacheLimitMb; label: string }>>(() => [
+  { id: 500, label: '500M' },
+  { id: 1024, label: '1G' },
+  { id: 2048, label: '2G' },
+  { id: 4096, label: '4G' },
+  { id: 0, label: t('settings.cacheUnlimitedShort') },
+]);
+
+const qualityOptions = computed<Array<{ id: AudioQuality; label: string }>>(() => [
+  { id: '128', label: t('settings.quality128') },
+  { id: '320', label: t('settings.quality320') },
+  { id: 'flac', label: t('settings.qualityFlac') },
+  { id: 'high', label: t('settings.qualityHigh') },
+]);
+
+const appearanceOptions = computed<Array<{ id: AppearanceMode; label: string }>>(() => [
+  { id: 'system', label: t('settings.ap.system') },
+  { id: 'light', label: t('settings.ap.light') },
+  { id: 'dark', label: t('settings.ap.dark') },
+]);
+
+const accentOptions = computed<Array<{ id: AccentThemeMode; label: string }>>(() => [
+  { id: 'dynamic', label: t('settings.ac.dynamic') },
+  { id: 'apple-red', label: t('settings.ac.red') },
+]);
+
+const lyricRenderModeOptions = computed<Array<{ id: LyricRenderMode; label: string }>>(() => [
+  { id: 'karaoke', label: t('settings.lyricModeKaraoke') },
+  { id: 'line', label: t('settings.lyricModeLine') },
 ]);
 
 const dragSheet = useDraggableSheet({
@@ -699,48 +724,13 @@ async function openAuthorProfile() {
                       <Icon :icon="iconLanguage" class="w-4 h-4 am-accent-text shrink-0" />
                       <span class="truncate">{{ t('settings.language') }}</span>
                     </div>
-                    <div class="pt-seg-group grid-cols-4">
-                      <button
-                        v-for="lang in langOptions"
-                        :key="lang.id"
-                        type="button"
-                        class="pt-seg-btn"
-                        :class="
-                          settings.locale === lang.id
-                            ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-xs'
-                            : 'bg-transparent text-[var(--text-secondary)]'
-                        "
-                        @click="echoSystem.haptic('selection'); settings.locale = lang.id"
-                      >
-                        {{ lang.label }}
-                      </button>
-                    </div>
+                    <SegmentedControl v-model="settings.locale" :options="langOptions" />
                   </div>
 
                   <!-- Audio Quality (4 Tiers: Std / HQ / FLAC / Hi-Res) -->
                   <div class="px-4 py-3 space-y-2">
                     <div class="text-[14.5px] font-medium text-[var(--text-primary)]">{{ t('settings.quality') }}</div>
-                    <div class="pt-seg-group grid-cols-4">
-                      <button
-                        v-for="q in [
-                          { id: '128', label: t('settings.quality128') },
-                          { id: '320', label: t('settings.quality320') },
-                          { id: 'flac', label: t('settings.qualityFlac') },
-                          { id: 'high', label: t('settings.qualityHigh') },
-                        ]"
-                        :key="q.id"
-                        type="button"
-                        class="pt-seg-btn"
-                        :class="
-                          settings.quality === q.id
-                            ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-xs'
-                            : 'bg-transparent text-[var(--text-secondary)]'
-                        "
-                        @click="echoSystem.haptic('selection'); settings.quality = q.id as AudioQuality"
-                      >
-                        {{ q.label }}
-                      </button>
-                    </div>
+                    <SegmentedControl v-model="settings.quality" :options="qualityOptions" />
                   </div>
 
                   <!-- Smooth Track Transition Fade -->
@@ -752,22 +742,7 @@ async function openAuthorProfile() {
                       </div>
                       <span class="text-[11px] text-[var(--text-secondary)] shrink-0 truncate">{{ t('settings.transitionSub') }}</span>
                     </div>
-                    <div class="pt-seg-group grid-cols-4">
-                      <button
-                        v-for="tr in transitionOptions"
-                        :key="tr.id"
-                        type="button"
-                        class="pt-seg-btn tabular-nums"
-                        :class="
-                          settings.transitionFadeMs === tr.id
-                            ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-xs'
-                            : 'bg-transparent text-[var(--text-secondary)]'
-                        "
-                        @click="echoSystem.haptic('selection'); settings.transitionFadeMs = tr.id"
-                      >
-                        {{ tr.label }}
-                      </button>
-                    </div>
+                    <SegmentedControl v-model="settings.transitionFadeMs" :options="transitionOptions" tabular-nums />
                   </div>
 
                   <!-- Volume Leveling -->
@@ -791,47 +766,13 @@ async function openAuthorProfile() {
                       </div>
                       <span class="text-[11px] text-[var(--text-secondary)] shrink-0 truncate">{{ t('settings.eqSub') }}</span>
                     </div>
-                    <div class="pt-seg-group grid-cols-5">
-                      <button
-                        v-for="eq in eqOptions"
-                        :key="eq.id"
-                        type="button"
-                        class="pt-seg-btn"
-                        :class="
-                          settings.eqPreset === eq.id
-                            ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-xs'
-                            : 'bg-transparent text-[var(--text-secondary)]'
-                        "
-                        @click="echoSystem.haptic('selection'); settings.eqPreset = eq.id"
-                      >
-                        {{ eq.label }}
-                      </button>
-                    </div>
+                    <SegmentedControl v-model="settings.eqPreset" :options="eqOptions" />
                   </div>
 
                   <!-- Appearance Mode -->
                   <div class="px-4 py-3 space-y-2">
                     <div class="text-[14.5px] font-medium text-[var(--text-primary)]">{{ t('settings.appearance') }}</div>
-                    <div class="pt-seg-group grid-cols-3">
-                      <button
-                        v-for="ap in [
-                          { id: 'system', label: t('settings.ap.system') },
-                          { id: 'light', label: t('settings.ap.light') },
-                          { id: 'dark', label: t('settings.ap.dark') },
-                        ]"
-                        :key="ap.id"
-                        type="button"
-                        class="pt-seg-btn"
-                        :class="
-                          settings.appearance === ap.id
-                            ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-xs'
-                            : 'bg-transparent text-[var(--text-secondary)]'
-                        "
-                        @click="echoSystem.haptic('selection'); settings.appearance = ap.id as AppearanceMode"
-                      >
-                        {{ ap.label }}
-                      </button>
-                    </div>
+                    <SegmentedControl v-model="settings.appearance" :options="appearanceOptions" />
                   </div>
 
                   <!-- Theme Accent Color -->
@@ -840,25 +781,7 @@ async function openAuthorProfile() {
                       <Icon :icon="iconPalette" class="w-4 h-4 am-accent-text shrink-0" />
                       <span class="truncate">{{ t('settings.accent') }}</span>
                     </div>
-                    <div class="pt-seg-group grid-cols-2">
-                      <button
-                        v-for="ac in [
-                          { id: 'dynamic', label: t('settings.ac.dynamic') },
-                          { id: 'apple-red', label: t('settings.ac.red') },
-                        ]"
-                        :key="ac.id"
-                        type="button"
-                        class="pt-seg-btn"
-                        :class="
-                          settings.accentMode === ac.id
-                            ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-xs'
-                            : 'bg-transparent text-[var(--text-secondary)]'
-                        "
-                        @click="echoSystem.haptic('selection'); settings.accentMode = ac.id as AccentThemeMode"
-                      >
-                        {{ ac.label }}
-                      </button>
-                    </div>
+                    <SegmentedControl v-model="settings.accentMode" :options="accentOptions" />
                   </div>
 
                   <!-- Lyrics Font Size 3-Step Selector -->
@@ -867,22 +790,16 @@ async function openAuthorProfile() {
                       <Icon :icon="iconMessageQuote" class="w-4 h-4 am-accent-text shrink-0" />
                       <span class="truncate">{{ t('settings.lyricSize') }}</span>
                     </div>
-                    <div class="pt-seg-group grid-cols-3">
-                      <button
-                        v-for="ls in lyricSizeOptions"
-                        :key="ls.id"
-                        type="button"
-                        class="pt-seg-btn"
-                        :class="
-                          settings.lyricFontSize === ls.id
-                            ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-xs'
-                            : 'bg-transparent text-[var(--text-secondary)]'
-                        "
-                        @click="echoSystem.haptic('selection'); settings.lyricFontSize = ls.id"
-                      >
-                        {{ ls.label }}
-                      </button>
+                    <SegmentedControl v-model="settings.lyricFontSize" :options="lyricSizeOptions" />
+                  </div>
+
+                  <!-- Lyrics Render Style (Word-by-Word Karaoke Sweep vs Minimalist Line) -->
+                  <div class="px-4 py-3 space-y-2" data-lyric-render-mode-setting>
+                    <div class="flex items-center gap-1.5 text-[14.5px] font-medium text-[var(--text-primary)]">
+                      <Icon :icon="iconSparkles" class="w-4 h-4 am-accent-text shrink-0" />
+                      <span class="truncate">{{ t('settings.lyricRenderMode') }}</span>
                     </div>
+                    <SegmentedControl v-model="settings.lyricRenderMode" :options="lyricRenderModeOptions" />
                   </div>
 
                   <label class="px-4 py-3 flex items-center justify-between gap-3 cursor-pointer">
@@ -994,22 +911,12 @@ async function openAuthorProfile() {
                         :style="{ width: `${cacheUsagePercent}%` }"
                       />
                     </div>
-                    <div class="pt-seg-group grid-cols-5">
-                      <button
-                        v-for="opt in audioCacheOptions"
-                        :key="opt.mb"
-                        type="button"
-                        class="pt-seg-btn tabular-nums"
-                        :class="
-                          settings.audioCacheMaxMb === opt.mb
-                            ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-xs'
-                            : 'bg-transparent text-[var(--text-secondary)]'
-                        "
-                        @click="handleSelectCacheLimit(opt.mb)"
-                      >
-                        {{ opt.label }}
-                      </button>
-                    </div>
+                    <SegmentedControl
+                      :model-value="settings.audioCacheMaxMb"
+                      :options="audioCacheOptions"
+                      tabular-nums
+                      @change="handleSelectCacheLimit"
+                    />
                   </div>
 
                   <!-- 3. Transparent Playlist & Home Local Snapshot Cache (Independent Clear) -->
@@ -1169,22 +1076,7 @@ async function openAuthorProfile() {
                     </button>
 
                     <div v-if="showUpdateRoutePanel" class="px-4 pb-3.5 pt-0.5 space-y-2.5">
-                      <div class="pt-seg-group grid-cols-2">
-                        <button
-                          v-for="m in mirrorOptions"
-                          :key="m.id"
-                          type="button"
-                          class="pt-seg-btn"
-                          :class="
-                            settings.updateMirrorMode === m.id
-                              ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-xs'
-                              : 'bg-transparent text-[var(--text-secondary)]'
-                          "
-                          @click="echoSystem.haptic('selection'); settings.updateMirrorMode = m.id"
-                        >
-                          {{ m.label }}
-                        </button>
-                      </div>
+                      <SegmentedControl v-model="settings.updateMirrorMode" :options="mirrorOptions" />
                       <input
                         v-model.trim="settings.customUpdateMirror"
                         type="url"
