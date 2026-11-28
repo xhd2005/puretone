@@ -108,12 +108,13 @@ describe('v2.4.12 Full-Stack Security, Privacy & Open-Source Compliance Hardenin
     setActivePinia(createPinia());
   });
 
-  it('enforces Opt-in fresh-install defaults for experimental unblock and VIP auto-claim switches', () => {
+  it('keeps core settings 100% free of built-in VIP auto-claim or scraping toggles (delegated to plugins)', () => {
     const settings = useSettingsStore();
-    expect(settings.enableUnblock).toBe(false);
-    expect(settings.autoClaimOnLaunch).toBe(false);
-    expect(settings.autoClaimAllAccounts).toBe(false);
-    expect(settings.enableConceptTasks).toBe(false);
+    const snap = settings.exportSnapshot() as unknown as Record<string, unknown>;
+    expect(snap.enableUnblock).toBeUndefined();
+    expect(snap.autoClaimOnLaunch).toBeUndefined();
+    expect(snap.autoClaimAllAccounts).toBeUndefined();
+    expect(snap.enableConceptTasks).toBeUndefined();
   });
 
   it('enforces HTTPS-only update mirrors and mandatory SHA-256 on non-GitHub mirrors', () => {
@@ -215,14 +216,16 @@ describe('v2.4.12 Full-Stack Security, Privacy & Open-Source Compliance Hardenin
       'about.disclaimerShort',
       'compliance.declineExit',
       'np.landscapeSplit',
+      'np.landscapeVinyl',
       'np.landscapeCoverFlow',
+      'np.landscapeCinema',
     ] as const;
     for (const k of keys) {
       expect(zhCN[k].trim().length).toBeGreaterThan(0);
       expect(zhTW[k].trim().length).toBeGreaterThan(0);
       expect(enUS[k].trim().length).toBeGreaterThan(0);
     }
-    expect(FALLBACK_APP_VERSION).toBe('2.4.12');
+    expect(FALLBACK_APP_VERSION).toBe('2.5.0');
   });
 
   it('validates 3-card cover swipe physics, 3D Cover Flow math & comment badge removal', () => {
@@ -255,8 +258,8 @@ describe('v2.4.12 Full-Stack Security, Privacy & Open-Source Compliance Hardenin
     expect(npVue).not.toContain('np-cmt-badge');
     expect(npVue).not.toContain('getSongCommentCount');
     expect(npVue).toContain('computeCoverCarouselLayout');
-    expect(npVue).toContain('CoverFlowStage');
-    expect(npVue).toContain('data-landscape-split');
+    expect(npVue).toContain('LandscapeStudioStage');
+    expect(npVue).toContain('data-ring-carousel');
     expect(npVue).not.toContain(':global(.dark)');
 
     const cfVue = fs.readFileSync(path.resolve(process.cwd(), 'src/components/CoverFlowStage.vue'), 'utf8');

@@ -10,7 +10,7 @@ import iconExternalLink from '@iconify/icons-tabler/external-link';
 import iconScan from '@iconify/icons-tabler/scan';
 import { useUiStore } from '@/stores/ui';
 import { useAccountsStore } from '@/stores/accounts';
-import { useVipStore } from '@/stores/vip';
+import { usePluginsStore } from '@/stores/plugins';
 import { useDraggableSheet } from '@/composables/useDraggableSheet';
 import { echoSystem } from '@/native/echoSystem';
 import { extractAccountFromLogin, kugouApi } from '@/services/kugou/kugouEngine';
@@ -18,7 +18,7 @@ import PureToneMark from './PureToneMark.vue';
 
 const ui = useUiStore();
 const accounts = useAccountsStore();
-const vip = useVipStore();
+const plugins = usePluginsStore();
 
 const dragSheet = useDraggableSheet({
   onDismiss: () => {
@@ -102,7 +102,7 @@ async function finishLogin(body: Record<string, any>) {
   await accounts.addOrUpdateAccount(profile);
   ui.loginModalOpen = false;
   ui.showToast(`欢迎回来，${profile.nickname}`);
-  void vip.maybeAutoClaimOnLaunch(false);
+  void plugins.notifyAuthLogin(profile.userid);
 }
 
 // ---- WeChat Login Flow ----

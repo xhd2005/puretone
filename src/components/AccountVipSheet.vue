@@ -6,7 +6,6 @@ import iconPlus from '@iconify/icons-tabler/plus';
 import iconRefresh from '@iconify/icons-tabler/refresh';
 import iconTrash from '@iconify/icons-tabler/trash';
 import iconSparkles from '@iconify/icons-tabler/sparkles';
-import iconFlame from '@iconify/icons-tabler/flame';
 import iconCrown from '@iconify/icons-tabler/crown';
 import iconDeviceMobile from '@iconify/icons-tabler/device-mobile';
 import iconDatabase from '@iconify/icons-tabler/database';
@@ -27,7 +26,6 @@ import iconFolder from '@iconify/icons-tabler/folder';
 import type { AudioQuality } from '@/types/music';
 import type { EqPresetId } from '@/native/echoPlayer';
 import { useAccountsStore } from '@/stores/accounts';
-import { useVipStore } from '@/stores/vip';
 import {
   useSettingsStore,
   type AccentThemeMode,
@@ -38,7 +36,6 @@ import {
   type TrackTransitionFadeMs,
   type UpdateMirrorMode,
 } from '@/stores/settings';
-import { usePlayerStore } from '@/stores/player';
 import { useStatsStore } from '@/stores/stats';
 import { useUiStore } from '@/stores/ui';
 import { useI18n } from '@/i18n';
@@ -55,28 +52,26 @@ import {
 } from '@/services/update/updateService';
 import PureToneMark from './PureToneMark.vue';
 import ListeningStatsChart from './ListeningStatsChart.vue';
+import PluginHubTab from './PluginHubTab.vue';
 
-type ProfileSectionTab = 'profile' | 'vip' | 'settings';
+type ProfileSectionTab = 'profile' | 'plugins' | 'settings';
 
 const accounts = useAccountsStore();
-const vip = useVipStore();
 const settings = useSettingsStore();
-const player = usePlayerStore();
 const stats = useStatsStore();
 const ui = useUiStore();
-const { t, effectiveLocale } = useI18n();
+const { t } = useI18n();
 
 const profileScrollRef = ref<HTMLElement | null>(null);
-const vipScrollRef = ref<HTMLElement | null>(null);
+const pluginsScrollRef = ref<HTMLElement | null>(null);
 const settingsScrollRef = ref<HTMLElement | null>(null);
 const activeTab = ref<ProfileSectionTab>('profile');
 const activeScrollRef = computed(() => {
-  if (activeTab.value === 'vip') return vipScrollRef.value;
+  if (activeTab.value === 'plugins') return pluginsScrollRef.value;
   if (activeTab.value === 'settings') return settingsScrollRef.value;
   return profileScrollRef.value;
 });
 const showAccountSwitcher = ref(false);
-const showCalendar = ref(false);
 const showBackupPanel = ref(false);
 const importJsonText = ref('');
 const importingBackup = ref(false);
@@ -130,7 +125,7 @@ const dragSheet = useDraggableSheet({
 
 const sectionTabs = computed<Array<{ id: ProfileSectionTab; label: string }>>(() => [
   { id: 'profile', label: t('profile.tab.profile') },
-  { id: 'vip', label: t('profile.tab.vip') },
+  { id: 'plugins', label: t('profile.tab.plugins') },
   { id: 'settings', label: t('profile.tab.settings') },
 ]);
 
@@ -143,6 +138,7 @@ function switchTab(next: ProfileSectionTab) {
   if (activeTab.value === next) return;
   echoSystem.haptic('selection');
   activeTab.value = next;
+  ui.accountSheetTab = next;
 }
 
 async function refreshDeviceStats() {
@@ -161,9 +157,19 @@ async function refreshDeviceStats() {
 }
 
 watch(
+  () => ui.accountSheetTab,
+  (nextTab) => {
+    if (nextTab && activeTab.value !== nextTab) {
+      activeTab.value = nextTab;
+    }
+  },
+);
+
+watch(
   () => ui.accountSheetOpen,
   (open) => {
     if (open) {
+      activeTab.value = ui.accountSheetTab || 'profile';
       dragSheet.reset();
       showBackupPanel.value = false;
       echoSystem.haptic('light');
@@ -202,10 +208,6 @@ const transitionOptions = computed<Array<{ id: TrackTransitionFadeMs; label: str
   { id: 3000, label: t('settings.transition30') },
   { id: 5000, label: t('settings.transition50') },
 ]);
-
-const weekLabels = computed(() =>
-  effectiveLocale.value === 'en' ? ['M', 'T', 'W', 'T', 'F', 'S', 'S'] : ['一', '二', '三', '四', '五', '六', '日'],
-);
 
 const activeAcc = computed(() => accounts.activeAccount);
 
@@ -258,39 +260,6 @@ const kugouListenDurationLabel = computed(() => {
   if (days > 0) return t('profile.durDH', { d: days, h: hours });
   if (hours > 0) return t('profile.durHM', { h: hours, m: remMin });
   return t('profile.durM', { m: remMin });
-});
-
-function formatTierRelative(endTime?: string, active?: boolean): string {
-  if (!active || !endTime) return t('vip.inactive');
-  const ts = Date.parse(endTime.replace(/-/g, '/'));
-  if (Number.isNaN(ts)) return t('vip.active');
-  const diffDays = Math.ceil((ts - Date.now()) / (24 * 3600 * 1000));
-  if (diffDays <= 0) return t('vip.expired');
-  if (diffDays >= 60) return t('vip.monthsLeft', { months: Math.round(diffDays / 30) });
-  return t('vip.daysLeft', { days: diffDays });
-}
-
-const vipTierCards = computed(() => {
-  const tiers = activeAcc.value?.vipTiers;
-  const fallbackListen = activeAcc.value?.tvipEndTime || activeAcc.value?.vipEndTime;
-  return [
-    {
-      label: t('vip.concept'),
-      short: 'LITE',
-      active: Boolean(tiers?.conceptVip?.active),
-      text: formatTierRelative(tiers?.conceptVip?.endTime, tiers?.conceptVip?.active),
-      tone: 'from-[#818cf8] to-[#6366f1]',
-      ring: 'ring-[#6366f1]/25',
-    },
-    {
-      label: t('vip.listen'),
-      short: 'PLUS',
-      active: Boolean(tiers?.listenVip?.active || fallbackListen),
-      text: formatTierRelative(tiers?.listenVip?.endTime || fallbackListen, Boolean(tiers?.listenVip?.active || fallbackListen)),
-      tone: 'from-[#38bdf8] to-[#0284c7]',
-      ring: 'ring-[#0284c7]/25',
-    },
-  ];
 });
 
 const mirrorOptions = computed<Array<{ id: UpdateMirrorMode; label: string }>>(() => [
@@ -381,14 +350,6 @@ async function handleRestoreBackup() {
   } finally {
     importingBackup.value = false;
   }
-}
-
-function handleClaimNow() {
-  echoSystem.haptic('medium');
-  void vip.claimAccount(accounts.activeAccount, {
-    silent: false,
-    mixsongid: player.currentSong?.mixSongId,
-  });
 }
 
 async function handleCheckUpdate() {
@@ -553,11 +514,10 @@ async function openAuthorProfile() {
                           UID {{ activeAcc.userid }}
                         </span>
                         <span
-                          v-if="vip.claimedToday"
-                          class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#34c759]/14 text-[#2fb350] shrink-0"
+                          v-if="activeAcc.tvipEndTime"
+                          class="text-[11px] text-[var(--text-tertiary)] tabular-nums truncate"
                         >
-                          <span class="w-1.5 h-1.5 rounded-full bg-[#34c759]" />
-                          {{ t('profile.claimedToday') }}
+                          · {{ activeAcc.tvipEndTime.slice(0, 10) }}
                         </span>
                       </div>
                     </div>
@@ -660,9 +620,9 @@ async function openAuthorProfile() {
               <ListeningStatsChart />
               </div>
 
-              <!-- ==================== TAB 2: 会员签到 ==================== -->
+              <!-- ==================== TAB 2: 扩展插件 (melune-ext/v1) ==================== -->
               <div
-                ref="vipScrollRef"
+                ref="pluginsScrollRef"
                 class="pt-pane am-scroll px-4 pt-4 pb-[calc(var(--safe-bottom)+32px)] space-y-4"
                 :class="activeTabIndex === 1 ? 'is-active' : activeTabIndex > 1 ? 'is-before' : 'is-after'"
                 :aria-hidden="activeTabIndex !== 1"
@@ -671,153 +631,7 @@ async function openAuthorProfile() {
                 @touchend.passive="dragSheet.onBodyTouchEnd"
                 @touchcancel.passive="dragSheet.onBodyTouchEnd"
               >
-              <section v-if="!accounts.isLoggedIn" class="rounded-[22px] bg-[var(--bg-card)] p-6 text-center shadow-xs">
-                <div class="w-14 h-14 rounded-full bg-[var(--bg-subtle)] mx-auto flex items-center justify-center am-accent-text mb-3">
-                  <Icon :icon="iconCrown" class="w-7 h-7" />
-                </div>
-                <div class="text-[16px] font-semibold text-[var(--text-primary)]">{{ t('home.loginCardTitle') }}</div>
-                <p class="text-[13px] text-[var(--text-secondary)] mt-1">{{ t('home.loginCardDesc') }}</p>
-                <button
-                  type="button"
-                  class="mt-4 w-full h-11 rounded-[14px] am-accent-bg text-white text-[15px] font-semibold border-0 am-tap"
-                  @click="ui.loginModalOpen = true"
-                >
-                  {{ t('home.loginNow') }}
-                </button>
-              </section>
-
-              <template v-else>
-                <section class="rounded-[22px] bg-[var(--bg-card)] p-4 shadow-xs space-y-3">
-                  <div class="flex items-center justify-between">
-                    <span class="text-[15px] font-bold text-[var(--text-primary)]">{{ t('vip.overview') }}</span>
-                    <span class="text-[12px] text-[var(--text-secondary)]">{{ activeAcc?.nickname }}</span>
-                  </div>
-                  <div class="grid grid-cols-2 gap-2.5">
-                    <div
-                      v-for="tier in vipTierCards"
-                      :key="tier.label"
-                      class="rounded-[16px] p-3 bg-[var(--bg-subtle)]/50 flex items-center gap-2.5"
-                      :class="tier.active ? `ring-1 ${tier.ring}` : 'opacity-75'"
-                    >
-                      <div
-                        class="w-9 h-9 rounded-[11px] bg-gradient-to-br flex items-center justify-center text-white text-[10px] font-black shrink-0 shadow-xs"
-                        :class="tier.active ? tier.tone : 'from-neutral-400/60 to-neutral-500/60'"
-                      >
-                        {{ tier.short }}
-                      </div>
-                      <div class="min-w-0">
-                        <div class="text-[13px] font-bold text-[var(--text-primary)] leading-tight">{{ tier.label }}</div>
-                        <div
-                          class="text-[11px] truncate mt-0.5 tabular-nums"
-                          :class="tier.active ? 'am-accent-text font-semibold' : 'text-[var(--text-tertiary)]'"
-                        >
-                          {{ tier.text }}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </section>
-
-                <section class="rounded-[22px] bg-[var(--bg-card)] p-4 shadow-xs space-y-4">
-                  <div class="flex items-start justify-between gap-3">
-                    <div>
-                      <div class="text-[12px] font-medium text-[var(--text-secondary)]">{{ t('vip.dailyRemaining') }}</div>
-                      <div class="flex items-baseline gap-1.5 mt-0.5">
-                        <span class="text-[36px] font-bold tracking-tight tabular-nums text-[var(--text-primary)] leading-none">
-                          {{ vip.vipRemainingDays ?? '--' }}
-                        </span>
-                        <span class="text-[14px] font-medium text-[var(--text-secondary)]">{{ t('vip.daysUnit') }}</span>
-                      </div>
-                      <div class="text-[12px] text-[var(--text-secondary)] mt-1.5 tabular-nums">
-                        {{ activeAcc?.tvipEndTime ? t('vip.validUntil', { time: activeAcc.tvipEndTime }) : t('vip.claimHint') }}
-                      </div>
-                    </div>
-                    <div class="flex items-center gap-1 px-2.5 py-1 rounded-full bg-[var(--bg-subtle)] text-[12px] font-semibold text-[var(--text-primary)] shrink-0">
-                      <Icon :icon="iconFlame" class="w-4 h-4 am-accent-text" />
-                      <span>{{ t('vip.streak', { days: vip.currentStreakDays }) }}</span>
-                    </div>
-                  </div>
-
-                  <div class="grid gap-2.5" :class="accounts.accounts.length > 1 ? 'grid-cols-2' : 'grid-cols-1'">
-                    <button
-                      type="button"
-                      class="h-11 px-2.5 rounded-[14px] am-accent-bg text-white text-[13.5px] font-semibold border-0 flex items-center justify-center gap-1.5 am-tap shadow-xs min-w-0"
-                      :disabled="vip.isClaiming || vip.isBatchClaiming"
-                      @click="handleClaimNow"
-                    >
-                      <Icon v-if="vip.isClaiming" :icon="iconRefresh" class="w-4 h-4 animate-spin shrink-0" />
-                      <span class="truncate">{{ vip.isClaiming ? t('vip.claiming') : vip.claimedToday ? t('vip.claimedSync') : t('vip.claimBtn') }}</span>
-                    </button>
-
-                    <button
-                      v-if="accounts.accounts.length > 1"
-                      type="button"
-                      class="h-11 px-2.5 rounded-[14px] bg-[var(--bg-subtle)] text-[var(--text-primary)] text-[13.5px] font-semibold border-0 flex items-center justify-center gap-1.5 am-tap min-w-0"
-                      :disabled="vip.isClaiming || vip.isBatchClaiming"
-                      @click="vip.claimAllAccounts(false)"
-                    >
-                      <span class="truncate">{{ vip.isBatchClaiming ? vip.batchProgressText || '…' : t('vip.batchClaim', { count: accounts.accounts.length }) }}</span>
-                    </button>
-                  </div>
-
-                  <div class="pt-3 am-hairline-t">
-                    <button
-                      type="button"
-                      class="w-full flex items-center justify-between text-[13px] font-medium text-[var(--text-secondary)] bg-transparent border-0 p-0"
-                      @click="showCalendar = !showCalendar"
-                    >
-                      <span>
-                        {{
-                          t('vip.calendarMeta', {
-                            month: vip.currentCalendar.monthLabel,
-                            claimed: vip.currentCalendar.claimedInMonth,
-                            total: vip.currentCalendar.daysInMonth,
-                          })
-                        }}
-                      </span>
-                      <span class="am-accent-text font-semibold">{{ showCalendar ? t('vip.collapse') : t('vip.expand') }}</span>
-                    </button>
-
-                    <div v-if="showCalendar" class="mt-3">
-                      <div class="grid grid-cols-7 gap-1 text-center text-[11px] text-[var(--text-tertiary)] mb-1.5">
-                        <span v-for="(w, wi) in weekLabels" :key="wi">{{ w }}</span>
-                      </div>
-                      <div class="grid grid-cols-7 gap-1.5">
-                        <div
-                          v-for="cell in vip.currentCalendar.cells"
-                          :key="cell.key"
-                          class="aspect-square flex items-center justify-center rounded-full text-[12px] font-medium tabular-nums"
-                          :class="
-                            cell.empty
-                              ? ''
-                              : cell.isClaimed
-                                ? 'am-accent-bg text-white font-semibold'
-                                : cell.isFailed
-                                  ? 'bg-[#ff3b30]/15 text-[#ff3b30]'
-                                  : cell.isToday
-                                    ? 'ring-1.5 ring-[var(--accent)] am-accent-text font-bold'
-                                    : cell.isFuture
-                                      ? 'text-[var(--text-tertiary)]/50'
-                                      : 'text-[var(--text-secondary)]'
-                          "
-                        >
-                          {{ cell.empty ? '' : cell.day }}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </section>
-
-                <section class="rounded-[22px] bg-[var(--bg-card)] overflow-hidden divide-y divide-[var(--hairline)] shadow-xs">
-                  <label class="px-4 py-3.5 flex items-center justify-between cursor-pointer">
-                    <div>
-                      <div class="text-[15px] text-[var(--text-primary)]">{{ t('vip.autoClaim') }}</div>
-                      <div class="text-[11px] text-[var(--text-secondary)]">{{ t('vip.autoClaimSub') }}</div>
-                    </div>
-                    <input v-model="settings.autoClaimOnLaunch" type="checkbox" class="ios-switch" />
-                  </label>
-                </section>
-              </template>
+                <PluginHubTab />
               </div>
 
               <!-- ==================== TAB 3: 偏好设置 ==================== -->
@@ -1043,17 +857,6 @@ async function openAuthorProfile() {
                       <div class="text-[11px] text-[var(--text-secondary)] leading-snug mt-0.5">{{ t('settings.lockLyricsSub') }}</div>
                     </div>
                     <input v-model="settings.showLockScreenLyrics" type="checkbox" class="ios-switch" />
-                  </label>
-
-                  <label class="px-4 py-3 flex items-center justify-between gap-3 cursor-pointer">
-                    <div class="flex items-center gap-2 min-w-0">
-                      <Icon :icon="iconSparkles" class="w-4 h-4 am-accent-text shrink-0" />
-                      <div class="min-w-0">
-                        <div class="text-[14.5px] text-[var(--text-primary)] leading-snug">{{ t('settings.autoUnblock') }}</div>
-                        <div class="text-[11px] text-[var(--text-secondary)] leading-snug mt-0.5">{{ t('settings.autoUnblockSub') }}</div>
-                      </div>
-                    </div>
-                    <input v-model="settings.enableUnblock" type="checkbox" class="ios-switch" />
                   </label>
                 </div>
               </section>

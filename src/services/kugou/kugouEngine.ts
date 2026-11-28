@@ -168,6 +168,12 @@ const moduleLoaders: Record<string, () => Promise<{ default?: KugouModuleFn } | 
   '/album/detail': () => import('@kugou/module/album_detail.js'),
   '/album/songs': () => import('@kugou/module/album_songs.js'),
   '/song/climax': () => import('@kugou/module/song_climax.js'),
+  '/team/period/info': () => import('@kugou/module/team_period_info.js'),
+  '/team/my/info': () => import('@kugou/module/team_my_info.js'),
+  '/team/my': () => import('@kugou/module/team_my.js'),
+  '/team/join': () => import('@kugou/module/team_join.js'),
+  '/team/my/status': () => import('@kugou/module/team_my_status.js'),
+  '/team/history': () => import('@kugou/module/team_history.js'),
 };
 
 const moduleCache = new Map<string, KugouModuleFn>();

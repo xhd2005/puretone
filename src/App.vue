@@ -7,7 +7,7 @@ import { hydratePlaylistCoverCache } from '@/services/playback/playlistCoverReso
 import { checkForAppUpdate, FALLBACK_APP_VERSION, type ReleaseUpdateInfo } from '@/services/update/updateService';
 import { useSettingsStore } from '@/stores/settings';
 import { useAccountsStore } from '@/stores/accounts';
-import { useVipStore } from '@/stores/vip';
+import { usePluginsStore } from '@/stores/plugins';
 import { usePlayerStore } from '@/stores/player';
 import { useStatsStore } from '@/stores/stats';
 import { useUiStore } from '@/stores/ui';
@@ -22,6 +22,7 @@ import AddToPlaylistSheet from '@/components/AddToPlaylistSheet.vue';
 import SongCommentsSheet from '@/components/SongCommentsSheet.vue';
 import ArtistPickerSheet from '@/components/ArtistPickerSheet.vue';
 import UnblockSourceSheet from '@/components/UnblockSourceSheet.vue';
+import PluginInstallModal from '@/components/PluginInstallModal.vue';
 import VerificationModal from '@/components/VerificationModal.vue';
 import UpdateModal from '@/components/UpdateModal.vue';
 import LyricPosterModal from '@/components/LyricPosterModal.vue';
@@ -34,7 +35,7 @@ import ComplianceDisclaimerModal, {
 const router = useRouter();
 const settings = useSettingsStore();
 const accounts = useAccountsStore();
-const vip = useVipStore();
+const plugins = usePluginsStore();
 const player = usePlayerStore();
 const stats = useStatsStore();
 const ui = useUiStore();
@@ -47,6 +48,7 @@ let autoUpdatePromptTimer: ReturnType<typeof setTimeout> | null = null;
 let onlineServicesStarted = false;
 let resolvedAppVersion = FALLBACK_APP_VERSION;
 let pendingOpenNowPlayingOnConsent = false;
+let pendingDeepLinkOnConsent = '';
 
 function flushPendingAutoUpdateIfReady() {
   if (!splashDone.value || !complianceReady.value || ui.complianceModalOpen || !pendingAutoUpdate.value) return;
@@ -64,7 +66,7 @@ function flushPendingAutoUpdateIfReady() {
 
 /**
  * Strictly gated behind explicit user acceptance of ComplianceDisclaimerModal:
- * ZERO external network requests fire before the user agrees!
+ * ZERO external network requests or plugin launch hooks fire before the user agrees!
  */
 function startOnlineServicesOnce() {
   if (onlineServicesStarted) return;
@@ -79,9 +81,16 @@ function startOnlineServicesOnce() {
     pendingOpenNowPlayingOnConsent = false;
     ui.openNowPlaying('cover');
   }
+  if (pendingDeepLinkOnConsent) {
+    const uri = pendingDeepLinkOnConsent;
+    pendingDeepLinkOnConsent = '';
+    setTimeout(() => {
+      void plugins.handleDeepLinkUri(uri);
+    }, 450);
+  }
 
   setTimeout(() => {
-    void vip.maybeAutoClaimOnLaunch(false);
+    void plugins.runLaunchHooks();
   }, 2000);
 
   // Automatic cold-start update check (queues gracefully behind Splash & Compliance modal)
@@ -135,21 +144,26 @@ function onSplashDone() {
 
 onMounted(async () => {
   await ui.initSystemInsets();
+  const launchFlags = await echoSystem.getLaunchFlags();
+  resolvedAppVersion = launchFlags.versionName || FALLBACK_APP_VERSION;
+  pendingOpenNowPlayingOnConsent = Boolean(launchFlags.openNowPlaying);
+  pendingDeepLinkOnConsent = String(launchFlags.pendingDeepLink || '').trim();
+
   // Pure local-sandbox hydration first (zero external network calls)
   await Promise.all([
     settings.hydrate(),
     accounts.hydrate({ deferNetworkRefresh: true }),
-    vip.hydrate(),
+    plugins.hydrate(resolvedAppVersion),
     player.hydrate(),
     stats.hydrate(),
     hydratePlaylistCoverCache(),
   ]);
 
-  const launchFlags = await echoSystem.getLaunchFlags();
-  resolvedAppVersion = launchFlags.versionName || FALLBACK_APP_VERSION;
-  pendingOpenNowPlayingOnConsent = Boolean(launchFlags.openNowPlaying);
-
   await echoSystem.onHardwareBack(() => {
+    if (plugins.pendingReview) {
+      plugins.cancelInstallReview();
+      return;
+    }
     if (ui.closeTopOverlay()) return;
     const isRootTab = ['/home', '/library', '/search'].includes(router.currentRoute.value.path);
     if (!isRootTab && window.history.length > 1) {
@@ -162,6 +176,14 @@ onMounted(async () => {
   await echoSystem.onOpenNowPlayingIntent(() => {
     if (complianceReady.value && player.currentSong) {
       ui.openNowPlaying('cover');
+    }
+  });
+
+  await echoSystem.onDeepLink((uri) => {
+    if (complianceReady.value) {
+      void plugins.handleDeepLinkUri(uri);
+    } else {
+      pendingDeepLinkOnConsent = uri;
     }
   });
 
@@ -193,6 +215,7 @@ onMounted(async () => {
   <SongCommentsSheet />
   <ArtistPickerSheet />
   <UnblockSourceSheet />
+  <PluginInstallModal />
   <LyricPosterModal />
   <VerificationModal />
   <UpdateModal />

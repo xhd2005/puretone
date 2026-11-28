@@ -1,7 +1,8 @@
 import type { AudioQuality, Song } from '@/types/music';
 import { echoPlayer } from '@/native/echoPlayer';
 import { kugouApi } from '@/services/kugou/kugouEngine';
-import { extractUrlsFromPayload, getPinnedSource, getTrackKey, resolveUnblockedUrl } from './unblockEngine';
+import { extractUrlsFromPayload, getTrackKey } from './trackUtils';
+import { pluginRuntime } from '@/services/plugins/pluginRuntime';
 
 export interface ResolvedStream {
   url: string;
@@ -319,9 +320,10 @@ export async function resolvePlayableStream(
   preferredQuality: AudioQuality = '320',
   options: { enableUnblock?: boolean; bypassCache?: boolean; forceUnblock?: boolean } = {},
 ): Promise<ResolvedStream> {
-  const enableUnblock = options.enableUnblock !== false;
-  const forceUnblock = Boolean(options.forceUnblock);
-  const bypassCache = Boolean(options.bypassCache || forceUnblock);
+  const hasPluginResolver = pluginRuntime.hasAudioResolvers();
+  const enablePluginFallback = options.enableUnblock !== false && hasPluginResolver;
+  const forcePluginFallback = Boolean(options.forceUnblock) && hasPluginResolver;
+  const bypassCache = Boolean(options.bypassCache || forcePluginFallback);
 
   // 0a. Fast return from in-memory prefetch cache (instant track switch!)
   if (!bypassCache) {
@@ -330,21 +332,21 @@ export async function resolvePlayableStream(
   }
 
   // 0a-offline. When device is strictly offline, immediately serve local Media3 SimpleCache audio!
-  if (!forceUnblock && typeof navigator !== 'undefined' && navigator.onLine === false) {
+  if (!forcePluginFallback && typeof navigator !== 'undefined' && navigator.onLine === false) {
     const offlineLocal = await tryResolveLocalCachedStream(song, preferredQuality);
     if (offlineLocal) return offlineLocal;
   }
 
-  // 0b. Pinned unblock source always wins (unless explicitly forcing fresh unblock fallback below)
-  if (enableUnblock && !forceUnblock) {
-    const pinned = await getPinnedSource(song);
+  // 0b. User-pinned extension audio source takes priority when an audio.resolver plugin is installed
+  if (enablePluginFallback && !forcePluginFallback) {
+    const pinned = await pluginRuntime.getPinnedAudio(song);
     if (pinned) {
-      const unblocked = await resolveUnblockedUrl(song, preferredQuality);
-      if (unblocked) {
+      const resolvedExt = await pluginRuntime.resolveFallbackAudio(song, preferredQuality);
+      if (resolvedExt) {
         const res: ResolvedStream = {
-          ...unblocked,
+          ...resolvedExt,
           isUnblocked: true,
-          cacheKey: buildAudioCacheKey(song, unblocked.quality, unblocked.sourceTag, true),
+          cacheKey: buildAudioCacheKey(song, resolvedExt.quality, resolvedExt.sourceTag, true),
         };
         setCachedResolvedStream(song, preferredQuality, res);
         return res;
@@ -352,9 +354,9 @@ export async function resolvePlayableStream(
     }
   }
 
-  // 1. Official KuGou catalog resolution (skip when copyright-gray or forcing alternate unblock recovery)
+  // 1. Official KuGou catalog resolution
   let fallbackTrial: ResolvedStream | null = null;
-  const skipOfficialRetries = forceUnblock || Boolean(song.isGray && enableUnblock);
+  const skipOfficialRetries = forcePluginFallback || Boolean(song.isGray && enablePluginFallback);
 
   if (song.hash && !skipOfficialRetries) {
     let hashes: ExtractedQualityHashes = {
@@ -440,14 +442,14 @@ export async function resolvePlayableStream(
     }
   }
 
-  // 2. Built-in 4-channel gray-song / trial-snippet / recovery unblock waterfall
-  if (enableUnblock || forceUnblock) {
-    const unblocked = await resolveUnblockedUrl(song, preferredQuality);
-    if (unblocked) {
+  // 2. Pluggable external audio.resolver extension hook (strictly inactive unless user installed a plugin)
+  if (enablePluginFallback || forcePluginFallback) {
+    const resolvedExt = await pluginRuntime.resolveFallbackAudio(song, preferredQuality);
+    if (resolvedExt) {
       const res: ResolvedStream = {
-        ...unblocked,
+        ...resolvedExt,
         isUnblocked: true,
-        cacheKey: buildAudioCacheKey(song, unblocked.quality, unblocked.sourceTag, true),
+        cacheKey: buildAudioCacheKey(song, resolvedExt.quality, resolvedExt.sourceTag, true),
       };
       setCachedResolvedStream(song, preferredQuality, res);
       return res;
@@ -455,7 +457,7 @@ export async function resolvePlayableStream(
   }
 
   // 3. Offline / weak-network local cache fallback (Media3 SimpleCache up to 2GB+!)
-  if (!forceUnblock) {
+  if (!forcePluginFallback) {
     const offlineFallback = await tryResolveLocalCachedStream(song, preferredQuality);
     if (offlineFallback) {
       return offlineFallback;
@@ -466,5 +468,7 @@ export async function resolvePlayableStream(
     return { ...fallbackTrial, sourceTag: '试听片段', cacheKey: undefined };
   }
 
-  throw new Error('暂无可用音源，点击「换源」试试其他版本');
+  throw new Error(
+    hasPluginResolver ? '暂无可用音源，点击「换源」试试其他扩展音源' : '暂无可用官方音源，可在「扩展插件」中安装音源扩展',
+  );
 }

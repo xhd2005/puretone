@@ -363,5 +363,12 @@ class PureTonePluginUnitTest {
         assertTrue(EchoSystemPlugin.isUpdateCandidateAllowed(mirrorApk, validSha))
         assertFalse("Non-GitHub mirror without SHA-256 must be rejected", EchoSystemPlugin.isUpdateCandidateAllowed(mirrorApk, ""))
         assertFalse("Cleartext HTTP APK must always be rejected", EchoSystemPlugin.isUpdateCandidateAllowed("http://github.com/a.apk", validSha))
+
+        // melune://ext/* deep link allowlist
+        assertTrue(EchoSystemPlugin.isAllowedMeluneDeepLink("melune://ext/install?registry=https%3A%2F%2Fexample.com%2Fr.json&id=demo"))
+        assertTrue(EchoSystemPlugin.isAllowedMeluneDeepLink("melune://ext/registry?url=https%3A%2F%2Fexample.com%2Fr.json"))
+        assertFalse(EchoSystemPlugin.isAllowedMeluneDeepLink("melune://evil/path"))
+        assertFalse(EchoSystemPlugin.isAllowedMeluneDeepLink("javascript:alert(1)"))
+        assertFalse(EchoSystemPlugin.isAllowedMeluneDeepLink(""))
     }
 }

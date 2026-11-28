@@ -371,6 +371,8 @@ class EchoSystemPlugin : Plugin() {
         }
         val openNowPlaying = pendingOpenNowPlaying
         pendingOpenNowPlaying = false
+        val deepLink = pendingDeepLink
+        pendingDeepLink = ""
 
         val versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             pkgInfo?.longVersionCode?.toInt() ?: BuildConfig.VERSION_CODE
@@ -381,6 +383,7 @@ class EchoSystemPlugin : Plugin() {
         call.resolve(
             JSObject()
                 .put("openNowPlaying", openNowPlaying)
+                .put("pendingDeepLink", deepLink)
                 .put("versionName", pkgInfo?.versionName ?: BuildConfig.VERSION_NAME)
                 .put("versionCode", versionCode),
         )
@@ -1040,6 +1043,25 @@ class EchoSystemPlugin : Plugin() {
 
         @Volatile
         var pendingOpenNowPlaying: Boolean = false
+
+        @Volatile
+        var pendingDeepLink: String = ""
+
+        fun isAllowedMeluneDeepLink(uri: String?): Boolean {
+            val clean = uri?.trim().orEmpty()
+            if (!clean.startsWith("melune://ext/", ignoreCase = true)) return false
+            return clean.length <= 2048
+        }
+
+        fun dispatchDeepLink(uri: String) {
+            if (!isAllowedMeluneDeepLink(uri)) return
+            val plugin = instance
+            if (plugin != null && plugin.hasListeners("deepLink")) {
+                plugin.notifyListeners("deepLink", JSObject().put("url", uri))
+            } else {
+                pendingDeepLink = uri
+            }
+        }
 
         fun dispatchHardwareBack(): Boolean {
             val plugin = instance ?: return false

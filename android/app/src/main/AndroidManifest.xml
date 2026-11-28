@@ -36,7 +36,16 @@
             android:label="@string/title_activity_main"
             android:launchMode="singleTask"
             android:theme="@style/AppTheme.NoActionBarLaunch"
-            android:windowSoftInputMode="adjustResize" />
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:host="ext"
+                    android:scheme="melune" />
+            </intent-filter>
+        </activity>
 
         <activity-alias
             android:name="com.xhd2005.puretone.MeluneLauncher"

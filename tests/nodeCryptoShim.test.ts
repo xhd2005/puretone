@@ -53,6 +53,31 @@ describe('Node browser shims parity for KuGouMusicApi', () => {
     expect(decrypted.toString('utf8')).toBe(secret);
   });
 
+  it('matches Node native createPublicKey + RSA_NO_PADDING encryption byte-for-byte for /team/* routes', () => {
+    const { publicKey } = nodeCrypto.generateKeyPairSync('rsa', {
+      modulusLength: 1024,
+      publicKeyEncoding: { type: 'spki', format: 'pem' },
+      privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+    });
+    const prefix = 'moc.uoguk.59::';
+    const input = Buffer.from(`${prefix}demo_token_2026_melune_team`, 'utf8');
+    const padded = Buffer.alloc(128);
+    input.copy(padded);
+
+    const nodeKey = nodeCrypto.createPublicKey(publicKey);
+    const expectedHex = nodeCrypto
+      .publicEncrypt({ key: nodeKey, padding: nodeCrypto.constants.RSA_NO_PADDING }, padded)
+      .toString('hex');
+
+    const shimKey = cryptoShim.createPublicKey(publicKey);
+    const actualHex = cryptoShim
+      .publicEncrypt({ key: shimKey, padding: cryptoShim.constants.RSA_NO_PADDING }, padded)
+      .toString('hex');
+
+    expect(actualHex).toBe(expectedHex);
+    expect(actualHex).toHaveLength(256);
+  });
+
   it('deflates and inflates payloads identically via pako zlib shim', () => {
     const sample = Buffer.from('type_id=4&action=play&mixsongid=666075191&state=完整播放', 'utf8');
     const compressed = zlibShim.deflateSync(sample);

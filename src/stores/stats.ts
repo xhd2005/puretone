@@ -2,7 +2,7 @@ import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import type { Song } from '@/types/music';
 import { echoSystem } from '@/native/echoSystem';
-import { formatLocalDate } from '@/services/vip/vipClaimEngine';
+import { formatLocalDate } from '@/utils/date';
 
 const STATS_KEY_V1 = 'stats.listening.v1';
 const STATS_KEY_V2 = 'stats.listening.v2';

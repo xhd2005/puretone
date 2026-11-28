@@ -25,8 +25,6 @@ import iconPhoto from '@iconify/icons-tabler/photo';
 import iconPlayerTrackNext from '@iconify/icons-tabler/player-track-next';
 import iconTrash from '@iconify/icons-tabler/trash';
 import iconAdjustments from '@iconify/icons-tabler/adjustments';
-import iconDisc from '@iconify/icons-tabler/disc';
-import iconLayoutColumns from '@iconify/icons-tabler/layout-columns';
 import type { SongClimaxRange } from '@/types/music';
 import { kugouApi } from '@/services/kugou/kugouEngine';
 import { openArtistProfileFromSong } from '@/services/playback/artistNavigation';
@@ -34,7 +32,11 @@ import {
   computeCoverCarouselLayout,
   computeQueueWindow,
   computeSharedArtworkTransform,
+  getRingSlotAssignment,
+  rotateRingCenter,
+  stepCriticallyDampedSpring,
   type BoxRect,
+  type RingSlotId,
 } from '@/utils/heroMorph';
 import { useDecodedCover } from '@/composables/useDecodedCover';
 import { usePlayerStore } from '@/stores/player';
@@ -44,7 +46,7 @@ import { useI18n } from '@/i18n';
 import { echoSystem } from '@/native/echoSystem';
 import FluidCoverBackground from './FluidCoverBackground.vue';
 import KrcLyricsView from './KrcLyricsView.vue';
-import CoverFlowStage from './CoverFlowStage.vue';
+import LandscapeStudioStage from './LandscapeStudioStage.vue';
 
 const router = useRouter();
 const player = usePlayerStore();
@@ -55,14 +57,12 @@ const { t } = useI18n();
 // Double-buffered pre-decoded cover URL: zero empty gray flash on track switch!
 const { displayedCoverUrl } = useDecodedCover(() => player.currentSong?.coverUrl || '');
 
-// Landscape Dual-Mode detection (Split Lyrics + Cover / 3D Cover Flow)
+// Landscape detection (delegated to 3-mode LandscapeStudioStage.vue)
 function checkIsLandscape(): boolean {
   if (typeof window === 'undefined') return false;
   return window.innerWidth > window.innerHeight && window.innerWidth >= 560;
 }
 const isLandscape = ref(checkIsLandscape());
-const landscapeMode = ref<'split' | 'coverflow'>('split');
-const landscapeRightPane = ref<'lyrics' | 'queue'>('lyrics');
 
 function handleViewportResize() {
   const next = checkIsLandscape();
@@ -90,7 +90,7 @@ onMounted(() => {
 const climaxRange = ref<SongClimaxRange | null>(null);
 const showLyricOffsetBar = ref(false);
 
-// Adjacent queue songs for 3-card interactive physical swipe carousel
+// Adjacent queue songs for 3-slot ring cover carousel
 const prevQueueSong = computed(() => {
   const len = player.queue.length;
   if (len <= 1 || player.currentIndex < 0) return null;
@@ -102,6 +102,32 @@ const nextQueueSong = computed(() => {
   if (len <= 1 || player.currentIndex < 0) return null;
   return player.queue[(player.currentIndex + 1) % len] || null;
 });
+
+// Background pre-decode adjacent covers so frame 1 of horizontal drag is 100% crisp
+const predecodedUrls = new Set<string>();
+function preloadCoverImage(url?: string) {
+  if (!url || predecodedUrls.has(url) || typeof Image === 'undefined') return;
+  predecodedUrls.add(url);
+  if (predecodedUrls.size > 48) {
+    const first = predecodedUrls.values().next().value;
+    if (first) predecodedUrls.delete(first);
+  }
+  const img = new Image();
+  img.decoding = 'async';
+  img.src = url;
+  if (typeof img.decode === 'function') {
+    void img.decode().catch(() => {});
+  }
+}
+
+watch(
+  () => [prevQueueSong.value?.coverUrl, nextQueueSong.value?.coverUrl],
+  ([prevUrl, nextUrl]) => {
+    preloadCoverImage(prevUrl);
+    preloadCoverImage(nextUrl);
+  },
+  { immediate: true },
+);
 
 // Windowed Up Next Queue (~60 rows max instead of 1,500+ DOM nodes)
 const queueBeforeCount = ref(15);
@@ -144,10 +170,11 @@ watch(
   },
 );
 
-// ==================== SINGLE PERSISTENT SHARED ARTWORK GEOMETRY ====================
-// One single always-visible artwork layer lives directly on `.np-stage-host` (z-index: 24).
-// Switching Cover <-> Lyrics <-> Queue ONLY changes its GPU `transform`, making double-blank
-// cover flicker physically impossible!
+// ==================== DIRECT-DOM 3-SLOT RING CAROUSEL & HERO MORPH ====================
+// Three permanent DOM card slots (0, 1, 2) rotate in-place on swipe commit:
+// - Dragging mutates DOM transforms directly inside rAF -> ZERO Vue re-renders per frame!
+// - On swipe commit, the incoming card glides to tx=0 and BECOMES centerSlotId in-place ->
+//   0.00px teleport delta, mathematically IMPOSSIBLE to bounce back from the opposite direction!
 const stageHostRef = ref<HTMLElement | null>(null);
 const coverSlotRef = ref<HTMLElement | null>(null);
 const miniSlotRef = ref<HTMLElement | null>(null);
@@ -159,6 +186,162 @@ const artworkReadyForTransition = ref(false);
 let slotResizeObserver: ResizeObserver | null = null;
 let readyRaf1 = 0;
 let readyRaf2 = 0;
+
+const RING_SLOT_IDS: readonly RingSlotId[] = [0, 1, 2];
+const centerSlotId = ref<RingSlotId>(0);
+const slotUrls = ref<[string, string, string]>(['', '', '']);
+const slotEls: Array<HTMLElement | null> = [null, null, null];
+
+function setSlotEl(id: RingSlotId, el: unknown) {
+  slotEls[id] = el instanceof HTMLElement ? el : null;
+}
+
+const ringAssignment = computed(() => getRingSlotAssignment(centerSlotId.value));
+
+function syncIdleSlotUrls() {
+  const assign = getRingSlotAssignment(centerSlotId.value);
+  const nextUrls: [string, string, string] = [...slotUrls.value];
+  nextUrls[assign.center] = displayedCoverUrl.value || player.currentSong?.coverUrl || '';
+  nextUrls[assign.prev] = prevQueueSong.value?.coverUrl || '';
+  nextUrls[assign.next] = nextQueueSong.value?.coverUrl || '';
+  slotUrls.value = nextUrls;
+}
+
+const dragOffsetY = ref(0);
+const isDraggingSheet = ref(false);
+const heartBurst = ref(false);
+
+// Non-reactive 120Hz gesture & spring state (ZERO Vue reactivity overhead while swiping!)
+let ringSwipeActive = false;
+let ringDragX = 0;
+let ringTargetX = 0;
+let ringVelocity = 0; // px/sec
+let ringCommitDir: 'next' | 'prev' | null = null;
+let ringRafId = 0;
+let ringRafLast = 0;
+let sheetTouchY = 0;
+let coverTouchStartX = 0;
+let coverTouchStartY = 0;
+let coverLastTouchX = 0;
+let coverLastTouchTime = 0;
+let coverGestureAxis: 'none' | 'x' | 'y' = 'none';
+let lastCoverTapAt = 0;
+let heartBurstTimer: ReturnType<typeof setTimeout> | null = null;
+
+function getPortraitStride(): number {
+  return Math.max(220, (coverSlotRect.value?.width || 300) + 34);
+}
+
+function stopRingSpring() {
+  if (ringRafId) {
+    cancelAnimationFrame(ringRafId);
+    ringRafId = 0;
+  }
+  ringRafLast = 0;
+}
+
+function clearRingDirectStyles() {
+  for (const id of RING_SLOT_IDS) {
+    const el = slotEls[id];
+    if (!el) continue;
+    el.style.removeProperty('transition');
+    el.style.removeProperty('transform');
+    el.style.removeProperty('opacity');
+    el.style.removeProperty('z-index');
+  }
+}
+
+/**
+ * Writes synchronized GPU transforms directly to the 3 ring slot DOM nodes (0 Vue VDOM diff!).
+ */
+function paintRingDirect(tx: number) {
+  const assign = getRingSlotAssignment(centerSlotId.value);
+  const stride = getPortraitStride();
+  const baseScale = player.isPlaying ? 1 : 0.84;
+  const layout = computeCoverCarouselLayout(tx, stride, baseScale);
+
+  const applyOne = (id: RingSlotId, transform: string, opacity: number, zIndex: number) => {
+    const el = slotEls[id];
+    if (!el) return;
+    el.style.transition = 'none';
+    el.style.transform = transform;
+    el.style.opacity = String(opacity);
+    el.style.zIndex = String(zIndex);
+  };
+
+  applyOne(assign.prev, layout.prev.transform, slotUrls.value[assign.prev] ? layout.prev.opacity : 0, 23);
+  applyOne(assign.center, layout.current.transform, layout.current.opacity, 24);
+  applyOne(assign.next, layout.next.transform, slotUrls.value[assign.next] ? layout.next.opacity : 0, 23);
+}
+
+function finishRingSpring() {
+  stopRingSpring();
+  const committed = ringCommitDir;
+  ringCommitDir = null;
+  ringDragX = 0;
+  ringTargetX = 0;
+  ringVelocity = 0;
+
+  if (committed) {
+    // Rotate ring center in-place: the incoming slot already sitting at tx=0 stays at tx=0!
+    centerSlotId.value = rotateRingCenter(centerSlotId.value, committed);
+  }
+
+  // Keep transition disabled while Vue commits the rotated idle styles so 0 reverse motion occurs
+  for (const id of RING_SLOT_IDS) {
+    const el = slotEls[id];
+    if (el) el.style.transition = 'none';
+  }
+
+  ringSwipeActive = false;
+  syncIdleSlotUrls();
+
+  void nextTick(() => {
+    // Flush style snapshot in idle coordinates before releasing inline transition override
+    clearRingDirectStyles();
+    for (const id of RING_SLOT_IDS) {
+      const el = slotEls[id];
+      if (el) {
+        el.style.transition = 'none';
+        void el.offsetWidth;
+      }
+    }
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        for (const id of RING_SLOT_IDS) {
+          const el = slotEls[id];
+          if (el) el.style.removeProperty('transition');
+        }
+      });
+    });
+  });
+}
+
+function stepRingSpring(now: number) {
+  const dt = ringRafLast > 0 ? (now - ringRafLast) / 1000 : 1 / 120;
+  ringRafLast = now;
+
+  const step = stepCriticallyDampedSpring(ringDragX, ringTargetX, ringVelocity, dt, 16.5, 0.5, 10);
+  ringDragX = step.position;
+  ringVelocity = step.velocity;
+  paintRingDirect(ringDragX);
+
+  if (step.settled) {
+    finishRingSpring();
+    return;
+  }
+  ringRafId = requestAnimationFrame(stepRingSpring);
+}
+
+watch(
+  () => [displayedCoverUrl.value, prevQueueSong.value?.coverUrl, nextQueueSong.value?.coverUrl],
+  () => {
+    if (!ringSwipeActive && !ringCommitDir) {
+      syncIdleSlotUrls();
+    }
+  },
+  { immediate: true },
+);
 
 function measureArtworkSlots() {
   const host = stageHostRef.value;
@@ -200,78 +383,7 @@ function detachSlotObserver() {
   }
 }
 
-// ==================== 120HZ 3-CARD INTERACTIVE COVER SWIPE CAROUSEL ====================
-const dragOffsetY = ref(0);
-const isDraggingSheet = ref(false);
-const coverSwipeX = ref(0);
-const swipePhase = ref<'idle' | 'dragging' | 'settling' | 'snapping'>('idle');
-const swipeSnapInstant = ref(false);
-const skipArtXfade = ref(false);
-const swipeFrozenCovers = ref<{ prev: string; cur: string; next: string } | null>(null);
-const heartBurst = ref(false);
-
-let sheetTouchY = 0;
-let coverTouchStartX = 0;
-let coverTouchStartY = 0;
-let coverLastTouchX = 0;
-let coverLastTouchTime = 0;
-let coverSwipeVelocity = 0; // px/ms
-let coverGestureAxis: 'none' | 'x' | 'y' = 'none';
-let lastCoverTapAt = 0;
-let heartBurstTimer: ReturnType<typeof setTimeout> | null = null;
-let swipeFinishTimer: ReturnType<typeof setTimeout> | null = null;
-let swipeXfadeTimer: ReturnType<typeof setTimeout> | null = null;
-
-function clearSwipeTimers() {
-  if (swipeFinishTimer) {
-    clearTimeout(swipeFinishTimer);
-    swipeFinishTimer = null;
-  }
-  if (swipeXfadeTimer) {
-    clearTimeout(swipeXfadeTimer);
-    swipeXfadeTimer = null;
-  }
-}
-
-const isCarouselActive = computed(
-  () =>
-    !isLandscape.value &&
-    ui.nowPlayingMode === 'cover' &&
-    (swipePhase.value !== 'idle' || Math.abs(coverSwipeX.value) > 0.5),
-);
-
-const portraitSwipeStride = computed(() => Math.max(220, (coverSlotRect.value?.width || 300) + 34));
-const landscapeSwipeStride = 230;
-
-const carouselLayout = computed(() =>
-  computeCoverCarouselLayout(
-    coverSwipeX.value,
-    isLandscape.value ? landscapeSwipeStride : portraitSwipeStride.value,
-    player.isPlaying ? 1 : 0.84,
-  ),
-);
-
-const activeCurrentCoverUrl = computed(
-  () => swipeFrozenCovers.value?.cur ?? displayedCoverUrl.value,
-);
-const activePrevCoverUrl = computed(
-  () => swipeFrozenCovers.value?.prev ?? prevQueueSong.value?.coverUrl ?? '',
-);
-const activeNextCoverUrl = computed(
-  () => swipeFrozenCovers.value?.next ?? nextQueueSong.value?.coverUrl ?? '',
-);
-
-const artworkTransitionRule = computed(() => {
-  if (!artworkReadyForTransition.value || swipePhase.value === 'dragging' || swipeSnapInstant.value) {
-    return 'none';
-  }
-  if (swipePhase.value === 'settling' || swipePhase.value === 'snapping') {
-    return 'transform 265ms cubic-bezier(0.22, 1, 0.36, 1), opacity 250ms ease';
-  }
-  return undefined;
-});
-
-const sharedArtworkStyle = computed(() => {
+function getSlotIdleStyle(slotId: RingSlotId) {
   const hr = stageRect.value;
   const cr = coverSlotRect.value;
   const mr = miniSlotRect.value;
@@ -286,79 +398,37 @@ const sharedArtworkStyle = computed(() => {
     height: `${cr.height.toFixed(2)}px`,
   };
 
-  if (isCarouselActive.value) {
+  const assign = ringAssignment.value;
+  const stride = getPortraitStride();
+
+  if (slotId === assign.center) {
+    const tf = computeSharedArtworkTransform(cr, mr, {
+      mode: ui.nowPlayingMode,
+      isPlaying: player.isPlaying,
+      swipeX: 0,
+    });
     return {
       ...basePos,
-      transform: carouselLayout.value.current.transform,
-      opacity: String(carouselLayout.value.current.opacity),
-      transition: artworkTransitionRule.value,
+      transform: tf.transform,
+      opacity: '1',
+      zIndex: '24',
+      transition: artworkReadyForTransition.value ? undefined : 'none',
     };
   }
 
-  const tf = computeSharedArtworkTransform(cr, mr, {
-    mode: ui.nowPlayingMode,
-    isPlaying: player.isPlaying,
-    swipeX: 0,
-  });
-
+  // Off-screen sibling slot rests invisibly at -stride / +stride
+  const offX = slotId === assign.prev ? -stride : stride;
   return {
     ...basePos,
-    transform: tf.transform,
-    opacity: '1',
-    transition: artworkTransitionRule.value,
-  };
-});
-
-function buildSiblingCardStyle(side: 'prev' | 'next') {
-  const hr = stageRect.value;
-  const cr = coverSlotRect.value;
-  if (!hr || !cr) return { opacity: '0', pointerEvents: 'none' as const };
-  const card = side === 'prev' ? carouselLayout.value.prev : carouselLayout.value.next;
-  return {
-    left: `${(cr.left - hr.left).toFixed(2)}px`,
-    top: `${(cr.top - hr.top).toFixed(2)}px`,
-    width: `${cr.width.toFixed(2)}px`,
-    height: `${cr.height.toFixed(2)}px`,
-    transform: card.transform,
-    opacity: String(card.opacity),
-    transition: artworkTransitionRule.value,
+    transform: `perspective(1000px) translate3d(${offX.toFixed(2)}px, 0, 0) scale3d(0.84, 0.84, 1)`,
+    opacity: '0',
+    zIndex: '23',
+    pointerEvents: 'none' as const,
+    transition: 'none',
   };
 }
 
-const prevSiblingStyle = computed(() => buildSiblingCardStyle('prev'));
-const nextSiblingStyle = computed(() => buildSiblingCardStyle('next'));
-
-// Landscape Split-Mode 3-Card Cover Style
-const landscapeCurrentCoverStyle = computed(() => {
-  if (swipePhase.value !== 'idle' || Math.abs(coverSwipeX.value) > 0.5) {
-    return {
-      transform: carouselLayout.value.current.transform,
-      opacity: String(carouselLayout.value.current.opacity),
-      transition:
-        swipePhase.value === 'dragging' || swipeSnapInstant.value
-          ? 'none'
-          : 'transform 265ms cubic-bezier(0.22, 1, 0.36, 1), opacity 250ms ease',
-    };
-  }
-  const scale = player.isPlaying ? 1 : 0.90;
-  return {
-    transform: `translate3d(0, 0, 0) scale3d(${scale}, ${scale}, 1)`,
-    opacity: '1',
-    transition: swipeSnapInstant.value ? 'none' : 'transform 360ms var(--spring-ease), opacity 220ms ease',
-  };
-});
-
-function buildLandscapeSiblingStyle(side: 'prev' | 'next') {
-  const card = side === 'prev' ? carouselLayout.value.prev : carouselLayout.value.next;
-  return {
-    transform: card.transform,
-    opacity: String(card.opacity),
-    transition:
-      swipePhase.value === 'dragging' || swipeSnapInstant.value
-        ? 'none'
-        : 'transform 265ms cubic-bezier(0.22, 1, 0.36, 1), opacity 250ms ease',
-  };
-}
+// ---- Track Extras & Climax ----
 
 const currentTrackOffsetKey = computed(() => {
   const s = player.currentSong;
@@ -537,6 +607,7 @@ watch(
     if (open && hasSong) {
       isLandscape.value = checkIsLandscape();
       artworkReadyForTransition.value = false;
+      syncIdleSlotUrls();
       await nextTick();
       if (!isLandscape.value) {
         measureArtworkSlots();
@@ -553,14 +624,14 @@ watch(
       }
     } else {
       detachSlotObserver();
-      clearSwipeTimers();
+      stopRingSpring();
+      clearRingDirectStyles();
+      ringSwipeActive = false;
+      ringCommitDir = null;
+      ringDragX = 0;
       artworkReadyForTransition.value = false;
       isDraggingSheet.value = false;
-      swipePhase.value = 'idle';
-      swipeFrozenCovers.value = null;
-      swipeSnapInstant.value = false;
       dragOffsetY.value = 0;
-      coverSwipeX.value = 0;
       showLyricOffsetBar.value = false;
       clearLyricsHideTimer();
       lyricsHudVisible.value = true;
@@ -600,8 +671,8 @@ onUnmounted(() => {
     window.removeEventListener('orientationchange', handleViewportResize);
   }
   detachSlotObserver();
+  stopRingSpring();
   clearLyricsHideTimer();
-  clearSwipeTimers();
   if (heartBurstTimer) clearTimeout(heartBurstTimer);
 });
 
@@ -694,36 +765,39 @@ function onHandleTouchEnd() {
   dragOffsetY.value = 0;
 }
 
-// ---- Cover Gestures: 120Hz 3-Card Physical Swipe / Drag Down Dismiss / Double-Tap Heart ----
+// ---- Cover Gestures: 120Hz Direct-DOM 3-Slot Ring Swipe / Drag Down Dismiss / Double-Tap Heart ----
 
 function onCoverTouchStart(e: TouchEvent) {
-  if (!isLandscape.value && ui.nowPlayingMode !== 'cover') return;
-  if (swipePhase.value === 'settling') return;
+  if (isLandscape.value || ui.nowPlayingMode !== 'cover') return;
+  // If a prior commit spring was still settling, finalize it immediately so rapid flicks feel instant!
+  if (ringCommitDir) {
+    finishRingSpring();
+  } else {
+    stopRingSpring();
+  }
   const touch = e.touches[0];
   if (!touch) return;
-  clearSwipeTimers();
   coverTouchStartX = touch.clientX;
   coverTouchStartY = touch.clientY;
   coverLastTouchX = touch.clientX;
   coverLastTouchTime = typeof performance !== 'undefined' ? performance.now() : Date.now();
-  coverSwipeVelocity = 0;
+  ringVelocity = 0;
   coverGestureAxis = 'none';
 }
 
 function onCoverTouchMove(e: TouchEvent) {
-  if (!isLandscape.value && ui.nowPlayingMode !== 'cover') return;
-  if (swipePhase.value === 'settling') return;
+  if (isLandscape.value || ui.nowPlayingMode !== 'cover') return;
   const touch = e.touches[0];
   if (!touch) return;
   const dx = touch.clientX - coverTouchStartX;
   const dy = touch.clientY - coverTouchStartY;
 
   if (coverGestureAxis === 'none') {
-    if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
+    if (Math.abs(dx) > 9 || Math.abs(dy) > 9) {
       coverGestureAxis = Math.abs(dx) >= Math.abs(dy) ? 'x' : 'y';
       if (coverGestureAxis === 'x') {
-        swipePhase.value = 'dragging';
-      } else if (coverGestureAxis === 'y' && dy > 0 && !isLandscape.value) {
+        ringSwipeActive = true;
+      } else if (coverGestureAxis === 'y' && dy > 0) {
         isDraggingSheet.value = true;
       }
     }
@@ -732,22 +806,21 @@ function onCoverTouchMove(e: TouchEvent) {
   if (coverGestureAxis === 'x') {
     const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
     const dt = Math.max(4, now - coverLastTouchTime);
-    coverSwipeVelocity = (touch.clientX - coverLastTouchX) / dt;
+    ringVelocity = ((touch.clientX - coverLastTouchX) / dt) * 1000;
     coverLastTouchX = touch.clientX;
     coverLastTouchTime = now;
 
-    // 1:1 responsive finger tracking when multiple tracks exist; soft rubber band when single track
     const hasSiblings = player.queue.length > 1;
-    coverSwipeX.value = hasSiblings ? dx * 0.96 : dx * 0.24;
-  } else if (coverGestureAxis === 'y' && dy > 0 && !isLandscape.value) {
+    ringDragX = hasSiblings ? dx * 0.96 : dx * 0.24;
+    paintRingDirect(ringDragX);
+  } else if (coverGestureAxis === 'y' && dy > 0) {
     isDraggingSheet.value = true;
     dragOffsetY.value = dy * 0.85;
   }
 }
 
 function onCoverTouchEnd(e: TouchEvent) {
-  if (!isLandscape.value && ui.nowPlayingMode !== 'cover') return;
-  if (swipePhase.value === 'settling') return;
+  if (isLandscape.value || ui.nowPlayingMode !== 'cover') return;
   const touch = e.changedTouches[0];
   const dx = (touch?.clientX ?? coverTouchStartX) - coverTouchStartX;
   const dy = (touch?.clientY ?? coverTouchStartY) - coverTouchStartY;
@@ -755,53 +828,24 @@ function onCoverTouchEnd(e: TouchEvent) {
   isDraggingSheet.value = false;
 
   if (coverGestureAxis === 'x') {
-    const stride = isLandscape.value ? landscapeSwipeStride : portraitSwipeStride.value;
+    const stride = getPortraitStride();
     const hasSiblings = player.queue.length > 1;
-    const vx = coverSwipeVelocity;
-    const commitNext = hasSiblings && (dx < -stride * 0.23 || (vx < -0.40 && dx < -20));
-    const commitPrev = hasSiblings && (dx > stride * 0.23 || (vx > 0.40 && dx > 20));
+    const commitNext = hasSiblings && (dx < -stride * 0.22 || (ringVelocity < -420 && dx < -18));
+    const commitPrev = hasSiblings && (dx > stride * 0.22 || (ringVelocity > 420 && dx > 18));
 
     if (commitNext || commitPrev) {
-      const dir = commitNext ? -1 : 1;
-      // Freeze the 3 visual card images for the 265ms glide while kicking off audio immediately (0ms delay!)
-      swipeFrozenCovers.value = {
-        prev: prevQueueSong.value?.coverUrl || '',
-        cur: displayedCoverUrl.value || '',
-        next: nextQueueSong.value?.coverUrl || '',
-      };
-      skipArtXfade.value = true;
-      swipePhase.value = 'settling';
-      coverSwipeX.value = dir * stride;
-
-      if (commitNext) {
-        void player.next();
-      } else {
-        void player.previous(true);
-      }
-
-      swipeFinishTimer = setTimeout(() => {
-        swipeFinishTimer = null;
-        swipeSnapInstant.value = true;
-        coverSwipeX.value = 0;
-        swipePhase.value = 'idle';
-        swipeFrozenCovers.value = null;
-        requestAnimationFrame(() => {
-          swipeSnapInstant.value = false;
-          swipeXfadeTimer = setTimeout(() => {
-            swipeXfadeTimer = null;
-            skipArtXfade.value = false;
-          }, 120);
-        });
-      }, 270);
+      ringCommitDir = commitNext ? 'next' : 'prev';
+      ringTargetX = commitNext ? -stride : stride;
+      if (commitNext) void player.next();
+      else void player.previous(true);
     } else {
-      swipePhase.value = 'snapping';
-      coverSwipeX.value = 0;
-      swipeFinishTimer = setTimeout(() => {
-        swipeFinishTimer = null;
-        swipePhase.value = 'idle';
-      }, 270);
+      ringCommitDir = null;
+      ringTargetX = 0;
     }
-  } else if (coverGestureAxis === 'y' && !isLandscape.value) {
+
+    ringRafLast = typeof performance !== 'undefined' ? performance.now() : 0;
+    ringRafId = requestAnimationFrame(stepRingSpring);
+  } else if (coverGestureAxis === 'y') {
     if (dragOffsetY.value > 95) {
       echoSystem.haptic('light');
       ui.nowPlayingOpen = false;
@@ -824,7 +868,8 @@ function onCoverTouchEnd(e: TouchEvent) {
   coverGestureAxis = 'none';
 }
 
-function onSharedArtworkClick() {
+function onSharedArtworkClick(slotId: RingSlotId) {
+  if (slotId !== centerSlotId.value) return;
   if (!isLandscape.value && ui.nowPlayingMode !== 'cover') {
     returnToCover();
   }
@@ -861,8 +906,6 @@ function handleClearQueue() {
   ui.showToast(t('np.queueCleared'));
 }
 
-// Pause ambient background animation while a modal sheet (Comments, Actions, Settings, etc.)
-// covers NowPlaying so Android WebView never wastes GPU frames or triggers compositor ghosting.
 const fluidBgActive = computed(
   () =>
     ui.nowPlayingOpen &&
@@ -883,12 +926,6 @@ function openAudioEffectSheet() {
   echoSystem.haptic('light');
   ui.audioEffectSheetOpen = true;
 }
-
-function switchLandscapeMode(mode: 'split' | 'coverflow') {
-  if (landscapeMode.value === mode) return;
-  echoSystem.haptic('selection');
-  landscapeMode.value = mode;
-}
 </script>
 
 <template>
@@ -904,327 +941,16 @@ function switchLandscapeMode(mode: 'split' | 'coverflow') {
         :colors="player.palette.fluidColors"
       />
 
-      <!-- ==================== LANDSCAPE DUAL-MODE STAGE (Split Lyrics / 3D Cover Flow) ==================== -->
-      <div v-if="isLandscape" class="np-land-content" data-landscape-split>
-        <!-- Compact Top Floating Bar: Mode Switcher + Actions + Dismiss -->
-        <div class="np-land-topbar">
-          <div class="np-land-seg">
-            <button
-              type="button"
-              class="np-land-seg-btn am-tap"
-              :class="{ 'is-active': landscapeMode === 'split' }"
-              @click="switchLandscapeMode('split')"
-            >
-              <Icon :icon="iconLayoutColumns" class="w-3.5 h-3.5 shrink-0" />
-              <span>{{ t('np.landscapeSplit') }}</span>
-            </button>
-            <button
-              type="button"
-              class="np-land-seg-btn am-tap"
-              :class="{ 'is-active': landscapeMode === 'coverflow' }"
-              @click="switchLandscapeMode('coverflow')"
-            >
-              <Icon :icon="iconDisc" class="w-3.5 h-3.5 shrink-0" />
-              <span>{{ t('np.landscapeCoverFlow') }}</span>
-            </button>
-          </div>
+      <!-- ==================== LANDSCAPE 3-MODE STUDIO (Vinyl / Cover Flow / Cinema) ==================== -->
+      <LandscapeStudioStage
+        v-if="isLandscape"
+        :active="ui.nowPlayingOpen && isLandscape"
+        :displayed-cover-url="displayedCoverUrl"
+        :climax-range="climaxRange"
+      />
 
-          <div class="flex items-center gap-1.5">
-            <template v-if="landscapeMode === 'split'">
-              <button
-                v-if="landscapeRightPane === 'lyrics'"
-                type="button"
-                class="np-glass-chip h-8 px-2.5 rounded-full text-[11px] font-semibold text-white/90 tabular-nums am-tap"
-                :class="{ '!bg-white/30 !text-white': showLyricOffsetBar || currentLyricOffsetMs !== 0 }"
-                @click="showLyricOffsetBar = !showLyricOffsetBar; echoSystem.haptic('selection')"
-              >
-                {{ currentLyricOffsetMs !== 0 ? lyricOffsetLabel : t('np.lyricOffset') }}
-              </button>
-              <button
-                v-if="landscapeRightPane === 'lyrics' && player.lyrics.hasTranslation"
-                type="button"
-                class="np-land-circle np-glass-chip am-tap"
-                :class="{ '!bg-white/30 !text-white': settings.showTranslation }"
-                aria-label="Toggle translation"
-                @click="settings.showTranslation = !settings.showTranslation; echoSystem.haptic('selection')"
-              >
-                <Icon :icon="iconLanguage" class="w-4 h-4" />
-              </button>
-              <button
-                type="button"
-                class="np-land-circle np-glass-chip am-tap"
-                :class="{ '!bg-white/90 !text-[#111]': landscapeRightPane === 'queue' }"
-                aria-label="Up Next"
-                @click="echoSystem.haptic('selection'); landscapeRightPane = landscapeRightPane === 'queue' ? 'lyrics' : 'queue'"
-              >
-                <Icon :icon="iconPlaylist" class="w-4 h-4" />
-              </button>
-            </template>
-            <button
-              type="button"
-              class="np-land-circle np-glass-chip am-tap"
-              :aria-label="t('common.close')"
-              @click="echoSystem.haptic('light'); ui.nowPlayingOpen = false"
-            >
-              <Icon :icon="iconX" class="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-
-        <!-- MODE A: Left Cover & Controls + Right 120Hz Lyrics / Queue -->
-        <div v-if="landscapeMode === 'split'" class="np-land-split">
-          <!-- Left Column: Interactive 3-Card Swipe Artwork + Transport -->
-          <div class="np-land-left">
-            <div
-              class="np-land-art-stage"
-              @touchstart.passive="onCoverTouchStart"
-              @touchmove.passive="onCoverTouchMove"
-              @touchend.passive="onCoverTouchEnd"
-            >
-              <div
-                v-if="swipePhase !== 'idle' && activePrevCoverUrl"
-                class="np-land-art-card is-sibling"
-                :style="buildLandscapeSiblingStyle('prev')"
-              >
-                <img :src="activePrevCoverUrl" decoding="async" class="w-full h-full object-cover" alt="" />
-              </div>
-
-              <div
-                class="np-land-art-card"
-                :style="landscapeCurrentCoverStyle"
-              >
-                <img
-                  v-if="activeCurrentCoverUrl"
-                  :src="activeCurrentCoverUrl"
-                  decoding="async"
-                  :alt="player.currentSong.title"
-                  class="w-full h-full object-cover"
-                />
-                <div
-                  v-else
-                  class="w-full h-full flex items-center justify-center bg-white/10 text-white/40"
-                >
-                  <Icon :icon="iconMusic" class="w-12 h-12" />
-                </div>
-                <Transition name="heart-pop">
-                  <div v-if="heartBurst" class="heart-burst-overlay">
-                    <Icon :icon="iconHeartFilled" class="w-16 h-16 text-[#ff375f] drop-shadow-2xl" />
-                  </div>
-                </Transition>
-              </div>
-
-              <div
-                v-if="swipePhase !== 'idle' && activeNextCoverUrl"
-                class="np-land-art-card is-sibling"
-                :style="buildLandscapeSiblingStyle('next')"
-              >
-                <img :src="activeNextCoverUrl" decoding="async" class="w-full h-full object-cover" alt="" />
-              </div>
-            </div>
-
-            <!-- Song Meta + Heart + More -->
-            <div class="flex items-center justify-between gap-2 w-full">
-              <div class="min-w-0 flex-1">
-                <div class="text-[16px] font-bold text-white truncate leading-snug">
-                  {{ player.currentSong.title }}
-                </div>
-                <button
-                  type="button"
-                  class="inline-flex items-center gap-0.5 max-w-full bg-transparent border-0 p-0 text-[13px] text-white/68 active:text-white text-left"
-                  @click.stop="openCurrentArtist"
-                >
-                  <span class="truncate">{{ player.currentSong.artist }}</span>
-                  <Icon :icon="iconChevronRight" class="w-3.5 h-3.5 opacity-60 shrink-0" />
-                </button>
-              </div>
-              <div class="flex items-center gap-1.5 shrink-0">
-                <button
-                  type="button"
-                  class="np-land-circle np-glass-chip am-tap"
-                  aria-label="收藏到我喜欢"
-                  @click="player.toggleFavorite(player.currentSong)"
-                >
-                  <Icon
-                    :icon="player.isCurrentFavorite ? iconHeartFilled : iconHeart"
-                    class="w-4 h-4"
-                    :class="player.isCurrentFavorite ? 'text-[#ff375f]' : 'text-white/95'"
-                  />
-                </button>
-                <button
-                  type="button"
-                  class="np-land-circle np-glass-chip am-tap"
-                  aria-label="更多选项"
-                  @click="ui.openSongActions(player.currentSong)"
-                >
-                  <Icon :icon="iconDots" class="w-4 h-4 text-white/95" />
-                </button>
-              </div>
-            </div>
-
-            <!-- Scrubber & Quality/Chorus Chips -->
-            <div class="w-full">
-              <div
-                class="scrub-hit !py-2"
-                @pointerdown="onScrubPointerDown"
-                @pointermove="onScrubPointerMove"
-                @pointerup="finishScrub($event, true)"
-                @pointercancel="finishScrub($event, false)"
-              >
-                <div class="scrub-track" :class="{ 'is-scrubbing': scrubbing }">
-                  <div v-if="climaxBarStyle" class="scrub-climax" :style="climaxBarStyle" />
-                  <div class="scrub-fill" :style="{ width: `${progressRatio * 100}%` }" />
-                </div>
-              </div>
-              <div class="flex items-center justify-between text-[10.5px] font-medium tabular-nums text-white/60 gap-1.5">
-                <span>{{ fmtTime(displayElapsedMs) }}</span>
-                <div class="flex items-center justify-center gap-1 min-w-0">
-                  <button
-                    v-if="player.sourceTag"
-                    type="button"
-                    class="px-1.5 py-0.5 rounded-[5px] bg-white/14 text-white/90 text-[9.5px] font-semibold border-0 truncate am-tap"
-                    @click.stop="openAudioEffectSheet"
-                  >
-                    {{ player.sourceTag }}
-                  </button>
-                  <button
-                    v-if="showChorusJump"
-                    type="button"
-                    class="px-1.5 py-0.5 rounded-[5px] bg-white/18 text-white/95 text-[9.5px] font-semibold border-0 inline-flex items-center gap-0.5 am-tap shrink-0"
-                    @click.stop="jumpToChorus"
-                  >
-                    <Icon :icon="iconSparkles" class="w-2.5 h-2.5" />
-                    <span>{{ t('np.chorusJump') }}</span>
-                  </button>
-                </div>
-                <span>-{{ fmtTime(displayRemainingMs) }}</span>
-              </div>
-            </div>
-
-            <!-- Compact Landscape Transport & Utility Row -->
-            <div class="flex items-center justify-between w-full pt-0.5">
-              <button
-                type="button"
-                class="np-land-tool am-tap"
-                :aria-label="t('np.comments')"
-                @click="ui.openSongComments(player.currentSong, 'comments')"
-              >
-                <Icon :icon="iconMessageCircle" class="w-5 h-5" />
-              </button>
-              <button type="button" class="np-land-skip am-tap" aria-label="上一首" @click="player.previous()">
-                <Icon :icon="iconPlayerTrackPrevFilled" class="w-7 h-7" />
-              </button>
-              <button
-                type="button"
-                class="np-land-play am-tap"
-                :aria-label="player.isPlaying ? '暂停' : '播放'"
-                @click="player.togglePlay()"
-              >
-                <Icon
-                  :icon="player.isPlaying ? iconPlayerPauseFilled : iconPlayerPlayFilled"
-                  class="w-9 h-9"
-                />
-              </button>
-              <button type="button" class="np-land-skip am-tap" aria-label="下一首" @click="player.next()">
-                <Icon :icon="iconPlayerTrackNextFilled" class="w-7 h-7" />
-              </button>
-              <button
-                type="button"
-                class="np-land-tool relative am-tap"
-                :class="{ 'text-white': hasActiveAudioDsp }"
-                :aria-label="t('audio.sheetTitle')"
-                @click="openAudioEffectSheet"
-              >
-                <Icon :icon="iconAdjustments" class="w-5 h-5" />
-                <span v-if="hasActiveAudioDsp" class="np-dsp-dot !top-1 !right-1" />
-              </button>
-            </div>
-          </div>
-
-          <!-- Right Column: Full-Height 120Hz Lyrics OR Queue -->
-          <div class="np-land-right">
-            <Transition name="am-expand">
-              <div
-                v-if="landscapeRightPane === 'lyrics' && showLyricOffsetBar"
-                class="flex items-center justify-center gap-1.5 pb-1 shrink-0"
-              >
-                <button type="button" class="np-glass-chip h-7 px-2 rounded-full text-[11px] font-semibold text-white tabular-nums am-tap" @click="nudgeLyricOffset(-1000)">-1s</button>
-                <button type="button" class="np-glass-chip h-7 px-2 rounded-full text-[11px] font-semibold text-white tabular-nums am-tap" @click="nudgeLyricOffset(-500)">-0.5s</button>
-                <button type="button" class="np-glass-chip h-7 px-2.5 rounded-full text-[11px] font-bold text-white tabular-nums am-tap" @click="resetLyricOffset">{{ lyricOffsetLabel }}</button>
-                <button type="button" class="np-glass-chip h-7 px-2 rounded-full text-[11px] font-semibold text-white tabular-nums am-tap" @click="nudgeLyricOffset(500)">+0.5s</button>
-                <button type="button" class="np-glass-chip h-7 px-2 rounded-full text-[11px] font-semibold text-white tabular-nums am-tap" @click="nudgeLyricOffset(1000)">+1s</button>
-              </div>
-            </Transition>
-
-            <div v-if="landscapeRightPane === 'lyrics'" class="flex-1 min-h-0">
-              <KrcLyricsView
-                :active="ui.nowPlayingOpen && isLandscape && landscapeMode === 'split' && landscapeRightPane === 'lyrics'"
-                @user-scroll="onLyricsUserScroll"
-              />
-            </div>
-
-            <div v-else class="flex-1 min-h-0 flex flex-col">
-              <div class="flex items-center justify-between gap-2 pb-2 shrink-0">
-                <div class="text-[14px] font-bold text-white">
-                  {{ t('np.upNext') }}
-                  <span class="text-[11px] font-normal text-white/55 ml-1.5">{{ player.queue.length }}</span>
-                </div>
-                <div class="flex items-center gap-1.5">
-                  <button
-                    type="button"
-                    class="np-glass-chip px-2.5 py-1 rounded-full text-white text-[11px] font-medium flex items-center gap-1 am-tap"
-                    @click="player.cyclePlayMode()"
-                  >
-                    <Icon :icon="playModeIcon" class="w-3.5 h-3.5" />
-                    <span>{{ playModeLabel }}</span>
-                  </button>
-                  <button
-                    type="button"
-                    class="np-glass-chip w-7 h-7 rounded-full text-white/80 flex items-center justify-center am-tap"
-                    :aria-label="t('np.clearQueue')"
-                    @click="handleClearQueue"
-                  >
-                    <Icon :icon="iconTrash" class="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </div>
-              <div class="flex-1 am-scroll space-y-1 pr-1">
-                <div
-                  v-for="row in visibleQueueItems"
-                  :key="`land-${row.item.id}-${row.index}`"
-                  class="np-queue-row flex items-center gap-2.5 p-1.5 rounded-xl transition-colors"
-                  :class="row.index === player.currentIndex ? 'bg-white/18' : 'active:bg-white/10'"
-                  @click="player.playQueue(player.queue, row.index)"
-                >
-                  <div class="w-9 h-9 rounded-[8px] overflow-hidden shrink-0 bg-white/10">
-                    <img v-if="row.item.coverUrl" :src="row.item.coverUrl" loading="lazy" decoding="async" class="w-full h-full object-cover" alt="" />
-                  </div>
-                  <div class="min-w-0 flex-1">
-                    <div class="text-[13.5px] font-medium text-white truncate">{{ row.item.title }}</div>
-                    <div class="text-[11.5px] text-white/55 truncate">{{ row.item.artist }}</div>
-                  </div>
-                  <button
-                    type="button"
-                    class="w-7 h-7 rounded-full flex items-center justify-center text-white/50 bg-transparent border-0 am-tap shrink-0"
-                    aria-label="Remove"
-                    @click.stop="player.removeFromQueue(row.index)"
-                  >
-                    <Icon :icon="iconX" class="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- MODE B: Classic 3D Cover Flow Album Selector -->
-        <div v-else class="flex-1 min-h-0">
-          <CoverFlowStage :active="ui.nowPlayingOpen && isLandscape && landscapeMode === 'coverflow'" />
-        </div>
-      </div>
-
-      <!-- ==================== PORTRAIT STAGE (Single Artwork Morph + 3-Card Swipe Carousel) ==================== -->
+      <!-- ==================== PORTRAIT STAGE (Direct-DOM 3-Slot Ring + Hero Morph) ==================== -->
       <div v-else class="np-content">
-        <!-- Top drag pill (Apple Music dismiss handle) -->
         <div
           class="np-handle-area"
           @click="ui.nowPlayingOpen = false"
@@ -1235,8 +961,7 @@ function switchLandscapeMode(mode: 'split' | 'coverflow') {
           <div class="np-handle" />
         </div>
 
-        <!-- Fixed-Geometry Stage Host: ZERO flex height shifts & ONE persistent shared artwork! -->
-        <div ref="stageHostRef" class="np-stage-host">
+        <div ref="stageHostRef" class="np-stage-host" data-ring-carousel>
           <!-- Floating Sleep Timer Pill (cover mode) -->
           <Transition name="am-expand">
             <div
@@ -1254,59 +979,38 @@ function switchLandscapeMode(mode: 'split' | 'coverflow') {
             </div>
           </Transition>
 
-          <!-- SIBLING PREV COVER CARD (Only mounted during interactive horizontal cover swipe!) -->
+          <!-- 3 PERMANENT RING ARTWORK SLOTS (0, 1, 2): zero unmount, zero teleport, zero opposite rebound! -->
           <div
-            v-if="isCarouselActive && activePrevCoverUrl"
-            class="np-sibling-artwork"
-            :style="prevSiblingStyle"
-            aria-hidden="true"
-          >
-            <img :src="activePrevCoverUrl" decoding="async" class="w-full h-full object-cover" alt="" />
-          </div>
-
-          <!-- SINGLE PERSISTENT SHARED ARTWORK (Always opacity:1, pure GPU transform -> ZERO flicker!) -->
-          <div
+            v-for="slotId in RING_SLOT_IDS"
+            :key="slotId"
+            :ref="(el) => setSlotEl(slotId, el)"
             class="np-shared-artwork"
-            :style="sharedArtworkStyle"
-            @click="onSharedArtworkClick"
+            :class="{ 'is-center-slot': slotId === centerSlotId }"
+            :style="getSlotIdleStyle(slotId)"
+            @click="onSharedArtworkClick(slotId)"
             @touchstart.passive="onCoverTouchStart"
             @touchmove.passive="onCoverTouchMove"
             @touchend.passive="onCoverTouchEnd"
           >
-            <Transition :name="skipArtXfade ? '' : 'art-xfade'">
-              <img
-                v-if="activeCurrentCoverUrl"
-                :key="activeCurrentCoverUrl"
-                :src="activeCurrentCoverUrl"
-                decoding="async"
-                :alt="player.currentSong.title"
-                class="art-layer w-full h-full object-cover"
-              />
-              <div
-                v-else
-                key="cover-fallback"
-                class="art-layer w-full h-full flex items-center justify-center bg-white/10 text-white/40"
-              >
-                <Icon :icon="iconMusic" class="w-20 h-20" />
-              </div>
-            </Transition>
+            <img
+              v-if="slotUrls[slotId]"
+              :src="slotUrls[slotId]"
+              decoding="async"
+              :alt="slotId === centerSlotId ? player.currentSong.title : ''"
+              class="art-layer w-full h-full object-cover"
+            />
+            <div
+              v-else
+              class="art-layer w-full h-full flex items-center justify-center bg-white/10 text-white/40"
+            >
+              <Icon :icon="iconMusic" class="w-20 h-20" />
+            </div>
 
-            <!-- Double-Tap Heart Burst -->
             <Transition name="heart-pop">
-              <div v-if="heartBurst" class="heart-burst-overlay">
+              <div v-if="heartBurst && slotId === centerSlotId" class="heart-burst-overlay">
                 <Icon :icon="iconHeartFilled" class="w-20 h-20 text-[#ff375f] drop-shadow-2xl" />
               </div>
             </Transition>
-          </div>
-
-          <!-- SIBLING NEXT COVER CARD (Only mounted during interactive horizontal cover swipe!) -->
-          <div
-            v-if="isCarouselActive && activeNextCoverUrl"
-            class="np-sibling-artwork"
-            :style="nextSiblingStyle"
-            aria-hidden="true"
-          >
-            <img :src="activeNextCoverUrl" decoding="async" class="w-full h-full object-cover" alt="" />
           </div>
 
           <!-- Persistent Mini Header (absolute top inside stage host -> ZERO layout reflow!) -->
@@ -1319,7 +1023,6 @@ function switchLandscapeMode(mode: 'split' | 'coverflow') {
               class="flex items-center gap-3 flex-1 min-w-0 text-left bg-transparent border-0 p-0"
               @click="returnToCover"
             >
-              <!-- Transparent layout slot where `.np-shared-artwork` lands in Lyrics/Queue mode -->
               <div ref="miniSlotRef" class="np-mini-slot" aria-hidden="true" />
               <div class="np-mini-meta min-w-0 flex-1">
                 <div class="text-[16px] font-semibold text-white truncate">{{ player.currentSong.title }}</div>
@@ -1376,31 +1079,15 @@ function switchLandscapeMode(mode: 'split' | 'coverflow') {
             </div>
           </div>
 
-          <!-- Floating Lyric Offset Adjuster (Delay / Advance Lyrics Sync) -->
+          <!-- Floating Lyric Offset Adjuster -->
           <Transition name="am-expand">
             <div
               v-if="ui.nowPlayingMode === 'lyrics' && showLyricOffsetBar"
               class="np-offset-bar"
             >
-              <button
-                type="button"
-                class="np-glass-chip h-7 px-2.5 rounded-full text-[11px] font-semibold text-white tabular-nums am-tap"
-                @click="nudgeLyricOffset(-1000)"
-              >
-                -1s
-              </button>
-              <button
-                type="button"
-                class="np-glass-chip h-7 px-2.5 rounded-full text-[11px] font-semibold text-white tabular-nums am-tap"
-                @click="nudgeLyricOffset(-500)"
-              >
-                -0.5s
-              </button>
-              <button
-                type="button"
-                class="np-glass-chip h-7 px-3 rounded-full text-[11px] font-bold text-white/95 tabular-nums am-tap"
-                @click="resetLyricOffset"
-              >
+              <button type="button" class="np-glass-chip h-7 px-2.5 rounded-full text-[11px] font-semibold text-white tabular-nums am-tap" @click="nudgeLyricOffset(-1000)">-1s</button>
+              <button type="button" class="np-glass-chip h-7 px-2.5 rounded-full text-[11px] font-semibold text-white tabular-nums am-tap" @click="nudgeLyricOffset(-500)">-0.5s</button>
+              <button type="button" class="np-glass-chip h-7 px-3 rounded-full text-[11px] font-bold text-white/95 tabular-nums am-tap" @click="resetLyricOffset">
                 {{
                   currentLyricOffsetMs > 0
                     ? `提前 ${lyricOffsetLabel}`
@@ -1409,20 +1096,8 @@ function switchLandscapeMode(mode: 'split' | 'coverflow') {
                       : `${t('np.lyricOffset')} 0.0s`
                 }}
               </button>
-              <button
-                type="button"
-                class="np-glass-chip h-7 px-2.5 rounded-full text-[11px] font-semibold text-white tabular-nums am-tap"
-                @click="nudgeLyricOffset(500)"
-              >
-                +0.5s
-              </button>
-              <button
-                type="button"
-                class="np-glass-chip h-7 px-2.5 rounded-full text-[11px] font-semibold text-white tabular-nums am-tap"
-                @click="nudgeLyricOffset(1000)"
-              >
-                +1s
-              </button>
+              <button type="button" class="np-glass-chip h-7 px-2.5 rounded-full text-[11px] font-semibold text-white tabular-nums am-tap" @click="nudgeLyricOffset(500)">+0.5s</button>
+              <button type="button" class="np-glass-chip h-7 px-2.5 rounded-full text-[11px] font-semibold text-white tabular-nums am-tap" @click="nudgeLyricOffset(1000)">+1s</button>
             </div>
           </Transition>
 
@@ -1435,11 +1110,9 @@ function switchLandscapeMode(mode: 'split' | 'coverflow') {
             @touchend.passive="onCoverTouchEnd"
           >
             <div class="np-artwork-wrap">
-              <!-- Transparent layout slot where `.np-shared-artwork` rests in Cover mode -->
               <div ref="coverSlotRef" class="np-artwork-slot" aria-hidden="true" />
             </div>
 
-            <!-- Cover Page 2-Line Live Lyrics Preview -->
             <button
               v-if="coverLyricsPreview"
               type="button"
@@ -1496,7 +1169,7 @@ function switchLandscapeMode(mode: 'split' | 'coverflow') {
             </div>
           </div>
 
-          <!-- PERSISTENT LAYER 2: WORD-BY-WORD KRC LYRICS -->
+          <!-- PERSISTENT LAYER 2: ZERO-FLICKER WORD-BY-WORD KRC LYRICS -->
           <div
             class="np-pane np-pane-detail"
             :class="{ 'is-active': ui.nowPlayingMode === 'lyrics' }"
@@ -1622,11 +1295,7 @@ function switchLandscapeMode(mode: 'split' | 'coverflow') {
               @pointercancel="finishScrub($event, false)"
             >
               <div class="scrub-track" :class="{ 'is-scrubbing': scrubbing }">
-                <div
-                  v-if="climaxBarStyle"
-                  class="scrub-climax"
-                  :style="climaxBarStyle"
-                />
+                <div v-if="climaxBarStyle" class="scrub-climax" :style="climaxBarStyle" />
                 <div class="scrub-fill" :style="{ width: `${progressRatio * 100}%` }" />
               </div>
             </div>
@@ -1668,10 +1337,7 @@ function switchLandscapeMode(mode: 'split' | 'coverflow') {
               :aria-label="player.isPlaying ? '暂停' : '播放'"
               @click="player.togglePlay()"
             >
-              <Icon
-                :icon="player.isPlaying ? iconPlayerPauseFilled : iconPlayerPlayFilled"
-                class="w-12 h-12"
-              />
+              <Icon :icon="player.isPlaying ? iconPlayerPauseFilled : iconPlayerPlayFilled" class="w-12 h-12" />
             </button>
             <button type="button" class="np-skip-btn am-tap" aria-label="下一首" @click="player.next(); scheduleLyricsAutoHide()">
               <Icon :icon="iconPlayerTrackNextFilled" class="w-9 h-9" />
@@ -1764,147 +1430,6 @@ function switchLandscapeMode(mode: 'split' | 'coverflow') {
   padding-bottom: calc(var(--safe-bottom) + 12px);
 }
 
-/* ==================== LANDSCAPE DUAL-MODE LAYOUT ==================== */
-.np-land-content {
-  position: relative;
-  z-index: 1;
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  padding-top: calc(var(--safe-top) + 6px);
-  padding-bottom: calc(var(--safe-bottom) + 8px);
-}
-
-.np-land-topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 2px calc(var(--safe-right) + 20px) 6px calc(var(--safe-left) + 20px);
-  flex-shrink: 0;
-}
-
-.np-land-seg {
-  display: inline-flex;
-  align-items: center;
-  padding: 3px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.13);
-  border: 0.5px solid rgba(255, 255, 255, 0.18);
-}
-
-.np-land-seg-btn {
-  height: 28px;
-  padding: 0 12px;
-  border-radius: 999px;
-  border: 0;
-  background: transparent;
-  color: rgba(255, 255, 255, 0.72);
-  font-size: 11.5px;
-  font-weight: 600;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  transition: background-color 200ms ease, color 200ms ease;
-}
-
-.np-land-seg-btn.is-active {
-  background: rgba(255, 255, 255, 0.92);
-  color: #111116;
-  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.22);
-}
-
-.np-land-circle {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  color: rgba(255, 255, 255, 0.92);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.np-land-split {
-  flex: 1;
-  min-height: 0;
-  display: grid;
-  grid-template-columns: minmax(250px, 42%) 1fr;
-  gap: 18px;
-  padding: 0 calc(var(--safe-right) + 20px) 4px calc(var(--safe-left) + 20px);
-}
-
-.np-land-left {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  min-height: 0;
-  padding-right: 6px;
-}
-
-.np-land-art-stage {
-  position: relative;
-  width: min(44vh, 196px);
-  height: min(44vh, 196px);
-  flex-shrink: 0;
-  overflow: visible;
-}
-
-.np-land-art-card {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  border-radius: 18px;
-  overflow: hidden;
-  background: rgba(255, 255, 255, 0.08);
-  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.44), 0 4px 12px rgba(0, 0, 0, 0.24);
-  will-change: transform, opacity;
-  backface-visibility: hidden;
-}
-
-.np-land-art-card.is-sibling {
-  pointer-events: none;
-}
-
-.np-land-right {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.np-land-skip,
-.np-land-play,
-.np-land-tool {
-  border: 0;
-  background: transparent;
-  color: #ffffff;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.np-land-tool {
-  width: 34px;
-  height: 34px;
-  color: rgba(255, 255, 255, 0.70);
-}
-
-.np-land-skip {
-  width: 40px;
-  height: 40px;
-}
-
-.np-land-play {
-  width: 46px;
-  height: 46px;
-}
-
-/* ==================== PORTRAIT STAGE ==================== */
 .np-handle-area {
   height: 26px;
   display: flex;
@@ -1944,40 +1469,25 @@ function switchLandscapeMode(mode: 'split' | 'coverflow') {
   justify-content: center;
   pointer-events: none;
 }
+
 .np-sleep-pill-holder > button {
   pointer-events: auto;
 }
 
-/* Interactive 3-Card Sibling Peeks (pure GPU transform/opacity, zero reflow!) */
-.np-sibling-artwork {
-  position: absolute;
-  z-index: 23;
-  border-radius: 22px;
-  overflow: hidden;
-  background: rgba(255, 255, 255, 0.08);
-  transform-origin: center center;
-  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.38);
-  will-change: transform, opacity;
-  backface-visibility: hidden;
-  pointer-events: none;
-}
-
-/* SINGLE PERSISTENT SHARED ARTWORK LAYER (Always opacity:1 -> mathematically flicker-free!) */
+/* 3 Permanent Ring Artwork Slots: active slot handles Cover <-> Mini hero morph cleanly! */
 .np-shared-artwork {
   position: absolute;
-  z-index: 24;
   border-radius: 22px;
   overflow: hidden;
   background: rgba(255, 255, 255, 0.08);
   transform-origin: center center;
   box-shadow: 0 22px 54px rgba(0, 0, 0, 0.44), 0 6px 16px rgba(0, 0, 0, 0.26);
-  transition: transform 390ms var(--spring-ease), opacity 240ms ease;
+  transition: transform 390ms var(--spring-ease), opacity 220ms ease;
   will-change: transform, opacity;
   backface-visibility: hidden;
   cursor: pointer;
 }
 
-/* Fixed-position Mini Header inside stage host -> zero height shift! */
 .np-mini-header {
   position: absolute;
   top: 0;
@@ -2052,7 +1562,6 @@ function switchLandscapeMode(mode: 'split' | 'coverflow') {
   gap: 8px;
 }
 
-/* Persistent GPU-Composited Stage Panes */
 .np-pane {
   position: absolute;
   top: 0;
@@ -2137,18 +1646,6 @@ function switchLandscapeMode(mode: 'split' | 'coverflow') {
   right: 0;
   bottom: 0;
   left: 0;
-}
-
-.art-xfade-enter-active,
-.art-xfade-leave-active {
-  transition: opacity 340ms ease, transform 420ms var(--spring-ease);
-}
-.art-xfade-enter-from {
-  opacity: 0;
-  transform: scale(1.04);
-}
-.art-xfade-leave-to {
-  opacity: 0;
 }
 
 .np-cover-lyrics {

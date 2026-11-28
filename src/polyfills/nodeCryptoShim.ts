@@ -7,6 +7,39 @@ export const constants = {
   RSA_PKCS1_OAEP_PADDING: 4,
 };
 
+export interface PublicKeyObject {
+  type: 'public';
+  pem: string;
+  export: () => string;
+}
+
+type RsaKeyInput = string | Buffer | PublicKeyObject | { key: string | Buffer | PublicKeyObject };
+
+function extractPublicKeyPem(keyInput: RsaKeyInput): string {
+  if (typeof keyInput === 'string') return keyInput;
+  if (Buffer.isBuffer(keyInput)) return keyInput.toString('utf8');
+  if (keyInput && typeof keyInput === 'object') {
+    if ('pem' in keyInput && typeof keyInput.pem === 'string') {
+      return keyInput.pem;
+    }
+    if ('key' in keyInput) {
+      return extractPublicKeyPem(keyInput.key);
+    }
+  }
+  throw new Error('Invalid RSA public key input');
+}
+
+export function createPublicKey(keyInput: RsaKeyInput): PublicKeyObject {
+  const pem = extractPublicKeyPem(keyInput);
+  // Validate eagerly so invalid PEMs fail like Node crypto.createPublicKey
+  forge.pki.publicKeyFromPem(pem);
+  return {
+    type: 'public',
+    pem,
+    export: () => pem,
+  };
+}
+
 function toBinaryString(data: Uint8Array | Buffer | string): string {
   if (typeof data === 'string') {
     const buf = Buffer.from(data, 'utf8');
@@ -71,12 +104,40 @@ export function randomUUID(): string {
 }
 
 export function publicEncrypt(
-  keyOrOptions: string | { key: string; padding?: number },
+  keyOrOptions:
+    | string
+    | Buffer
+    | PublicKeyObject
+    | { key: string | Buffer | PublicKeyObject; padding?: number },
   buffer: Uint8Array | Buffer | string,
 ): Buffer {
-  const pem = typeof keyOrOptions === 'string' ? keyOrOptions : keyOrOptions.key;
-  const padding = typeof keyOrOptions === 'string' ? constants.RSA_PKCS1_PADDING : keyOrOptions.padding;
+  const pem = extractPublicKeyPem(keyOrOptions);
+  const padding =
+    typeof keyOrOptions === 'object' && keyOrOptions !== null && 'padding' in keyOrOptions
+      ? keyOrOptions.padding
+      : constants.RSA_PKCS1_PADDING;
   const pubKey = forge.pki.publicKeyFromPem(pem);
+
+  if (padding === constants.RSA_NO_PADDING) {
+    const plainBuf = Buffer.isBuffer(buffer)
+      ? buffer
+      : typeof buffer === 'string'
+        ? Buffer.from(buffer, 'utf8')
+        : Buffer.from(buffer);
+    const modulusBytes = Math.ceil(pubKey.n.bitLength() / 8);
+    if (plainBuf.length !== modulusBytes) {
+      throw new Error(`RSA_NO_PADDING requires exact modulus length (${modulusBytes} bytes), got ${plainBuf.length}`);
+    }
+    const BigIntCtor = (pubKey.n as unknown as { constructor: new (hex: string, radix: number) => any }).constructor;
+    const m = new BigIntCtor(plainBuf.toString('hex') || '0', 16);
+    if (m.compareTo(pubKey.n) >= 0) {
+      throw new Error('RSA_NO_PADDING plaintext integer must be strictly less than modulus');
+    }
+    const c = m.modPow(pubKey.e, pubKey.n);
+    const hex = String(c.toString(16)).padStart(modulusBytes * 2, '0');
+    return Buffer.from(hex, 'hex');
+  }
+
   const plainBin = toBinaryString(buffer);
   const scheme = padding === constants.RSA_PKCS1_OAEP_PADDING ? 'RSA-OAEP' : 'RSAES-PKCS1-V1_5';
   const encrypted = pubKey.encrypt(plainBin, scheme);
@@ -126,6 +187,7 @@ export function createDecipheriv(
 
 export default {
   constants,
+  createPublicKey,
   createHash,
   randomBytes,
   randomUUID,

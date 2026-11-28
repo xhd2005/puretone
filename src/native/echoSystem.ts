@@ -10,6 +10,7 @@ export interface SafeAreaInsets {
 
 export interface AppLaunchFlags {
   openNowPlaying: boolean;
+  pendingDeepLink?: string;
   versionName: string;
   versionCode: number;
 }
@@ -82,6 +83,7 @@ export interface EchoSystemPluginInterface {
   addListener(eventName: 'insetsChange', listener: (insets: SafeAreaInsets) => void): Promise<PluginListenerHandle>;
   addListener(eventName: 'hardwareBack', listener: () => void): Promise<PluginListenerHandle>;
   addListener(eventName: 'openNowPlayingIntent', listener: () => void): Promise<PluginListenerHandle>;
+  addListener(eventName: 'deepLink', listener: (ev: { url: string }) => void): Promise<PluginListenerHandle>;
   addListener(
     eventName: 'updateDownloadProgress',
     listener: (ev: UpdateDownloadProgressEvent) => void,
@@ -173,7 +175,7 @@ export const echoSystem = {
     if (Capacitor.isNativePlatform()) {
       return EchoSystemNative.getLaunchFlags();
     }
-    return { openNowPlaying: false, versionName: '2.4.12', versionCode: 19 };
+    return { openNowPlaying: false, pendingDeepLink: '', versionName: '2.5.0', versionCode: 20 };
   },
 
   async checkNotificationPermission(): Promise<{ granted: boolean; systemEnabled: boolean; runtimeGranted: boolean }> {
@@ -377,6 +379,16 @@ export const echoSystem = {
   async onOpenNowPlayingIntent(cb: () => void): Promise<() => void> {
     if (Capacitor.isNativePlatform()) {
       const h = await EchoSystemNative.addListener('openNowPlayingIntent', cb);
+      return () => void h.remove();
+    }
+    return () => {};
+  },
+
+  async onDeepLink(cb: (url: string) => void): Promise<() => void> {
+    if (Capacitor.isNativePlatform()) {
+      const h = await EchoSystemNative.addListener('deepLink', (ev) => {
+        if (ev?.url) cb(ev.url);
+      });
       return () => void h.remove();
     }
     return () => {};

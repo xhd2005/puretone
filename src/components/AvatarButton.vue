@@ -2,11 +2,9 @@
 import { Icon } from '@iconify/vue';
 import iconUser from '@iconify/icons-tabler/user';
 import { useAccountsStore } from '@/stores/accounts';
-import { useVipStore } from '@/stores/vip';
 import { useUiStore } from '@/stores/ui';
 
 const accounts = useAccountsStore();
-const vip = useVipStore();
 const ui = useUiStore();
 </script>
 
@@ -14,8 +12,8 @@ const ui = useUiStore();
   <button
     type="button"
     class="avatar-btn am-tap"
-    aria-label="账号与每日 VIP"
-    @click="ui.accountSheetOpen = true"
+    aria-label="个人中心与扩展"
+    @click="ui.openAccountSheet('profile')"
   >
     <img
       v-if="accounts.activeAccount?.avatar"
@@ -29,8 +27,8 @@ const ui = useUiStore();
     >
       <Icon :icon="iconUser" class="w-5 h-5" />
     </div>
-    <!-- Subtle single dot ONLY when today's VIP hasn't been claimed yet -->
-    <span v-if="vip.needsAttentionDot" class="avatar-dot" aria-hidden="true" />
+    <!-- Subtle dot only when a newer app release is available -->
+    <span v-if="ui.availableUpdateVersion" class="avatar-dot" aria-hidden="true" />
   </button>
 </template>
 

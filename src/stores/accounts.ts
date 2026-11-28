@@ -9,7 +9,7 @@ import {
   setKugouVerificationHandler,
   type VerificationChallenge,
 } from '@/services/kugou/kugouEngine';
-import { fetchVipExpiryText } from '@/services/vip/vipClaimEngine';
+import { fetchVipExpiryText } from '@/services/kugou/accountProfileHelpers';
 
 const STORAGE_KEY = 'accounts.v1';
 

@@ -90,8 +90,8 @@ function measureCardSize() {
   if (!el) return;
   const h = el.clientHeight;
   const w = el.clientWidth;
-  if (h < 80 || w < 160) return;
-  cardSizePx.value = Math.round(Math.max(126, Math.min(220, h * 0.72, w * 0.30)));
+  if (h < 70 || w < 160) return;
+  cardSizePx.value = Math.round(Math.max(106, Math.min(212, h * 0.72, w * 0.28)));
 }
 
 function stopAnim() {
@@ -421,7 +421,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  padding: 6px calc(var(--safe-right) + 20px) 6px calc(var(--safe-left) + 20px);
+  padding: calc(var(--safe-top) + 36px) calc(var(--safe-right) + 18px) calc(var(--safe-bottom) + 6px) calc(var(--safe-left) + 18px);
   overflow: hidden;
   user-select: none;
 }
@@ -526,8 +526,8 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
-  padding: 4px 12px 4px;
+  gap: 5px;
+  padding: 2px 12px 2px;
 }
 
 .cf-meta-block {

@@ -3,6 +3,7 @@ import { Buffer } from 'buffer';
 import type { LyricLine, LyricWord, ParsedLyrics, Song } from '@/types/music';
 import { kugouApi } from '@/services/kugou/kugouEngine';
 import { nativeHttpRequest } from '@/native/echoHttp';
+import { pluginRuntime } from '@/services/plugins/pluginRuntime';
 
 // Standard KuGou KRC XOR decryption key (16 bytes)
 const KRC_XOR_KEY = [64, 71, 97, 119, 94, 50, 116, 71, 81, 54, 49, 45, 206, 210, 110, 105];
@@ -227,10 +228,16 @@ async function fetchLrclibFallbackLyrics(song: Song): Promise<ParsedLyrics | nul
 
 const lyricsCache = new Map<string, ParsedLyrics>();
 
+export function clearLyricsCache(): void {
+  lyricsCache.clear();
+}
+
 export async function fetchLyricsForSong(song: Song): Promise<ParsedLyrics> {
   const cacheKey = song.hash || `${song.artist}:${song.title}`;
   const cached = lyricsCache.get(cacheKey);
-  if (cached) return cached;
+  if (cached) {
+    return pluginRuntime.applyLyricFilters(cached, song);
+  }
 
   // 1. KuGou KRC (word-by-word + embedded translation)
   try {
@@ -249,7 +256,7 @@ export async function fetchLyricsForSong(song: Song): Promise<ParsedLyrics> {
             : parseLrcText(decoded, undefined, 'kugou-lrc');
         if (parsed.lines.length > 0) {
           lyricsCache.set(cacheKey, parsed);
-          return parsed;
+          return pluginRuntime.applyLyricFilters(parsed, song);
         }
       }
     }
@@ -261,14 +268,14 @@ export async function fetchLyricsForSong(song: Song): Promise<ParsedLyrics> {
   const neLyrics = await fetchNeteaseFallbackLyrics(song);
   if (neLyrics) {
     lyricsCache.set(cacheKey, neLyrics);
-    return neLyrics;
+    return pluginRuntime.applyLyricFilters(neLyrics, song);
   }
 
   // 3. LRCLIB international fallback
   const lrcLib = await fetchLrclibFallbackLyrics(song);
   if (lrcLib) {
     lyricsCache.set(cacheKey, lrcLib);
-    return lrcLib;
+    return pluginRuntime.applyLyricFilters(lrcLib, song);
   }
 
   return { lines: [], hasWordTiming: false, hasTranslation: false, source: 'none' };

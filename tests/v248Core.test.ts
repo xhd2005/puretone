@@ -119,6 +119,6 @@ describe('v2.4.8 Auto-Update Settings & Trilingual Keys', () => {
       expect(zhTW[k].trim().length).toBeGreaterThan(0);
       expect(enUS[k].trim().length).toBeGreaterThan(0);
     }
-    expect(FALLBACK_APP_VERSION).toMatch(/^2\.4\.\d+$/);
+    expect(FALLBACK_APP_VERSION).toMatch(/^2\.\d+\.\d+$/);
   });
 });

@@ -8,7 +8,7 @@ import { clearCachedResolvedStream, buildAudioCacheKey, resolvePlayableStream } 
 import { decidePlaybackRecovery, MAX_STREAM_RECOVERY_ATTEMPTS } from '@/services/playback/playbackRecovery';
 import { fetchLyricsForSong } from '@/services/playback/krcParser';
 import { DEFAULT_APPLE_PALETTE, extractPaletteFromCoverUrl } from '@/services/playback/coverPalette';
-import { pinSourceForSong, resolveCandidateUrl } from '@/services/playback/unblockEngine';
+import { pluginRuntime } from '@/services/plugins/pluginRuntime';
 import {
   prependSongsToPlaylistSnapshot,
   removeSongsFromPlaylistSnapshot,
@@ -359,7 +359,7 @@ export const usePlayerStore = defineStore('player', () => {
         if (!nextSong) continue;
         try {
           const resolved = await resolvePlayableStream(nextSong, settingsStore.quality, {
-            enableUnblock: settingsStore.enableUnblock,
+            enableUnblock: pluginRuntime.hasAudioResolvers(),
           });
           if (expectedSeq !== trackSeq) return;
           const nextCacheKey =
@@ -451,7 +451,7 @@ export const usePlayerStore = defineStore('player', () => {
         reason: 'stream_error',
         positionMs: currentTimeMs.value,
         attemptsSoFar: MAX_STREAM_RECOVERY_ATTEMPTS,
-        enableUnblock: settingsStore.enableUnblock,
+        enableUnblock: pluginRuntime.hasAudioResolvers(),
         alreadyUnblocked: activeTrackIsUnblocked,
         songTitle: currentSong.value?.title || '当前歌曲',
         errorMessage: ev.message,
@@ -488,7 +488,7 @@ export const usePlayerStore = defineStore('player', () => {
             reason: ev.reason,
             positionMs: targetPosMs,
             attemptsSoFar: recoveryAttemptsForCurrentTrack,
-            enableUnblock: settingsStore.enableUnblock,
+            enableUnblock: pluginRuntime.hasAudioResolvers(),
             alreadyUnblocked: activeTrackIsUnblocked,
             songTitle: song.title,
             errorMessage: ev.message,
@@ -694,7 +694,7 @@ export const usePlayerStore = defineStore('player', () => {
 
       if (!playUrl) {
         const resolved = await resolvePlayableStream(song, resolvedQuality, {
-          enableUnblock: settingsStore.enableUnblock,
+          enableUnblock: pluginRuntime.hasAudioResolvers(),
           bypassCache: resumeOptions?.bypassCache,
           forceUnblock: resumeOptions?.forceUnblock,
         });
@@ -745,8 +745,12 @@ export const usePlayerStore = defineStore('player', () => {
       if (!isRecovery) {
         isPlaying.value = false;
         isBuffering.value = false;
-        ui.showToast(err?.message || '暂无可用音源，已为你打开换源面板');
-        ui.unblockModalSong = song;
+        if (pluginRuntime.hasAudioResolvers()) {
+          ui.showToast(err?.message || '暂无官方直链，已为你打开扩展音源面板');
+          ui.unblockModalSong = song;
+        } else {
+          ui.showToast(err?.message || '当前曲目暂无可用官方音源');
+        }
       }
       return false;
     } finally {
@@ -975,23 +979,21 @@ export const usePlayerStore = defineStore('player', () => {
 
   async function applyUnblockCandidate(song: Song, candidate: UnblockCandidate, pin: boolean) {
     const ui = useUiStore();
-    const resolved = await resolveCandidateUrl(candidate, settingsStore.quality, song.duration);
+    const resolved = await pluginRuntime.resolveAudioCandidate(candidate, settingsStore.quality, song.duration);
     if (!resolved?.url) {
       ui.showToast('该候选音源解析失败，请换一个试试');
       return false;
     }
     clearCachedResolvedStream(song);
     if (pin) {
-      await pinSourceForSong(song, candidate, resolved.url, resolved.headers);
+      await pluginRuntime.pinAudioSource(song, candidate, resolved.url, resolved.headers);
     }
     const tag =
-      candidate.channel === 'kugou-alt'
+      resolved.sourceTag ||
+      candidate.channelLabel ||
+      (candidate.channel === 'kugou-alt'
         ? '酷狗异版'
-        : candidate.sourcePlatform === 'kuwo'
-          ? '解灰 · 酷我 320k'
-          : candidate.sourcePlatform === 'bilibili'
-            ? '解灰 · B站音频'
-            : `解灰 · ${(candidate.sourcePlatform || 'EXT').toUpperCase()}`;
+        : `扩展 · ${(candidate.sourcePlatform || 'EXT').toUpperCase()}`);
 
     const isCurrent = currentSong.value && currentSong.value.hash === song.hash && currentSong.value.id === song.id;
     if (isCurrent) {

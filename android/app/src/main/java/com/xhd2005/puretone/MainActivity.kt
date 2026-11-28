@@ -96,5 +96,10 @@ class MainActivity : BridgeActivity() {
             if (isColdStart) EchoSystemPlugin.pendingOpenNowPlaying = true
             else EchoSystemPlugin.dispatchOpenNowPlayingIntent()
         }
+        val uriStr = intent.dataString?.trim().orEmpty()
+        if (EchoSystemPlugin.isAllowedMeluneDeepLink(uriStr)) {
+            if (isColdStart) EchoSystemPlugin.pendingDeepLink = uriStr
+            else EchoSystemPlugin.dispatchDeepLink(uriStr)
+        }
     }
 }

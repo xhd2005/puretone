@@ -306,3 +306,60 @@ export function computeCoverFlowCardTransform(
     transform: `perspective(1100px) translate3d(${txFixed}px, 0, ${tzFixed}px) rotateY(${rotFixed}deg) scale3d(${scaleFixed}, ${scaleFixed}, 1)`,
   };
 }
+
+export type RingSlotId = 0 | 1 | 2;
+export type RingSlotRole = 'prev' | 'center' | 'next';
+
+export interface RingSlotAssignment {
+  prev: RingSlotId;
+  center: RingSlotId;
+  next: RingSlotId;
+}
+
+/**
+ * Maps a logical center slot id (`0 | 1 | 2`) to its physical 3-slot ring assignment.
+ * Rotating the ring on swipe commit leaves the landed card physically untouched at `tx = 0`,
+ * making opposite-direction rebound animations mathematically impossible.
+ */
+export function getRingSlotAssignment(centerId: RingSlotId): RingSlotAssignment {
+  const prev = ((centerId + 2) % 3) as RingSlotId;
+  const next = ((centerId + 1) % 3) as RingSlotId;
+  return { prev, center: centerId, next };
+}
+
+export function rotateRingCenter(centerId: RingSlotId, direction: 'next' | 'prev'): RingSlotId {
+  return (direction === 'next' ? (centerId + 1) % 3 : (centerId + 2) % 3) as RingSlotId;
+}
+
+export interface SpringStepResult {
+  position: number;
+  velocity: number;
+  settled: boolean;
+}
+
+/**
+ * Frame-rate-independent critically-damped implicit spring integrator (60Hz / 90Hz / 120Hz / 144Hz).
+ */
+export function stepCriticallyDampedSpring(
+  position: number,
+  target: number,
+  velocity: number,
+  dtSec: number,
+  omega = 16,
+  epsilonPos = 0.45,
+  epsilonVel = 8,
+): SpringStepResult {
+  const dt = Math.max(0.001, Math.min(0.05, dtSec));
+  const x = position - target;
+  const f = 1 + 2 * dt * omega;
+  const oo = omega * omega;
+  const hoo = dt * oo;
+  const hhoo = dt * hoo;
+  const detInv = 1 / (f + hhoo);
+  const nextX = (f * x + dt * velocity) * detInv;
+  const nextVel = (velocity - hoo * x) * detInv;
+  if (Math.abs(nextX) <= epsilonPos && Math.abs(nextVel) <= epsilonVel) {
+    return { position: target, velocity: 0, settled: true };
+  }
+  return { position: target + nextX, velocity: nextVel, settled: false };
+}

@@ -6,14 +6,23 @@ import { useI18n } from '@/i18n';
 import { echoSystem } from '@/native/echoSystem';
 import {
   advanceMonotonicLyricTime,
-  computeWordSweepPosPercent,
+  computeWordLuminanceAlpha,
   findActiveLyricIndex,
+  quantizeWordAlphaStep,
 } from '@/utils/lyricClock';
 import type { LyricLine } from '@/types/music';
 
-const props = defineProps<{
-  active: boolean;
-}>();
+const props = withDefaults(
+  defineProps<{
+    active: boolean;
+    centered?: boolean;
+    compact?: boolean;
+  }>(),
+  {
+    centered: false,
+    compact: false,
+  },
+);
 
 const emit = defineEmits<{
   userScroll: [];
@@ -42,6 +51,9 @@ const lineRefs = ref<HTMLElement[]>([]);
 const activeIndex = ref(-1);
 const userScrolling = ref(false);
 
+const MIN_WORD_ALPHA = 0.34;
+const ALPHA_STEPS = 16;
+
 let displayTimeMs = -1;
 let scrollResumeTimer: ReturnType<typeof setTimeout> | null = null;
 let cleanupWordTimer: ReturnType<typeof setTimeout> | null = null;
@@ -51,6 +63,7 @@ let touchStartY = 0;
 let didScrollGesture = false;
 let paintedLineIdx = -1;
 let cachedWordNodes: HTMLElement[] = [];
+let resizeObserver: ResizeObserver | null = null;
 
 // 120Hz/144Hz Frame-Rate-Independent Critically-Damped Spring Scroller
 const SPRING_OMEGA = 10.5;
@@ -98,8 +111,8 @@ function clearNodesInlineStyles(nodes: HTMLElement[]) {
   for (let i = 0; i < nodes.length; i += 1) {
     const el = nodes[i];
     if (el) {
-      el.style.removeProperty('--wp-pos');
-      delete el.dataset.wpq;
+      el.style.removeProperty('color');
+      delete el.dataset.waq;
     }
   }
 }
@@ -116,7 +129,6 @@ function clearWordCache(immediate = true) {
   if (immediate) {
     clearNodesInlineStyles(prevNodes);
   } else {
-    // Defer cleanup until the outgoing line's opacity fade settles -> zero 1-frame blank flash!
     cleanupWordTimer = setTimeout(() => {
       cleanupWordTimer = null;
       clearNodesInlineStyles(prevNodes);
@@ -124,6 +136,10 @@ function clearWordCache(immediate = true) {
   }
 }
 
+/**
+ * Pure solid-glyph luminance painting (ZERO SaveLayer, ZERO background-clip:text, ZERO Skia flicker!).
+ * Only mutates the 1-2 syllables whose quantized alpha step changed this frame.
+ */
 function paintActiveLineWords(idx: number, nowMs: number) {
   if (idx < 0) {
     if (paintedLineIdx >= 0) clearWordCache(false);
@@ -146,13 +162,12 @@ function paintActiveLineWords(idx: number, nowMs: number) {
   const words = line.words;
   const count = Math.min(words.length, cachedWordNodes.length);
   for (let i = 0; i < count; i += 1) {
-    const posPct = computeWordSweepPosPercent(words[i], nowMs);
-    // 0.25% quantization keeps 120Hz sweeps silky smooth without redundant DOM writes
-    const q = String(Math.round(posPct * 4));
+    const alpha = computeWordLuminanceAlpha(words[i], nowMs, MIN_WORD_ALPHA);
+    const q = String(quantizeWordAlphaStep(alpha, ALPHA_STEPS, MIN_WORD_ALPHA));
     const el = cachedWordNodes[i];
-    if (el.dataset.wpq !== q) {
-      el.dataset.wpq = q;
-      el.style.setProperty('--wp-pos', `${posPct.toFixed(2)}%`);
+    if (el.dataset.waq !== q) {
+      el.dataset.waq = q;
+      el.style.color = alpha >= 0.995 ? '#ffffff' : `rgba(255, 255, 255, ${alpha.toFixed(3)})`;
     }
   }
 }
@@ -165,7 +180,6 @@ function syncFrame(forceSnap = false) {
 
   const nextIdx = findActiveLyricIndex(player.lyrics.lines, displayTimeMs, 90);
   if (nextIdx !== activeIndex.value) {
-    // Pre-paint incoming line's word positions BEFORE Vue toggles `.is-active` so first painted frame is exact
     paintActiveLineWords(nextIdx, displayTimeMs);
     activeIndex.value = nextIdx;
   } else {
@@ -220,13 +234,14 @@ function scrollToActive(smooth = true) {
   if (userScrolling.value) return;
   const idx = activeIndex.value;
   const container = scrollerRef.value;
-  if (!container) return;
+  if (!container || container.clientHeight < 20) return;
 
   let desiredTop = 0;
   if (idx >= 0) {
     const el = lineRefs.value[idx];
     if (!el) return;
-    desiredTop = Math.max(0, el.offsetTop - container.clientHeight * 0.30);
+    const anchorRatio = props.centered ? 0.42 : props.compact ? 0.36 : 0.31;
+    desiredTop = Math.max(0, el.offsetTop - container.clientHeight * anchorRatio);
   }
   const maxScroll = Math.max(0, container.scrollHeight - container.clientHeight);
   const clampedTarget = Math.min(maxScroll, desiredTop);
@@ -265,7 +280,6 @@ function snapToActiveNow() {
   });
 }
 
-// Start/stop single RAF loop strictly on visibility or play/pause state (NEVER cancelled on 160ms ticks!)
 watch(
   () => [props.active, player.isPlaying],
   ([isActive]) => {
@@ -283,7 +297,6 @@ watch(
   { immediate: true },
 );
 
-// Handle external seeks (scrubber drag / chorus jump) or paused position updates cleanly
 watch(
   () => player.currentTimeMs,
   () => {
@@ -340,12 +353,22 @@ onMounted(() => {
   if (props.active) {
     snapToActiveNow();
   }
+  if (typeof ResizeObserver !== 'undefined' && scrollerRef.value) {
+    resizeObserver = new ResizeObserver(() => {
+      if (props.active && !userScrolling.value) {
+        scrollToActive(false);
+      }
+    });
+    resizeObserver.observe(scrollerRef.value);
+  }
 });
 
 onUnmounted(() => {
   cancelSpringScroll();
   if (rafId) cancelAnimationFrame(rafId);
   if (scrollResumeTimer) clearTimeout(scrollResumeTimer);
+  resizeObserver?.disconnect();
+  resizeObserver = null;
   clearWordCache(true);
 });
 
@@ -406,13 +429,14 @@ function getLineClass(idx: number) {
   if (idx === activeIndex.value) return 'is-active';
   if (userScrolling.value) return 'is-scrolling';
   if (diff === 1) return 'is-near';
+  if (diff === 2) return 'is-mid';
   return 'is-far';
 }
 </script>
 
 <template>
-  <!-- Static outer mask layer avoids per-frame 120Hz mask re-rasterization on the scrolling child! -->
-  <div class="krc-viewport">
+  <!-- Pure glyph-atlas 120Hz zero-flicker lyric viewport -->
+  <div class="krc-viewport" :class="{ 'is-centered': centered, 'is-compact': compact }">
     <div
       ref="scrollerRef"
       class="krc-scroller"
@@ -429,8 +453,8 @@ function getLineClass(idx: number) {
         </div>
 
         <div v-else-if="!player.lyrics.lines.length" key="krc-none" class="krc-empty">
-          <p class="text-[22px] font-bold text-white/75 tracking-tight">{{ t('lyrics.none') }}</p>
-          <p class="text-[14px] text-white/45 mt-2">{{ t('lyrics.noneSub') }}</p>
+          <p class="text-[20px] font-bold text-white/78 tracking-tight">{{ t('lyrics.none') }}</p>
+          <p class="text-[13.5px] text-white/46 mt-2">{{ t('lyrics.noneSub') }}</p>
         </div>
 
         <div v-else key="krc-list" class="krc-list" :class="fontSizeClass">
@@ -443,7 +467,6 @@ function getLineClass(idx: number) {
             :class="getLineClass(idx)"
             @click.stop="handleLineClick(line)"
           >
-            <!-- Word-by-word karaoke: constant inline box model + GPU opacity only -> ZERO reflow/flicker! -->
             <div v-if="line.words && line.words.length" class="krc-main">
               <span
                 v-for="(w, wi) in line.words"
@@ -452,12 +475,10 @@ function getLineClass(idx: number) {
               >{{ w.text }}</span>
             </div>
 
-            <!-- Standard LRC line -->
             <div v-else class="krc-main">
               {{ line.text }}
             </div>
 
-            <!-- Bilingual translation -->
             <div
               v-if="settings.showTranslation && line.translation"
               class="krc-trans"
@@ -477,21 +498,6 @@ function getLineClass(idx: number) {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  contain: strict;
-  mask-image: linear-gradient(
-    to bottom,
-    transparent 0%,
-    black 9%,
-    black 88%,
-    transparent 100%
-  );
-  -webkit-mask-image: linear-gradient(
-    to bottom,
-    transparent 0%,
-    black 9%,
-    black 88%,
-    transparent 100%
-  );
 }
 
 .krc-scroller {
@@ -500,11 +506,19 @@ function getLineClass(idx: number) {
   height: 100%;
   overflow-y: auto;
   overflow-x: hidden;
-  contain: layout style;
   -webkit-overflow-scrolling: touch;
   padding: 20vh 26px 40vh;
   scrollbar-width: none;
 }
+
+.krc-viewport.is-compact .krc-scroller {
+  padding: 28vh 18px 44vh;
+}
+
+.krc-viewport.is-centered .krc-scroller {
+  padding: 32vh 36px 48vh;
+}
+
 .krc-scroller::-webkit-scrollbar {
   display: none;
 }
@@ -512,10 +526,19 @@ function getLineClass(idx: number) {
 .krc-list {
   display: flex;
   flex-direction: column;
-  gap: 26px;
+  gap: 24px;
 }
 
-/* Constant #ffffff text color with GPU-only transform & opacity transitions -> zero Skia color/mask conflict! */
+.krc-viewport.is-compact .krc-list {
+  gap: 18px;
+}
+
+.krc-viewport.is-centered .krc-list {
+  gap: 24px;
+  align-items: center;
+}
+
+/* Pure GPU transform + opacity + direct glyph-atlas RGBA color -> ZERO Skia SaveLayer flicker! */
 .krc-line {
   display: block;
   width: 100%;
@@ -524,12 +547,18 @@ function getLineClass(idx: number) {
   border: 0;
   padding: 4px 0;
   color: #ffffff;
-  opacity: 0.34;
+  opacity: 0.18;
   transform-origin: left center;
   backface-visibility: hidden;
   transition:
-    transform 340ms var(--spring-ease),
-    opacity 280ms ease;
+    transform 320ms var(--spring-ease),
+    opacity 260ms ease;
+}
+
+.krc-viewport.is-centered .krc-line {
+  text-align: center;
+  transform-origin: center center;
+  max-width: 82vw;
 }
 
 .krc-main {
@@ -550,20 +579,42 @@ function getLineClass(idx: number) {
   line-height: 1.22;
 }
 
+.krc-viewport.is-compact .krc-main {
+  font-size: 21px;
+  line-height: 1.32;
+}
+
+.krc-viewport.is-compact .krc-size-large .krc-main {
+  font-size: 24px;
+}
+
+.krc-viewport.is-compact .krc-size-xlarge .krc-main {
+  font-size: 27px;
+}
+
+.krc-viewport.is-centered .krc-main {
+  font-size: clamp(23px, 6.2vh, 36px);
+  line-height: 1.28;
+}
+
 .krc-trans {
-  margin-top: 6px;
-  font-size: 15px;
+  margin-top: 5px;
+  font-size: 14.5px;
   line-height: 1.4;
   font-weight: 500;
   opacity: 0.78;
 }
 
 .krc-size-large .krc-trans {
-  font-size: 17px;
+  font-size: 16px;
 }
 
 .krc-size-xlarge .krc-trans {
-  font-size: 19px;
+  font-size: 18px;
+}
+
+.krc-viewport.is-compact .krc-trans {
+  font-size: 13px;
 }
 
 .krc-line.is-active {
@@ -576,38 +627,28 @@ function getLineClass(idx: number) {
   transform: scale(0.985);
 }
 
+.krc-line.is-mid {
+  opacity: 0.28;
+  transform: scale(0.975);
+}
+
 .krc-line.is-far {
-  opacity: 0.25;
-  transform: scale(0.97);
+  opacity: 0.14;
+  transform: scale(0.965);
 }
 
 .krc-line.is-scrolling {
-  opacity: 0.66;
+  opacity: 0.68;
   transform: scale(1);
 }
 
-/* Constant inline layout (never toggles inline -> inline-block!) eliminates text reflow & syllable flash */
 .krc-word {
   display: inline;
   white-space: pre-wrap;
 }
 
 .krc-line.is-active .krc-word {
-  background-image: linear-gradient(
-    90deg,
-    #ffffff 0%,
-    #ffffff 48%,
-    rgba(255, 255, 255, 0.36) 52%,
-    rgba(255, 255, 255, 0.36) 100%
-  );
-  background-size: 220% 100%;
-  background-repeat: no-repeat;
-  background-position: var(--wp-pos, 100%) 0;
-  -webkit-box-decoration-break: clone;
-  box-decoration-break: clone;
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  color: rgba(255, 255, 255, 0.34);
 }
 
 .krc-empty {
@@ -623,6 +664,7 @@ function getLineClass(idx: number) {
   display: flex;
   gap: 8px;
 }
+
 .krc-dots span {
   width: 9px;
   height: 9px;
@@ -630,9 +672,11 @@ function getLineClass(idx: number) {
   background: rgba(255, 255, 255, 0.6);
   animation: krc-pulse 1.2s ease-in-out infinite;
 }
+
 .krc-dots span:nth-child(2) {
   animation-delay: 0.2s;
 }
+
 .krc-dots span:nth-child(3) {
   animation-delay: 0.4s;
 }

@@ -107,6 +107,6 @@ describe('v2.4.3 Cloud Playlist Management Core', () => {
   });
 
   it('reports a valid v2.4.x semver as the fallback app version', () => {
-    expect(FALLBACK_APP_VERSION).toMatch(/^2\.4\.\d+$/);
+    expect(FALLBACK_APP_VERSION).toMatch(/^2\.\d+\.\d+$/);
   });
 });

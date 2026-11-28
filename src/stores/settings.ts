@@ -24,11 +24,6 @@ export interface PersistedSettings {
   transitionFadeMs: TrackTransitionFadeMs;
   volumeLeveling: boolean;
   lyricOffsets: Record<string, number>;
-  enableUnblock: boolean;
-  unblockPlatforms: string[];
-  autoClaimOnLaunch: boolean;
-  autoClaimAllAccounts: boolean;
-  enableConceptTasks: boolean;
   showTranslation: boolean;
   showCoverLyricsPreview: boolean;
   showLockScreenLyrics: boolean;
@@ -50,15 +45,8 @@ const DEFAULTS: PersistedSettings = {
   transitionFadeMs: 1500,
   volumeLeveling: false,
   lyricOffsets: {},
-  // Opt-in compliance policy for fresh installs (existing users' persisted settings.v1 stay intact)
-  enableUnblock: false,
-  unblockPlatforms: ['kuwo', 'kugou', 'joox', 'bilibili'],
-  autoClaimOnLaunch: false,
-  autoClaimAllAccounts: false,
-  enableConceptTasks: false,
   showTranslation: true,
   showCoverLyricsPreview: true,
-  // Default OFF so lock-screen & live media cards stay rock-solid (no OS rate-limit freeze)
   showLockScreenLyrics: false,
   autoCheckUpdate: true,
   audioCacheMaxMb: 2048,
@@ -97,11 +85,6 @@ export const useSettingsStore = defineStore('settings', () => {
   const transitionFadeMs = ref<TrackTransitionFadeMs>(DEFAULTS.transitionFadeMs);
   const volumeLeveling = ref<boolean>(DEFAULTS.volumeLeveling);
   const lyricOffsets = ref<Record<string, number>>({});
-  const enableUnblock = ref<boolean>(DEFAULTS.enableUnblock);
-  const unblockPlatforms = ref<string[]>([...DEFAULTS.unblockPlatforms]);
-  const autoClaimOnLaunch = ref<boolean>(DEFAULTS.autoClaimOnLaunch);
-  const autoClaimAllAccounts = ref<boolean>(DEFAULTS.autoClaimAllAccounts);
-  const enableConceptTasks = ref<boolean>(DEFAULTS.enableConceptTasks);
   const showTranslation = ref<boolean>(DEFAULTS.showTranslation);
   const showCoverLyricsPreview = ref<boolean>(DEFAULTS.showCoverLyricsPreview);
   const showLockScreenLyrics = ref<boolean>(DEFAULTS.showLockScreenLyrics);
@@ -203,14 +186,6 @@ export const useSettingsStore = defineStore('settings', () => {
     volumeLeveling.value = saved.volumeLeveling ?? DEFAULTS.volumeLeveling;
     lyricOffsets.value =
       saved.lyricOffsets && typeof saved.lyricOffsets === 'object' ? { ...saved.lyricOffsets } : {};
-    enableUnblock.value = saved.enableUnblock ?? DEFAULTS.enableUnblock;
-    unblockPlatforms.value =
-      Array.isArray(saved.unblockPlatforms) && saved.unblockPlatforms.length
-        ? saved.unblockPlatforms
-        : [...DEFAULTS.unblockPlatforms];
-    autoClaimOnLaunch.value = saved.autoClaimOnLaunch ?? DEFAULTS.autoClaimOnLaunch;
-    autoClaimAllAccounts.value = saved.autoClaimAllAccounts ?? DEFAULTS.autoClaimAllAccounts;
-    enableConceptTasks.value = saved.enableConceptTasks ?? DEFAULTS.enableConceptTasks;
     showTranslation.value = saved.showTranslation ?? DEFAULTS.showTranslation;
     showCoverLyricsPreview.value = saved.showCoverLyricsPreview ?? DEFAULTS.showCoverLyricsPreview;
     showLockScreenLyrics.value = saved.showLockScreenLyrics ?? DEFAULTS.showLockScreenLyrics;
@@ -243,11 +218,6 @@ export const useSettingsStore = defineStore('settings', () => {
       transitionFadeMs,
       volumeLeveling,
       lyricOffsets,
-      enableUnblock,
-      unblockPlatforms,
-      autoClaimOnLaunch,
-      autoClaimAllAccounts,
-      enableConceptTasks,
       showTranslation,
       showCoverLyricsPreview,
       showLockScreenLyrics,
@@ -273,11 +243,6 @@ export const useSettingsStore = defineStore('settings', () => {
       transitionFadeMs: transitionFadeMs.value,
       volumeLeveling: volumeLeveling.value,
       lyricOffsets: { ...lyricOffsets.value },
-      enableUnblock: enableUnblock.value,
-      unblockPlatforms: [...unblockPlatforms.value],
-      autoClaimOnLaunch: autoClaimOnLaunch.value,
-      autoClaimAllAccounts: autoClaimAllAccounts.value,
-      enableConceptTasks: enableConceptTasks.value,
       showTranslation: showTranslation.value,
       showCoverLyricsPreview: showCoverLyricsPreview.value,
       showLockScreenLyrics: showLockScreenLyrics.value,
@@ -300,13 +265,6 @@ export const useSettingsStore = defineStore('settings', () => {
     if (saved.lyricOffsets && typeof saved.lyricOffsets === 'object') {
       lyricOffsets.value = { ...saved.lyricOffsets };
     }
-    if (typeof saved.enableUnblock === 'boolean') enableUnblock.value = saved.enableUnblock;
-    if (Array.isArray(saved.unblockPlatforms) && saved.unblockPlatforms.length) {
-      unblockPlatforms.value = [...saved.unblockPlatforms];
-    }
-    if (typeof saved.autoClaimOnLaunch === 'boolean') autoClaimOnLaunch.value = saved.autoClaimOnLaunch;
-    if (typeof saved.autoClaimAllAccounts === 'boolean') autoClaimAllAccounts.value = saved.autoClaimAllAccounts;
-    if (typeof saved.enableConceptTasks === 'boolean') enableConceptTasks.value = saved.enableConceptTasks;
     if (typeof saved.showTranslation === 'boolean') showTranslation.value = saved.showTranslation;
     if (typeof saved.showCoverLyricsPreview === 'boolean') showCoverLyricsPreview.value = saved.showCoverLyricsPreview;
     if (typeof saved.showLockScreenLyrics === 'boolean') showLockScreenLyrics.value = saved.showLockScreenLyrics;
@@ -335,11 +293,6 @@ export const useSettingsStore = defineStore('settings', () => {
     transitionFadeMs,
     volumeLeveling,
     lyricOffsets,
-    enableUnblock,
-    unblockPlatforms,
-    autoClaimOnLaunch,
-    autoClaimAllAccounts,
-    enableConceptTasks,
     showTranslation,
     showCoverLyricsPreview,
     showLockScreenLyrics,

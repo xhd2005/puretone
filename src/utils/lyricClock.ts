@@ -55,3 +55,27 @@ export function computeWordSweepPosPercent(
   const progress = (timeMs - word.startMs) / dur;
   return Math.max(0, Math.min(100, (1 - progress) * 100));
 }
+
+/**
+ * Zero-SaveLayer solid-glyph luminance progression for Android WebView 120Hz karaoke lyrics.
+ * Eliminates `-webkit-background-clip: text` offscreen alpha-mask tile eviction & flickering.
+ * Returns alpha in `[minAlpha .. 1.0]`.
+ */
+export function computeWordLuminanceAlpha(
+  word: { startMs: number; durationMs: number },
+  timeMs: number,
+  minAlpha = 0.34,
+): number {
+  if (timeMs <= word.startMs) return minAlpha;
+  const dur = Math.max(1, word.durationMs);
+  if (timeMs >= word.startMs + dur) return 1;
+  const progress = Math.max(0, Math.min(1, (timeMs - word.startMs) / dur));
+  // Smooth ease-out curve for crisp syllable illumination
+  const eased = 1 - (1 - progress) * (1 - progress);
+  return Number((minAlpha + eased * (1 - minAlpha)).toFixed(3));
+}
+
+export function quantizeWordAlphaStep(alpha: number, steps = 16, minAlpha = 0.34): number {
+  const norm = Math.max(0, Math.min(1, (alpha - minAlpha) / Math.max(0.01, 1 - minAlpha)));
+  return Math.round(norm * steps);
+}

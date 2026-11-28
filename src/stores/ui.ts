@@ -10,6 +10,7 @@ export const useUiStore = defineStore('ui', () => {
   const nowPlayingMode = ref<'cover' | 'lyrics' | 'queue'>('cover');
   const audioEffectSheetOpen = ref(false);
   const accountSheetOpen = ref(false);
+  const accountSheetTab = ref<'profile' | 'plugins' | 'settings'>('profile');
   const loginModalOpen = ref(false);
   const actionSheetSong = ref<Song | null>(null);
   const actionSheetContext = ref<PlaylistActionContext | null>(null);
@@ -77,6 +78,12 @@ export const useUiStore = defineStore('ui', () => {
     toastTimer = setTimeout(() => {
       toastMessage.value = '';
     }, durationMs);
+  }
+
+  function openAccountSheet(tab: 'profile' | 'plugins' | 'settings' = 'profile') {
+    echoSystem.haptic('light');
+    accountSheetTab.value = tab;
+    accountSheetOpen.value = true;
   }
 
   function openNowPlaying(mode: 'cover' | 'lyrics' | 'queue' = 'cover') {
@@ -182,6 +189,7 @@ export const useUiStore = defineStore('ui', () => {
     nowPlayingMode,
     audioEffectSheetOpen,
     accountSheetOpen,
+    accountSheetTab,
     loginModalOpen,
     actionSheetSong,
     actionSheetContext,
@@ -202,6 +210,7 @@ export const useUiStore = defineStore('ui', () => {
     insets,
     initSystemInsets,
     showToast,
+    openAccountSheet,
     openNowPlaying,
     openSongComments,
     openSongActions,

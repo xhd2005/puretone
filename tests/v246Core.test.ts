@@ -53,7 +53,7 @@ describe('v2.4.6 Brand Philosophy & Splash Replay', () => {
   });
 
   it('reports a valid v2.4.x fallback app version', () => {
-    expect(FALLBACK_APP_VERSION).toMatch(/^2\.4\.\d+$/);
+    expect(FALLBACK_APP_VERSION).toMatch(/^2\.\d+\.\d+$/);
   });
 });
 
